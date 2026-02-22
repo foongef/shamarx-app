@@ -1,4 +1,4 @@
-import { EMA, RSI, ATR } from 'technicalindicators';
+import { EMA, RSI, ATR, ADX } from 'technicalindicators';
 import { BacktestCandle, IndicatorState } from './types';
 
 /**
@@ -22,17 +22,28 @@ export function computeIndicators(candles: BacktestCandle[]): IndicatorState {
     close: closes,
   });
 
+  // ADX returns { adx, pdi, mdi } for each period
+  const adxRaw = ADX.calculate({
+    period: 14,
+    high: highs,
+    low: lows,
+    close: closes,
+  });
+
   // Pad front with NaN to align with candle indices
-  const pad = (arr: number[], period: number): number[] => {
+  const pad = (arr: number[]): number[] => {
     const offset = closes.length - arr.length;
     return [...Array(offset).fill(NaN), ...arr];
   };
 
   return {
-    ema20: pad(ema20Raw, 20),
-    ema50: pad(ema50Raw, 50),
-    ema200: pad(ema200Raw, 200),
-    rsi14: pad(rsi14Raw, 14),
-    atr14: pad(atr14Raw, 14),
+    ema20: pad(ema20Raw),
+    ema50: pad(ema50Raw),
+    ema200: pad(ema200Raw),
+    rsi14: pad(rsi14Raw),
+    atr14: pad(atr14Raw),
+    adx14: pad(adxRaw.map((v) => v.adx)),
+    plusDI14: pad(adxRaw.map((v) => v.pdi)),
+    minusDI14: pad(adxRaw.map((v) => v.mdi)),
   };
 }

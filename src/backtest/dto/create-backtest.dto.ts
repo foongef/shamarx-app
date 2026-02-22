@@ -11,10 +11,10 @@ export class CreateBacktestDto {
   @IsDateString()
   endDate: string;
 
-  @ApiProperty({ example: 10000, minimum: 1000, maximum: 1000000 })
+  @ApiProperty({ example: 10000, minimum: 100, maximum: 1000000 })
   @Type(() => Number)
   @IsNumber()
-  @Min(1000)
+  @Min(100)
   @Max(1000000)
   initialBalance: number;
 

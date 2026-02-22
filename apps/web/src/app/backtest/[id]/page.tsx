@@ -3,6 +3,7 @@
 import { use } from 'react';
 import { useBacktest } from '@/hooks/use-backtest';
 import { useBacktestTrades } from '@/hooks/use-backtest-trades';
+import { useBacktestCandles } from '@/hooks/use-backtest-candles';
 import { MetricsGrid } from '@/components/backtest/metrics-grid';
 import { EquityCurveChart } from '@/components/backtest/equity-curve-chart';
 import { DrawdownChart } from '@/components/backtest/drawdown-chart';
@@ -24,6 +25,7 @@ export default function BacktestResultPage({
   const { data: backtest, isLoading } = useBacktest(id);
   const isCompleted = backtest?.status === 'COMPLETED';
   const { data: trades } = useBacktestTrades(id, isCompleted);
+  const { data: candles } = useBacktestCandles(id, isCompleted);
 
   if (isLoading) {
     return (
@@ -116,7 +118,9 @@ export default function BacktestResultPage({
       {equityCurve.length > 0 && <EquityCurveChart data={equityCurve} />}
       {drawdownSeries.length > 0 && <DrawdownChart data={drawdownSeries} />}
 
-      {trades && trades.length > 0 && <CandlestickChart trades={trades} />}
+      {candles && candles.length > 0 && (
+        <CandlestickChart candles={candles} trades={trades ?? []} />
+      )}
 
       <Separator />
 

@@ -75,6 +75,7 @@ export function TradeTable({ trades }: TradeTableProps) {
             </TableHead>
             <TableHead>Entry</TableHead>
             <TableHead>Exit</TableHead>
+            <TableHead>Lots</TableHead>
             <TableHead>SL</TableHead>
             <TableHead>TP</TableHead>
             <TableHead
@@ -111,6 +112,9 @@ export function TradeTable({ trades }: TradeTableProps) {
               </TableCell>
               <TableCell className="font-mono text-xs">
                 {trade.exitPrice.toFixed(2)}
+              </TableCell>
+              <TableCell className="font-mono text-xs">
+                {trade.lotSize.toFixed(2)}
               </TableCell>
               <TableCell className="font-mono text-xs">
                 {trade.slPrice.toFixed(2)}

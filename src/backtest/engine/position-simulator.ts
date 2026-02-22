@@ -25,8 +25,18 @@ export function checkPositionExit(
 
   if (!slHit && !tpHit) return null;
 
-  // SL wins on same-candle conflict
-  const exitReason: 'SL' | 'TP' = slHit ? 'SL' : 'TP';
+  // When both SL and TP hit on the same candle, use candle direction to infer order
+  let exitReason: 'SL' | 'TP';
+  if (slHit && tpHit) {
+    const isBullishCandle = candle.close > candle.open;
+    if (side === 'BUY') {
+      exitReason = isBullishCandle ? 'TP' : 'SL';
+    } else {
+      exitReason = isBullishCandle ? 'SL' : 'TP';
+    }
+  } else {
+    exitReason = slHit ? 'SL' : 'TP';
+  }
   const exitPrice = exitReason === 'SL' ? slPrice : tpPrice;
 
   const pnl = calculatePnl(side, entryPrice, exitPrice, position.lotSize);

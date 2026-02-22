@@ -53,6 +53,14 @@ export interface BacktestTrade {
   atrAtEntry: number;
 }
 
+export interface BacktestCandle {
+  openTime: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+}
+
 export interface CreateBacktestInput {
   startDate: string;
   endDate: string;

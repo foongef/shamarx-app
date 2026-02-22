@@ -2,13 +2,116 @@ import {
   BacktestCandle,
   IndicatorState,
   SwingPoint,
-  BOSEvent,
 } from './types';
 
+// ─── Regime Detection (H1 ADX) ─────────────────────────────────────────────
+
+export type MarketRegime = 'BULLISH' | 'BEARISH' | 'RANGING';
+
+export function getMarketRegime(
+  h1Indicators: IndicatorState,
+  h1Idx: number,
+): MarketRegime {
+  const adx = h1Indicators.adx14[h1Idx];
+  const plusDI = h1Indicators.plusDI14[h1Idx];
+  const minusDI = h1Indicators.minusDI14[h1Idx];
+
+  if (isNaN(adx) || isNaN(plusDI) || isNaN(minusDI)) return 'RANGING';
+  if (adx < 20) return 'RANGING';
+
+  return plusDI > minusDI ? 'BULLISH' : 'BEARISH';
+}
+
+// ─── Session Filter ─────────────────────────────────────────────────────────
+
+export function isActiveTradingSession(openTime: string): boolean {
+  const hour = new Date(openTime).getUTCHours();
+  // London: 07:00-11:00 UTC
+  if (hour >= 7 && hour < 11) return true;
+  // New York: 13:00-16:00 UTC
+  if (hour >= 13 && hour < 16) return true;
+  return false;
+}
+
+// ─── H1 Trend Confirmation (relaxed EMA cross) ─────────────────────────────
+
+export function getH1Bias(
+  h1Candles: BacktestCandle[],
+  h1Indicators: IndicatorState,
+  currentTime: string,
+): 'BULLISH' | 'BEARISH' | 'NEUTRAL' {
+  const target = new Date(currentTime).getTime();
+  let lo = 0;
+  let hi = h1Candles.length - 1;
+  let bestIdx = -1;
+
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    const midTime = new Date(h1Candles[mid].openTime).getTime();
+    if (midTime <= target) {
+      bestIdx = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+
+  if (bestIdx < 0) return 'NEUTRAL';
+
+  const ema20 = h1Indicators.ema20[bestIdx];
+  const ema50 = h1Indicators.ema50[bestIdx];
+
+  if (isNaN(ema20) || isNaN(ema50)) return 'NEUTRAL';
+
+  // Relaxed: just EMA20 vs EMA50 cross direction
+  if (ema20 > ema50) return 'BULLISH';
+  if (ema20 < ema50) return 'BEARISH';
+  return 'NEUTRAL';
+}
+
 /**
- * Detect swing points using left/right lookback.
- * Copied from strategy-service/structure-analyzer.ts for in-memory speed.
+ * Get the H1 regime at a given M15 candle time.
+ * Uses binary search to find the matching H1 candle.
  */
+export function getH1Regime(
+  h1Candles: BacktestCandle[],
+  h1Indicators: IndicatorState,
+  currentTime: string,
+): { regime: MarketRegime; bias: 'BULLISH' | 'BEARISH' | 'NEUTRAL' } {
+  const target = new Date(currentTime).getTime();
+  let lo = 0;
+  let hi = h1Candles.length - 1;
+  let bestIdx = -1;
+
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    const midTime = new Date(h1Candles[mid].openTime).getTime();
+    if (midTime <= target) {
+      bestIdx = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+
+  if (bestIdx < 0) {
+    return { regime: 'RANGING', bias: 'NEUTRAL' };
+  }
+
+  const regime = getMarketRegime(h1Indicators, bestIdx);
+  const ema20 = h1Indicators.ema20[bestIdx];
+  const ema50 = h1Indicators.ema50[bestIdx];
+
+  let bias: 'BULLISH' | 'BEARISH' | 'NEUTRAL' = 'NEUTRAL';
+  if (!isNaN(ema20) && !isNaN(ema50)) {
+    bias = ema20 > ema50 ? 'BULLISH' : ema20 < ema50 ? 'BEARISH' : 'NEUTRAL';
+  }
+
+  return { regime, bias };
+}
+
+// ─── Swing Points (kept from V1) ───────────────────────────────────────────
+
 export function detectSwingPoints(
   candles: BacktestCandle[],
   startIdx: number,
@@ -52,49 +155,8 @@ export function detectSwingPoints(
   return points;
 }
 
-/**
- * Detect Break of Structure at given candle index.
- */
-export function detectBOS(
-  candles: BacktestCandle[],
-  swingPoints: SwingPoint[],
-  candleIdx: number,
-): BOSEvent | null {
-  if (swingPoints.length < 3) return null;
+// ─── Confirmation Patterns (kept from V1) ──────────────────────────────────
 
-  const recentPoints = swingPoints.slice(-6);
-  const candle = candles[candleIdx];
-
-  const swingHighs = recentPoints.filter((p) => p.type === 'HIGH');
-  const swingLows = recentPoints.filter((p) => p.type === 'LOW');
-
-  if (swingHighs.length === 0 || swingLows.length === 0) return null;
-
-  const lastSwingHigh = swingHighs[swingHighs.length - 1];
-  const lastSwingLow = swingLows[swingLows.length - 1];
-
-  if (candle.close > lastSwingHigh.price) {
-    return {
-      direction: 'BUY',
-      brokenLevel: lastSwingHigh.price,
-      candleIndex: candleIdx,
-    };
-  }
-
-  if (candle.close < lastSwingLow.price) {
-    return {
-      direction: 'SELL',
-      brokenLevel: lastSwingLow.price,
-      candleIndex: candleIdx,
-    };
-  }
-
-  return null;
-}
-
-/**
- * Detect engulfing pattern at the last candle in slice.
- */
 export function detectEngulfing(
   candles: BacktestCandle[],
   idx: number,
@@ -118,9 +180,6 @@ export function detectEngulfing(
   return isBullishEngulfing || isBearishEngulfing;
 }
 
-/**
- * Detect strong close (body >= 60% of range, close in upper/lower 25%).
- */
 export function detectStrongClose(
   candles: BacktestCandle[],
   idx: number,
@@ -141,72 +200,7 @@ export function detectStrongClose(
   }
 }
 
-/**
- * Check if candle pulled back to an EMA value.
- */
-export function isPullbackToEMA(
-  candle: BacktestCandle,
-  emaValue: number,
-  atr: number,
-): boolean {
-  if (!emaValue || !atr || isNaN(emaValue) || isNaN(atr)) return false;
-  const tolerance = atr * 0.5;
-  return candle.low <= emaValue + tolerance && candle.high >= emaValue - tolerance;
-}
-
-/**
- * Check RSI alignment with direction.
- */
-export function isRSIAligned(rsi: number, isBullish: boolean): boolean {
-  if (isNaN(rsi)) return false;
-  if (isBullish) return rsi > 50 && rsi < 70;
-  return rsi < 50 && rsi > 30;
-}
-
-/**
- * Get H1 bias from H1 candles using binary search for most recent H1 candle <= current M15 time.
- */
-export function getH1Bias(
-  h1Candles: BacktestCandle[],
-  h1Indicators: IndicatorState,
-  currentTime: string,
-): 'BULLISH' | 'BEARISH' | 'NEUTRAL' {
-  // Binary search for the most recent H1 candle at or before currentTime
-  const target = new Date(currentTime).getTime();
-  let lo = 0;
-  let hi = h1Candles.length - 1;
-  let bestIdx = -1;
-
-  while (lo <= hi) {
-    const mid = (lo + hi) >> 1;
-    const midTime = new Date(h1Candles[mid].openTime).getTime();
-    if (midTime <= target) {
-      bestIdx = mid;
-      lo = mid + 1;
-    } else {
-      hi = mid - 1;
-    }
-  }
-
-  if (bestIdx < 0 || isNaN(h1Indicators.ema20[bestIdx]) || isNaN(h1Indicators.ema50[bestIdx])) {
-    return 'NEUTRAL';
-  }
-
-  const h1Close = h1Candles[bestIdx].close;
-  const h1Ema20 = h1Indicators.ema20[bestIdx];
-  const h1Ema50 = h1Indicators.ema50[bestIdx];
-
-  // H1 bullish: price above both EMAs, EMA20 > EMA50
-  if (h1Close > h1Ema20 && h1Close > h1Ema50 && h1Ema20 > h1Ema50) {
-    return 'BULLISH';
-  }
-  // H1 bearish: price below both EMAs, EMA20 < EMA50
-  if (h1Close < h1Ema20 && h1Close < h1Ema50 && h1Ema20 < h1Ema50) {
-    return 'BEARISH';
-  }
-
-  return 'NEUTRAL';
-}
+// ─── V2 Setup Signal ───────────────────────────────────────────────────────
 
 export interface SetupSignal {
   side: 'BUY' | 'SELL';
@@ -220,8 +214,16 @@ export interface SetupSignal {
 }
 
 /**
- * Evaluate whether candle at idx produces a valid setup.
- * Returns a signal if all confirmations pass, null otherwise.
+ * V2 Strategy: Trend-following pullback to EMA20 with regime + session filters.
+ *
+ * Entry conditions:
+ * 1. H1 ADX >= 20 (trending regime)
+ * 2. Active trading session (London 07-11 or NY 13-16 UTC)
+ * 3. H1 EMA20/EMA50 bias agrees with ADX DI direction
+ * 4. M15 price pulls back to EMA20 zone (within ATR*0.5)
+ * 5. Candle shows directional commitment (touches EMA20, closes in trade direction)
+ * 6. Engulfing or strong close confirmation
+ * 7. RSI in valid range (40-65 BUY, 35-60 SELL)
  */
 export function evaluateSetup(
   m15Candles: BacktestCandle[],
@@ -230,49 +232,66 @@ export function evaluateSetup(
   h1Indicators: IndicatorState,
   idx: number,
 ): SetupSignal | null {
-  // Need at least 50 prior candles
   if (idx < 50) return null;
 
+  const candle = m15Candles[idx];
   const ema20 = m15Indicators.ema20[idx];
-  const ema50 = m15Indicators.ema50[idx];
   const rsi = m15Indicators.rsi14[idx];
   const atr = m15Indicators.atr14[idx];
 
-  if (isNaN(ema20) || isNaN(ema50) || isNaN(rsi) || isNaN(atr)) return null;
+  if (isNaN(ema20) || isNaN(rsi) || isNaN(atr) || atr === 0) return null;
 
-  // Detect swing points over recent 50 candles
+  // Filter 1: Session filter
+  if (!isActiveTradingSession(candle.openTime)) return null;
+
+  // Filter 2: H1 regime + bias
+  const { regime, bias } = getH1Regime(h1Candles, h1Indicators, candle.openTime);
+  if (regime === 'RANGING') return null;
+  if (bias === 'NEUTRAL') return null;
+  // Regime direction must agree with EMA bias
+  if (regime !== bias) return null;
+
+  const isBullish = regime === 'BULLISH';
+
+  // Filter 3: RSI range
+  if (isBullish && (rsi < 40 || rsi > 65)) return null;
+  if (!isBullish && (rsi < 35 || rsi > 60)) return null;
+
+  // Entry: Pullback to M15 EMA20 zone
+  const tolerance = atr * 0.5;
+  const touchesEma = candle.low <= ema20 + tolerance && candle.high >= ema20 - tolerance;
+  if (!touchesEma) return null;
+
+  // Directional commitment: candle dips to EMA20 zone and closes in trade direction
+  if (isBullish) {
+    // Price must dip toward or below EMA20, then close above it
+    if (candle.low > ema20 + tolerance * 0.5) return null; // didn't pull back enough
+    if (candle.close <= ema20) return null; // didn't close above EMA20
+    if (candle.close <= candle.open) return null; // not a bullish candle
+  } else {
+    // Price must rise toward or above EMA20, then close below it
+    if (candle.high < ema20 - tolerance * 0.5) return null; // didn't pull back enough
+    if (candle.close >= ema20) return null; // didn't close below EMA20
+    if (candle.close >= candle.open) return null; // not a bearish candle
+  }
+
+  // Confirmation pattern
+  const hasEngulfing = detectEngulfing(m15Candles, idx);
+  const hasStrongClose = detectStrongClose(m15Candles, idx);
+  if (!hasEngulfing && !hasStrongClose) return null;
+
+  // Build tags
+  const tags: string[] = ['PULLBACK_EMA20', 'V2'];
+  if (hasEngulfing) tags.push('ENGULFING');
+  if (hasStrongClose) tags.push('STRONG_CLOSE');
+  tags.push(regime === 'BULLISH' ? 'ADX_BULL' : 'ADX_BEAR');
+
+  // Compute SL/TP
+  const entryPrice = candle.close;
+  const spreadBuffer = atr * 0.3;
+
   const windowStart = Math.max(0, idx - 50);
   const swingPoints = detectSwingPoints(m15Candles, windowStart, idx);
-  const bos = detectBOS(m15Candles, swingPoints, idx);
-
-  if (!bos) return null;
-
-  const isBullish = bos.direction === 'BUY';
-
-  // Check H1 bias alignment
-  const h1Bias = getH1Bias(h1Candles, h1Indicators, m15Candles[idx].openTime);
-  const biasAligned =
-    (isBullish && h1Bias === 'BULLISH') ||
-    (!isBullish && h1Bias === 'BEARISH');
-
-  // Gather confirmation tags
-  const tags: string[] = ['BOS'];
-
-  if (detectEngulfing(m15Candles, idx)) tags.push('ENGULFING');
-  if (detectStrongClose(m15Candles, idx)) tags.push('STRONG_CLOSE');
-  if (isPullbackToEMA(m15Candles[idx], ema20, atr)) tags.push('PULLBACK_EMA20');
-  if (isPullbackToEMA(m15Candles[idx], ema50, atr)) tags.push('PULLBACK_EMA50');
-  if (isRSIAligned(rsi, isBullish)) tags.push('RSI_ALIGNED');
-  if (biasAligned) tags.push('H1_BIAS_ALIGNED');
-
-  // Require pullback + confirmation
-  const hasPullback = tags.includes('PULLBACK_EMA20') || tags.includes('PULLBACK_EMA50');
-  const hasConfirmation = tags.includes('ENGULFING') || tags.includes('STRONG_CLOSE');
-
-  if (!hasPullback || !hasConfirmation) return null;
-
-  // Compute entry, SL, TP
-  const entryPrice = m15Candles[idx].close;
 
   let slPrice: number;
   let tpPrice: number;
@@ -282,34 +301,37 @@ export function evaluateSetup(
       .filter((p) => p.type === 'LOW')
       .slice(-3)
       .map((p) => p.price);
-    const swingSL = recentLows.length > 0 ? Math.min(...recentLows) : 0;
-    const atrSL = entryPrice - atr * 1.5;
-    slPrice = Math.max(swingSL, atrSL);
-    const slPoints = entryPrice - slPrice;
-    tpPrice = entryPrice + slPoints * 2;
+    const swingSL = recentLows.length > 0 ? Math.min(...recentLows) : entryPrice - atr * 2.0;
+    slPrice = Math.min(swingSL, entryPrice - atr * 1.0) - spreadBuffer;
   } else {
     const recentHighs = swingPoints
       .filter((p) => p.type === 'HIGH')
       .slice(-3)
       .map((p) => p.price);
-    const swingSL = recentHighs.length > 0 ? Math.max(...recentHighs) : 0;
-    const atrSL = entryPrice + atr * 1.5;
-    slPrice = Math.min(swingSL, atrSL);
-    const slPoints = slPrice - entryPrice;
-    tpPrice = entryPrice - slPoints * 2;
+    const swingSL = recentHighs.length > 0 ? Math.max(...recentHighs) : entryPrice + atr * 2.0;
+    slPrice = Math.max(swingSL, entryPrice + atr * 1.0) + spreadBuffer;
   }
 
-  // Validate SL/TP sanity
+  // Clamp SL distance to [ATR*1.0, ATR*3.0]
   const slDistance = Math.abs(entryPrice - slPrice);
-  if (slDistance < atr * 0.3 || slDistance > atr * 5) return null;
+  if (slDistance < atr * 1.0) {
+    slPrice = isBullish ? entryPrice - atr * 1.0 : entryPrice + atr * 1.0;
+  }
+  if (slDistance > atr * 3.0) {
+    slPrice = isBullish ? entryPrice - atr * 3.0 : entryPrice + atr * 3.0;
+  }
+
+  // TP at 1.5x risk
+  const risk = Math.abs(entryPrice - slPrice);
+  tpPrice = isBullish ? entryPrice + risk * 1.5 : entryPrice - risk * 1.5;
 
   return {
-    side: bos.direction,
+    side: isBullish ? 'BUY' : 'SELL',
     entryPrice: Math.round(entryPrice * 100) / 100,
     slPrice: Math.round(slPrice * 100) / 100,
     tpPrice: Math.round(tpPrice * 100) / 100,
     setupTags: tags,
-    h1Bias,
+    h1Bias: bias,
     rsiAtEntry: Math.round(rsi * 100) / 100,
     atrAtEntry: Math.round(atr * 100) / 100,
   };

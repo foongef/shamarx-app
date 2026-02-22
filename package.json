@@ -13,6 +13,7 @@
     "format": "prettier --write \"src/**/*.ts\" \"libs/**/*.ts\"",
     "docker:up": "docker compose --env-file .env -f docker/docker-compose.yml up --build -d",
     "docker:down": "docker compose --env-file .env -f docker/docker-compose.yml down",
+    "docker:restart": "docker compose --env-file .env -f docker/docker-compose.yml up --build -d --force-recreate --no-deps",
     "docker:logs": "docker compose --env-file .env -f docker/docker-compose.yml logs -f",
     "docker:ps": "docker compose --env-file .env -f docker/docker-compose.yml ps",
     "prisma:generate": "prisma generate --schema=libs/prisma/schema.prisma",

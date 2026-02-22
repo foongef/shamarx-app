@@ -46,4 +46,13 @@ export class BacktestController {
     if (!trades) throw new NotFoundException(`Backtest run ${id} not found`);
     return trades;
   }
+
+  @Get(':id/candles')
+  @ApiOperation({ summary: 'Get M15 candles for a backtest run time range' })
+  @ApiParam({ name: 'id', description: 'Backtest run ID' })
+  async getBacktestCandles(@Param('id') id: string) {
+    const candles = await this.backtestService.getCandles(id);
+    if (!candles) throw new NotFoundException(`Backtest run ${id} not found`);
+    return candles;
+  }
 }

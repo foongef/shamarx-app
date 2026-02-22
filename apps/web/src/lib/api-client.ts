@@ -1,6 +1,7 @@
 import type {
   BacktestRun,
   BacktestTrade,
+  BacktestCandle,
   CreateBacktestInput,
   CreateBacktestResponse,
 } from './types';
@@ -39,5 +40,9 @@ export const api = {
 
   getBacktestTrades(id: string) {
     return request<BacktestTrade[]>(`/api/backtest/${id}/trades`);
+  },
+
+  getBacktestCandles(id: string) {
+    return request<BacktestCandle[]>(`/api/backtest/${id}/candles`);
   },
 };

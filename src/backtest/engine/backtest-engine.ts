@@ -36,6 +36,8 @@ export class BacktestEngine {
     const riskManager = new RiskManager(config);
     const openPositions: SimulatedPosition[] = [];
     const closedTrades: ClosedTrade[] = [];
+    let cooldownUntil = -1; // entry cooldown (candle index)
+    let slCooldownUntil = -1; // extra cooldown after SL hit
 
     // Walk-forward loop
     for (let i = 0; i < m15Candles.length; i++) {
@@ -48,13 +50,22 @@ export class BacktestEngine {
           riskManager.recordTrade(result.pnl, candle.openTime);
           closedTrades.push(result);
           openPositions.splice(j, 1);
+
+          // Set cooldown based on exit type
+          if (result.exitReason === 'SL') {
+            slCooldownUntil = i + 12; // 12-candle cooldown after SL (3 hours on M15)
+          }
+          cooldownUntil = i + 8; // 8-candle cooldown after any trade (2 hours on M15)
         }
       }
 
-      // Step 2: Check for new setups (only if risk allows)
+      // Step 2: Check for new setups (only if risk + cooldown allows)
+      if (i <= cooldownUntil || i <= slCooldownUntil) continue;
+
       const currentDate = candle.openTime.substring(0, 10);
       if (!riskManager.canTrade(currentDate, openPositions.length)) continue;
 
+      // Single-pass evaluation — no more BOS phases
       const signal = evaluateSetup(
         m15Candles,
         m15Indicators,
@@ -84,6 +95,7 @@ export class BacktestEngine {
       };
 
       openPositions.push(position);
+      cooldownUntil = i + 8; // cooldown after entry
     }
 
     // Force-close any remaining open positions at last candle's close

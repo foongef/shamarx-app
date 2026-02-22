@@ -159,6 +159,30 @@ export class BacktestService {
     };
   }
 
+  async getCandles(runId: string): Promise<BacktestCandle[] | null> {
+    const run = await this.prisma.backtestRun.findUnique({
+      where: { id: runId },
+    });
+    if (!run) return null;
+
+    const candles = await this.fetchCandles(
+      'M15',
+      run.startDate.toISOString().split('T')[0],
+      run.endDate.toISOString().split('T')[0],
+    );
+
+    return candles.map((c) => ({
+      symbol: c.symbol,
+      timeframe: c.timeframe,
+      openTime: c.openTime,
+      open: c.open,
+      high: c.high,
+      low: c.low,
+      close: c.close,
+      volume: c.volume,
+    }));
+  }
+
   async getTrades(runId: string): Promise<BacktestTradeResult[] | null> {
     const run = await this.prisma.backtestRun.findUnique({
       where: { id: runId },

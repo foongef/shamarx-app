@@ -15,6 +15,9 @@ export interface IndicatorState {
   ema200: number[];
   rsi14: number[];
   atr14: number[];
+  adx14: number[];
+  plusDI14: number[];
+  minusDI14: number[];
 }
 
 export interface SimulatedPosition {

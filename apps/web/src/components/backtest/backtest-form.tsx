@@ -14,7 +14,7 @@ import { Loader2 } from 'lucide-react';
 const schema = z.object({
   startDate: z.string().min(1, 'Start date is required'),
   endDate: z.string().min(1, 'End date is required'),
-  initialBalance: z.coerce.number().min(1000).max(1_000_000),
+  initialBalance: z.coerce.number().min(100).max(1_000_000),
   riskPercent: z.coerce.number().min(0.1).max(10),
   withLlm: z.boolean(),
 });

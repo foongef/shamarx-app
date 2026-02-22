@@ -1,23 +1,30 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
-import { createChart, createSeriesMarkers, LineSeries, type IChartApi } from 'lightweight-charts';
+import {
+  createChart,
+  createSeriesMarkers,
+  CandlestickSeries,
+  type IChartApi,
+  type UTCTimestamp,
+} from 'lightweight-charts';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import type { BacktestTrade } from '@/lib/types';
+import type { BacktestTrade, BacktestCandle } from '@/lib/types';
 
 interface CandlestickChartProps {
+  candles: BacktestCandle[];
   trades: BacktestTrade[];
 }
 
-export function CandlestickChart({ trades }: CandlestickChartProps) {
+export function CandlestickChart({ candles, trades }: CandlestickChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
 
   useEffect(() => {
-    if (!containerRef.current || trades.length === 0) return;
+    if (!containerRef.current || candles.length === 0) return;
 
     const chart = createChart(containerRef.current, {
-      height: 400,
+      height: 500,
       layout: {
         background: { color: 'transparent' },
         textColor: '#9ca3af',
@@ -31,46 +38,63 @@ export function CandlestickChart({ trades }: CandlestickChartProps) {
       },
       timeScale: {
         borderColor: 'rgba(255,255,255,0.1)',
+        timeVisible: true,
+        secondsVisible: false,
+      },
+      crosshair: {
+        mode: 0,
       },
     });
 
-    const sorted = [...trades].sort(
-      (a, b) => new Date(a.entryTime).getTime() - new Date(b.entryTime).getTime(),
+    const toUTC = (iso: string) =>
+      Math.floor(new Date(iso).getTime() / 1000) as UTCTimestamp;
+
+    // Candlestick series with OHLC data
+    const candleSeries = chart.addSeries(CandlestickSeries, {
+      upColor: '#22c55e',
+      downColor: '#ef4444',
+      borderUpColor: '#22c55e',
+      borderDownColor: '#ef4444',
+      wickUpColor: '#22c55e',
+      wickDownColor: '#ef4444',
+    });
+
+    const sortedCandles = [...candles].sort(
+      (a, b) => new Date(a.openTime).getTime() - new Date(b.openTime).getTime(),
     );
 
-    // Entry price line
-    const entryData = sorted.map((t) => ({
-      time: t.entryTime.split('T')[0],
-      value: t.entryPrice,
-    }));
-    const entrySeries = chart.addSeries(LineSeries, {
-      color: '#6366f1',
-      lineWidth: 2,
-      title: 'Entry Price',
-    });
-    entrySeries.setData(entryData);
+    candleSeries.setData(
+      sortedCandles.map((c) => ({
+        time: toUTC(c.openTime),
+        open: c.open,
+        high: c.high,
+        low: c.low,
+        close: c.close,
+      })),
+    );
 
-    // Trade markers
-    const markers = sorted.flatMap((t) => [
-      {
-        time: t.entryTime.split('T')[0],
-        position: 'belowBar' as const,
-        color: t.side === 'BUY' ? '#22c55e' : '#ef4444',
-        shape: 'arrowUp' as const,
-        text: `${t.side} @ ${t.entryPrice.toFixed(1)}`,
-      },
-      {
-        time: t.exitTime.split('T')[0],
-        position: 'aboveBar' as const,
-        color: t.pnl >= 0 ? '#22c55e' : '#ef4444',
-        shape: 'arrowDown' as const,
-        text: `Exit ${t.exitReason} (${t.pnl >= 0 ? '+' : ''}${t.pnl.toFixed(2)})`,
-      },
-    ]);
+    // Trade markers overlaid on the candlestick series
+    if (trades.length > 0) {
+      const markers = trades.flatMap((t) => [
+        {
+          time: toUTC(t.entryTime),
+          position: (t.side === 'BUY' ? 'belowBar' : 'aboveBar') as 'belowBar' | 'aboveBar',
+          color: t.side === 'BUY' ? '#22c55e' : '#ef4444',
+          shape: (t.side === 'BUY' ? 'arrowUp' : 'arrowDown') as 'arrowUp' | 'arrowDown',
+          text: `${t.side} @ ${t.entryPrice.toFixed(1)}`,
+        },
+        {
+          time: toUTC(t.exitTime),
+          position: (t.pnl >= 0 ? 'aboveBar' : 'belowBar') as 'aboveBar' | 'belowBar',
+          color: t.pnl >= 0 ? '#22c55e' : '#ef4444',
+          shape: (t.pnl >= 0 ? 'circle' : 'circle') as 'circle',
+          text: `${t.exitReason} ${t.pnl >= 0 ? '+' : ''}$${t.pnl.toFixed(0)}`,
+        },
+      ]);
 
-    // Sort markers by time for lightweight-charts
-    markers.sort((a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : 0));
-    createSeriesMarkers(entrySeries, markers);
+      markers.sort((a, b) => (a.time as number) - (b.time as number));
+      createSeriesMarkers(candleSeries, markers);
+    }
 
     chart.timeScale().fitContent();
     chartRef.current = chart;
@@ -87,13 +111,13 @@ export function CandlestickChart({ trades }: CandlestickChartProps) {
       chart.remove();
       chartRef.current = null;
     };
-  }, [trades]);
+  }, [candles, trades]);
 
   return (
     <Card>
       <CardHeader className="pb-2">
         <CardTitle className="text-sm font-medium">
-          Trade Entries & Exits
+          XAUUSD M15 &mdash; Price Action & Trades
         </CardTitle>
       </CardHeader>
       <CardContent>
