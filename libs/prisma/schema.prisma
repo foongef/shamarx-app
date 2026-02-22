@@ -205,6 +205,7 @@ model BacktestTrade {
   tpPrice       Float
   lotSize       Float
   pnl           Float
+  commission    Float    @default(0)
   setupTags     String[]
   entryTime     DateTime
   exitTime      DateTime

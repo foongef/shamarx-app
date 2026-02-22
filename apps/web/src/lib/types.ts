@@ -15,6 +15,7 @@ export interface BacktestMetrics {
   largestLoss: number;
   maxConsecutiveWins: number;
   maxConsecutiveLosses: number;
+  totalCommission: number;
   finalBalance: number;
   returnPercent: number;
 }
@@ -44,6 +45,7 @@ export interface BacktestTrade {
   tpPrice: number;
   lotSize: number;
   pnl: number;
+  commission: number;
   setupTags: string[];
   entryTime: string;
   exitTime: string;

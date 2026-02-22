@@ -53,6 +53,9 @@ export class BacktestMetricsDto {
   @ApiProperty({ example: 11250.0 })
   finalBalance: number;
 
+  @ApiProperty({ example: 350.0 })
+  totalCommission: number;
+
   @ApiProperty({ example: 12.5 })
   returnPercent: number;
 }
@@ -81,6 +84,9 @@ export class BacktestTradeResult {
 
   @ApiProperty({ example: 100.0 })
   pnl: number;
+
+  @ApiProperty({ example: 0.7 })
+  commission: number;
 
   @ApiProperty({ example: ['BOS', 'PULLBACK_EMA20'] })
   setupTags: string[];

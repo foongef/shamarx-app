@@ -34,9 +34,8 @@ services:
     container_name: trading-bot-execution
     ports:
       - '8000:8000'
-    environment:
-      MT5_MODE: mock
-      EXECUTION_PORT: '8000'
+    env_file:
+      - ../.env
     healthcheck:
       test: ['CMD', 'python', '-c', 'import httpx; httpx.get("http://localhost:8000/health")']
       interval: 10s

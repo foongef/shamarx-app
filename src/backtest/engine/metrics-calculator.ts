@@ -22,6 +22,7 @@ export function calculateMetrics(
       largestLoss: 0,
       maxConsecutiveWins: 0,
       maxConsecutiveLosses: 0,
+      totalCommission: 0,
       finalBalance: initialBalance,
       returnPercent: 0,
     };
@@ -80,6 +81,7 @@ export function calculateMetrics(
     }
   }
 
+  const totalCommission = trades.reduce((sum, t) => sum + t.commission, 0);
   const finalBalance = initialBalance + totalPnl;
 
   return {
@@ -102,6 +104,7 @@ export function calculateMetrics(
     largestLoss: losses.length > 0 ? Math.round(Math.min(...losses.map((t) => t.pnl)) * 100) / 100 : 0,
     maxConsecutiveWins: maxConsWins,
     maxConsecutiveLosses: maxConsLosses,
+    totalCommission: Math.round(totalCommission * 100) / 100,
     finalBalance: Math.round(finalBalance * 100) / 100,
     returnPercent: Math.round(((finalBalance - initialBalance) / initialBalance) * 10000) / 100,
   };

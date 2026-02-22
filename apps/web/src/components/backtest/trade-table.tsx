@@ -84,6 +84,7 @@ export function TradeTable({ trades }: TradeTableProps) {
             >
               PnL <SortIcon column="pnl" />
             </TableHead>
+            <TableHead>Comm.</TableHead>
             <TableHead>Tags</TableHead>
             <TableHead
               className="cursor-pointer"
@@ -128,6 +129,9 @@ export function TradeTable({ trades }: TradeTableProps) {
                 }`}
               >
                 {formatCurrency(trade.pnl)}
+              </TableCell>
+              <TableCell className="font-mono text-xs text-muted-foreground">
+                {formatCurrency(trade.commission)}
               </TableCell>
               <TableCell>
                 <div className="flex flex-wrap gap-1">

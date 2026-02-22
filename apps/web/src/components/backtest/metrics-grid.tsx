@@ -14,8 +14,8 @@ export function MetricsGrid({ metrics, initialBalance }: MetricsGridProps) {
     { label: 'Total Trades', value: metrics.totalTrades.toString() },
     {
       label: 'Win Rate',
-      value: formatPercent(metrics.winRate * 100).replace('+', ''),
-      color: metrics.winRate >= 0.5 ? 'text-green-500' : 'text-red-500',
+      value: `${formatNumber(metrics.winRate)}%`,
+      color: metrics.winRate >= 50 ? 'text-green-500' : 'text-red-500',
     },
     {
       label: 'Profit Factor',
@@ -77,6 +77,11 @@ export function MetricsGrid({ metrics, initialBalance }: MetricsGridProps) {
     {
       label: 'Max Consec. Losses',
       value: metrics.maxConsecutiveLosses.toString(),
+    },
+    {
+      label: 'Total Commission',
+      value: formatCurrency(metrics.totalCommission),
+      color: 'text-red-500',
     },
     {
       label: 'Initial Balance',

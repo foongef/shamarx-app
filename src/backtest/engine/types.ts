@@ -42,6 +42,7 @@ export interface ClosedTrade {
   tpPrice: number;
   lotSize: number;
   pnl: number;
+  commission: number;
   setupTags: string[];
   entryTime: string;
   exitTime: string;
@@ -84,6 +85,7 @@ export interface BacktestMetrics {
   largestLoss: number;
   maxConsecutiveWins: number;
   maxConsecutiveLosses: number;
+  totalCommission: number;
   finalBalance: number;
   returnPercent: number;
 }

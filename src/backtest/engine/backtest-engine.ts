@@ -11,6 +11,9 @@ import { evaluateSetup } from './strategy-evaluator';
 import { checkPositionExit, forceClosePosition } from './position-simulator';
 import { RiskManager } from './risk-manager';
 import { calculateMetrics } from './metrics-calculator';
+import { getSpread } from './spread-model';
+
+const COMMISSION_PER_LOT = 7.0; // $7 per lot round-trip (Pepperstone Raw typical)
 
 export interface BacktestResult {
   trades: ClosedTrade[];
@@ -42,10 +45,13 @@ export class BacktestEngine {
     // Walk-forward loop
     for (let i = 0; i < m15Candles.length; i++) {
       const candle = m15Candles[i];
+      const spread = getSpread(candle.openTime);
 
       // Step 1: Check exits on existing positions
       for (let j = openPositions.length - 1; j >= 0; j--) {
-        const result = checkPositionExit(openPositions[j], candle);
+        const pos = openPositions[j];
+        const commission = pos.lotSize * COMMISSION_PER_LOT;
+        const result = checkPositionExit(pos, candle, spread, commission);
         if (result) {
           riskManager.recordTrade(result.pnl, candle.openTime);
           closedTrades.push(result);
@@ -65,13 +71,14 @@ export class BacktestEngine {
       const currentDate = candle.openTime.substring(0, 10);
       if (!riskManager.canTrade(currentDate, openPositions.length)) continue;
 
-      // Single-pass evaluation — no more BOS phases
+      // Single-pass evaluation — spread passed for entry adjustment
       const signal = evaluateSetup(
         m15Candles,
         m15Indicators,
         h1Candles,
         h1Indicators,
         i,
+        spread,
       );
 
       if (!signal) continue;
@@ -102,10 +109,12 @@ export class BacktestEngine {
     if (openPositions.length > 0 && m15Candles.length > 0) {
       const lastCandle = m15Candles[m15Candles.length - 1];
       for (const pos of openPositions) {
+        const commission = pos.lotSize * COMMISSION_PER_LOT;
         const result = forceClosePosition(
           pos,
           lastCandle.close,
           lastCandle.openTime,
+          commission,
         );
         riskManager.recordTrade(result.pnl, lastCandle.openTime);
         closedTrades.push(result);
@@ -119,6 +128,7 @@ export class BacktestEngine {
         `winRate=${metrics.winRate}%, PnL=$${metrics.totalPnl}, ` +
         `maxDD=${metrics.maxDrawdownPercent}%`,
     );
+
 
     return { trades: closedTrades, metrics };
   }
