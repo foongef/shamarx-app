@@ -1,0 +1,217 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Candle {
+  id        String   @id @default(uuid())
+  symbol    String
+  timeframe String
+  openTime  DateTime
+  open      Float
+  high      Float
+  low       Float
+  close     Float
+  volume    Float
+  createdAt DateTime @default(now())
+
+  @@unique([symbol, timeframe, openTime])
+  @@index([symbol, timeframe, openTime])
+}
+
+model Indicator {
+  id        String   @id @default(uuid())
+  symbol    String
+  timeframe String
+  openTime  DateTime
+  name      String
+  value     Float
+  createdAt DateTime @default(now())
+
+  @@unique([symbol, timeframe, openTime, name])
+  @@index([symbol, timeframe, name])
+}
+
+model SpreadSnapshot {
+  id        String   @id @default(uuid())
+  symbol    String
+  bid       Float
+  ask       Float
+  spread    Float
+  timestamp DateTime @default(now())
+
+  @@index([symbol, timestamp])
+}
+
+model SupportResistanceLevel {
+  id        String   @id @default(uuid())
+  symbol    String
+  timeframe String
+  price     Float
+  type      String   // SUPPORT or RESISTANCE
+  strength  Int      @default(1)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([symbol, timeframe, isActive])
+}
+
+model CandidateTrade {
+  id          String   @id @default(uuid())
+  symbol      String
+  side        String   // BUY or SELL
+  entryPrice  Float
+  slPrice     Float
+  tpPrice     Float
+  slPoints    Float
+  tpPoints    Float
+  setupTags   String[] // e.g. ["BOS", "PULLBACK_EMA20", "ENGULFING"]
+  h1Bias      String   // BULLISH, BEARISH, NEUTRAL
+  rsiValue    Float
+  atrValue    Float
+  spreadAtDetection Float
+  timeframe   String
+  status      String   @default("PENDING") // PENDING, APPROVED, REJECTED
+  createdAt   DateTime @default(now())
+
+  llmDecision LlmDecision?
+  trade       Trade?
+
+  @@index([status, createdAt])
+}
+
+model LlmDecision {
+  id            String   @id @default(uuid())
+  candidateId   String   @unique
+  candidate     CandidateTrade @relation(fields: [candidateId], references: [id])
+  decision      String   // ALLOW or REJECT
+  confidence    Float
+  reasoning     String
+  toolsUsed     String[]
+  rawResponse   String
+  inputTokens   Int
+  outputTokens  Int
+  latencyMs     Int
+  createdAt     DateTime @default(now())
+}
+
+model Trade {
+  id            String   @id @default(uuid())
+  candidateId   String   @unique
+  candidate     CandidateTrade @relation(fields: [candidateId], references: [id])
+  mt5Ticket     Int?
+  symbol        String
+  side          String
+  lotSize       Float
+  entryPrice    Float
+  closePrice    Float?
+  slPrice       Float
+  tpPrice       Float
+  status        String   @default("PENDING") // PENDING, OPEN, CLOSED, CANCELLED
+  pnl           Float?
+  closedAt      DateTime?
+  statusHistory Json     @default("[]")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  journalEntry  JournalEntry?
+
+  @@index([status])
+  @@index([symbol, createdAt])
+}
+
+model RiskState {
+  id                  String   @id @default(uuid())
+  date                DateTime @unique @db.Date
+  dailyPnl            Float    @default(0)
+  consecutiveLosses   Int      @default(0)
+  openPositionCount   Int      @default(0)
+  dailyLossLimitHit   Boolean  @default(false)
+  consecutiveLossLimitHit Boolean @default(false)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+}
+
+model RiskConfig {
+  id                    String @id @default(uuid())
+  maxDailyLossPercent   Float  @default(3.0)
+  maxOpenPositions      Int    @default(3)
+  maxConsecutiveLosses  Int    @default(3)
+  riskPerTradePercent   Float  @default(1.0)
+  maxSpreadPoints       Float  @default(50)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+}
+
+model JournalEntry {
+  id            String   @id @default(uuid())
+  tradeId       String   @unique
+  trade         Trade    @relation(fields: [tradeId], references: [id])
+  setupSummary  String
+  llmReasoning  String
+  entryContext  Json?
+  exitContext   Json?
+  outcome       String?
+  tags          String[]
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model EconomicEvent {
+  id        String   @id @default(uuid())
+  title     String
+  country   String
+  impact    String   // HIGH, MEDIUM, LOW
+  eventTime DateTime
+  actual    String?
+  forecast  String?
+  previous  String?
+  createdAt DateTime @default(now())
+
+  @@index([eventTime, impact])
+  @@unique([title, eventTime])
+}
+
+model BacktestRun {
+  id             String    @id @default(uuid())
+  startDate      DateTime
+  endDate        DateTime
+  initialBalance Float
+  riskPercent    Float
+  withLlm        Boolean   @default(false)
+  status         String    @default("PENDING") // PENDING, RUNNING, COMPLETED, FAILED
+  metrics        Json?
+  errorMessage   String?
+  createdAt      DateTime  @default(now())
+  completedAt    DateTime?
+  trades         BacktestTrade[]
+
+  @@index([status, createdAt])
+}
+
+model BacktestTrade {
+  id            String   @id @default(uuid())
+  backtestRunId String
+  backtestRun   BacktestRun @relation(fields: [backtestRunId], references: [id], onDelete: Cascade)
+  side          String
+  entryPrice    Float
+  exitPrice     Float
+  slPrice       Float
+  tpPrice       Float
+  lotSize       Float
+  pnl           Float
+  setupTags     String[]
+  entryTime     DateTime
+  exitTime      DateTime
+  exitReason    String   // SL, TP, FORCED_CLOSE
+  h1Bias        String
+  rsiAtEntry    Float
+  atrAtEntry    Float
+
+  @@index([backtestRunId])
+}

@@ -1,0 +1,26 @@
+node_modules/
+dist/
+.env
+*.js.map
+*.d.ts
+!jest.config.ts
+!nest-cli.json
+
+# Python
+services/execution-service/__pycache__/
+services/execution-service/.venv/
+services/execution-service/*.pyc
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Prisma
+libs/prisma/src/generated/
+
+# Docker
+docker/data/
+
+# Next.js
+apps/web/.next/
