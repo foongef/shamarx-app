@@ -16,6 +16,9 @@ services/execution-service/*.pyc
 .vscode/
 *.swp
 
+# macOS
+.DS_Store
+
 # Prisma
 libs/prisma/src/generated/
 
