@@ -146,7 +146,12 @@ export function TradeTable({ trades }: TradeTableProps) {
                 {format(new Date(trade.entryTime), 'MMM d, HH:mm')}
               </TableCell>
               <TableCell>
-                <Badge variant="secondary">{trade.exitReason}</Badge>
+                <Badge
+                  variant="secondary"
+                  className={trade.exitReason === 'BREAKEVEN' ? 'bg-amber-500/20 text-amber-500' : ''}
+                >
+                  {trade.exitReason}
+                </Badge>
               </TableCell>
             </TableRow>
           ))}

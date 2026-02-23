@@ -179,6 +179,7 @@ model EconomicEvent {
 
 model BacktestRun {
   id             String    @id @default(uuid())
+  symbol         String    @default("XAUUSD")
   startDate      DateTime
   endDate        DateTime
   initialBalance Float

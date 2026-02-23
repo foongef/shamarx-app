@@ -19,8 +19,8 @@ export function getMarketRegime(
   if (isNaN(adx) || isNaN(plusDI) || isNaN(minusDI)) return 'RANGING';
   if (adx < 20) return 'RANGING';
 
-  // V2.1: DI separation — clear directional dominance
-  if (Math.abs(plusDI - minusDI) < 5) return 'RANGING';
+  // V2.2: DI separation — directional dominance (relaxed from 5 to 3)
+  if (Math.abs(plusDI - minusDI) < 3) return 'RANGING';
 
   return plusDI > minusDI ? 'BULLISH' : 'BEARISH';
 }
@@ -40,12 +40,12 @@ function getLocalHour(utcTime: string, tz: string): number {
 
 export function isActiveTradingSession(openTime: string): boolean {
   const londonHour = getLocalHour(openTime, 'Europe/London');
-  // London: local 08:00-11:59 (covers both GMT and BST)
-  if (londonHour >= 8 && londonHour < 12) return true;
+  // London: local 08:00-16:59 — full London session + London-NY overlap
+  if (londonHour >= 8 && londonHour < 17) return true;
 
   const nyHour = getLocalHour(openTime, 'America/New_York');
-  // New York: local 08:00-10:59 (covers both EST and EDT)
-  if (nyHour >= 8 && nyHour < 11) return true;
+  // New York: local 08:00-13:59 — full US morning + early afternoon
+  if (nyHour >= 8 && nyHour < 14) return true;
 
   return false;
 }
@@ -87,6 +87,43 @@ export function getH1Bias(
 }
 
 /**
+ * V2.8: Check if H1 regime has been stable (same regime) for the last N H1 bars.
+ * Returns false if regime flipped recently — prevents whipsaw entries.
+ */
+export function isH1RegimeStable(
+  h1Candles: BacktestCandle[],
+  h1Indicators: IndicatorState,
+  currentTime: string,
+  lookback: number = 2,
+): boolean {
+  const target = new Date(currentTime).getTime();
+  let lo = 0;
+  let hi = h1Candles.length - 1;
+  let bestIdx = -1;
+
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    const midTime = new Date(h1Candles[mid].openTime).getTime();
+    if (midTime <= target) {
+      bestIdx = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+
+  if (bestIdx < lookback) return false;
+
+  const currentRegime = getMarketRegime(h1Indicators, bestIdx);
+  for (let k = 1; k <= lookback; k++) {
+    if (getMarketRegime(h1Indicators, bestIdx - k) !== currentRegime) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
  * Get the H1 regime at a given M15 candle time.
  * Uses binary search to find the matching H1 candle.
  */
@@ -94,7 +131,7 @@ export function getH1Regime(
   h1Candles: BacktestCandle[],
   h1Indicators: IndicatorState,
   currentTime: string,
-): { regime: MarketRegime; bias: 'BULLISH' | 'BEARISH' | 'NEUTRAL' } {
+): { regime: MarketRegime; bias: 'BULLISH' | 'BEARISH' | 'NEUTRAL'; h1Adx: number; adxRising: boolean } {
   const target = new Date(currentTime).getTime();
   let lo = 0;
   let hi = h1Candles.length - 1;
@@ -112,19 +149,24 @@ export function getH1Regime(
   }
 
   if (bestIdx < 0) {
-    return { regime: 'RANGING', bias: 'NEUTRAL' };
+    return { regime: 'RANGING', bias: 'NEUTRAL', h1Adx: 0, adxRising: false };
   }
 
   const regime = getMarketRegime(h1Indicators, bestIdx);
   const ema20 = h1Indicators.ema20[bestIdx];
   const ema50 = h1Indicators.ema50[bestIdx];
+  const h1Adx = h1Indicators.adx14[bestIdx];
 
   let bias: 'BULLISH' | 'BEARISH' | 'NEUTRAL' = 'NEUTRAL';
   if (!isNaN(ema20) && !isNaN(ema50)) {
     bias = ema20 > ema50 ? 'BULLISH' : ema20 < ema50 ? 'BEARISH' : 'NEUTRAL';
   }
 
-  return { regime, bias };
+  // V2.6: Check if ADX is rising (compare with 2 H1 candles back = 2hr lookback)
+  const adxPrev = bestIdx >= 2 ? h1Indicators.adx14[bestIdx - 2] : NaN;
+  const adxRising = !isNaN(adxPrev) && h1Adx > adxPrev;
+
+  return { regime, bias, h1Adx: isNaN(h1Adx) ? 0 : h1Adx, adxRising };
 }
 
 // ─── Swing Points (kept from V1) ───────────────────────────────────────────
@@ -217,7 +259,34 @@ export function detectStrongClose(
   }
 }
 
-// ─── V2.1 Setup Signal ──────────────────────────────────────────────────────
+// ─── Pin Bar Detection ──────────────────────────────────────────────────────
+
+export function detectPinBar(
+  candles: BacktestCandle[],
+  idx: number,
+  side: 'BUY' | 'SELL',
+): boolean {
+  const curr = candles[idx];
+  const range = curr.high - curr.low;
+  if (range === 0) return false;
+
+  const body = Math.abs(curr.close - curr.open);
+  const bodyRatio = body / range;
+  if (bodyRatio > 0.4) return false; // body must be ≤ 40% of range
+
+  const upperWick = curr.high - Math.max(curr.open, curr.close);
+  const lowerWick = Math.min(curr.open, curr.close) - curr.low;
+
+  if (side === 'BUY') {
+    // BUY pin bar: long lower wick (rejection from below)
+    return lowerWick / range >= 0.6 && upperWick / range <= 0.25;
+  } else {
+    // SELL pin bar: long upper wick (rejection from above)
+    return upperWick / range >= 0.6 && lowerWick / range <= 0.25;
+  }
+}
+
+// ─── V2.2 Setup Signal ──────────────────────────────────────────────────────
 
 export interface SetupSignal {
   side: 'BUY' | 'SELL';
@@ -231,17 +300,16 @@ export interface SetupSignal {
 }
 
 /**
- * V2.1 Strategy: Trend-following pullback to EMA20 with regime + session filters.
+ * V2.2 Strategy: Trend-following pullback to EMA20/EMA50 with regime + session filters.
  *
  * Entry conditions:
- * 1. H1 ADX >= 20, rising, with DI separation >= 5 (trending regime)
- * 2. Active trading session (London/NY, DST-safe)
+ * 1. H1 ADX >= 20, with DI separation >= 3 (trending regime)
+ * 2. Active trading session (London 08-17 / NY 08-14, DST-safe)
  * 3. H1 EMA20/EMA50 bias agrees with ADX DI direction
- * 4. M15 price pulls back to EMA20 zone (within ATR*0.5)
- * 5. Candle shows directional commitment (touches EMA20, closes in trade direction)
- * 6. Engulfing or strong close confirmation
- * 7. RSI in valid range (40-65 BUY, 35-60 SELL)
- * 8. SR feasibility: nearest opposing SR level not blocking TP
+ * 4. M15 price pulls back to EMA20 zone (within ATR*0.6) or EMA50 zone for strong trends
+ * 5. Candle shows directional commitment (touches EMA zone, closes in trade direction)
+ * 6. Engulfing, strong close, or pin bar confirmation
+ * 7. RSI in valid range (35-70 BUY, 30-65 SELL)
  *
  * @param spread - bid/ask spread in points for entry price adjustment
  */
@@ -252,70 +320,137 @@ export function evaluateSetup(
   h1Indicators: IndicatorState,
   idx: number,
   spread: number,
+  minAtr: number,
+  pricePrecision: number,
 ): SetupSignal | null {
   if (idx < 50) return null;
 
   const candle = m15Candles[idx];
   const ema20 = m15Indicators.ema20[idx];
+  const ema50 = m15Indicators.ema50[idx];
   const rsi = m15Indicators.rsi14[idx];
   const atr = m15Indicators.atr14[idx];
 
-  if (isNaN(ema20) || isNaN(rsi) || isNaN(atr) || atr === 0) return null;
+  if (isNaN(ema20) || isNaN(ema50) || isNaN(rsi) || isNaN(atr) || atr === 0) return null;
+
+  // Minimum volatility — low ATR markets get stopped on noise
+  if (atr < minAtr) return null;
 
   // Filter 1: Session filter (DST-safe)
   if (!isActiveTradingSession(candle.openTime)) return null;
 
-
-  // Filter 2: H1 regime + bias (includes rising ADX + DI separation)
-  const { regime, bias } = getH1Regime(h1Candles, h1Indicators, candle.openTime);
+  // Filter 2: H1 regime + bias (includes ADX + DI separation)
+  const { regime, bias, h1Adx, adxRising } = getH1Regime(h1Candles, h1Indicators, candle.openTime);
   if (regime === 'RANGING') return null;
-
   if (bias === 'NEUTRAL') return null;
-
-  // Regime direction must agree with EMA bias
   if (regime !== bias) return null;
 
+  // V2.8: Regime stability — require same H1 regime for 3 prior bars
+  if (!isH1RegimeStable(h1Candles, h1Indicators, candle.openTime)) return null;
+
+  // V2.6: Fading trend (ADX ≥ 28 but declining) → reject entirely, not a valid pullback
+  if (h1Adx >= 28 && !adxRising) return null;
+
+  // V2.7: 3-tier ADX system (replaces SCALP/TREND binary)
+  let adxTier: 'WEAK_TREND' | 'MODERATE_TREND' | 'STRONG_TREND';
+  if (h1Adx < 24) {
+    adxTier = 'WEAK_TREND';
+  } else if (h1Adx < 28) {
+    adxTier = 'MODERATE_TREND';
+  } else {
+    adxTier = 'STRONG_TREND';
+  }
 
   const isBullish = regime === 'BULLISH';
 
-  // Filter 3: RSI range
+  // V2.7: Quality gate for weak trends — confirmation candle body must exceed avg of prior 3
+  if (adxTier === 'WEAK_TREND') {
+    const currBody = Math.abs(candle.close - candle.open);
+    let sumPriorBodies = 0;
+    let count = 0;
+    for (let k = 1; k <= 3 && idx - k >= 0; k++) {
+      sumPriorBodies += Math.abs(m15Candles[idx - k].close - m15Candles[idx - k].open);
+      count++;
+    }
+    if (count === 0 || currBody <= sumPriorBodies / count) return null;
+  }
+
+  // V2.6: EMA20 slope — must be trending in trade direction (4 M15 candles = 1hr lookback)
+  if (idx >= 4) {
+    const ema20Prev = m15Indicators.ema20[idx - 4];
+    if (!isNaN(ema20Prev)) {
+      if (isBullish && ema20 <= ema20Prev) return null;
+      if (!isBullish && ema20 >= ema20Prev) return null;
+    }
+  }
+
+  // V2.6: RSI range — tightened to filter weak momentum entries
   if (isBullish && (rsi < 40 || rsi > 65)) return null;
   if (!isBullish && (rsi < 35 || rsi > 60)) return null;
 
+  // Determine pullback target: EMA20 first, then EMA50 for strong trends
+  const ema20Tolerance = atr * 0.6;
+  const touchesEma20 = candle.low <= ema20 + ema20Tolerance && candle.high >= ema20 - ema20Tolerance;
 
-  // Entry: Pullback to M15 EMA20 zone
-  const tolerance = atr * 0.5;
-  const touchesEma = candle.low <= ema20 + tolerance && candle.high >= ema20 - tolerance;
-  if (!touchesEma) return null;
+  let pullbackTarget: 'EMA20' | 'EMA50' = 'EMA20';
+  let pullbackEma = ema20;
+  let pullbackTolerance = ema20Tolerance;
 
+  if (!touchesEma20) {
+    // V2.7: Reject EMA50 pullbacks for weak trends — too deep for 1.2R target
+    if (adxTier === 'WEAK_TREND') return null;
 
-  // Directional commitment: candle dips to EMA20 zone and closes in trade direction
-  if (isBullish) {
-    // Price must dip toward or below EMA20, then close above it
-    if (candle.low > ema20 + tolerance * 0.5) return null; // didn't pull back enough
-    if (candle.close <= ema20) return null; // didn't close above EMA20
-    if (candle.close <= candle.open) return null; // not a bullish candle
-  } else {
-    // Price must rise toward or above EMA20, then close below it
-    if (candle.high < ema20 - tolerance * 0.5) return null; // didn't pull back enough
-    if (candle.close >= ema20) return null; // didn't close below EMA20
-    if (candle.close >= candle.open) return null; // not a bearish candle
+    // Try EMA50 for strong trends only (ADX >= 25, using h1Adx from getH1Regime)
+    if (!isNaN(h1Adx) && h1Adx >= 25) {
+      const ema50Tolerance = atr * 0.75;
+      const touchesEma50 = candle.low <= ema50 + ema50Tolerance && candle.high >= ema50 - ema50Tolerance;
+      const emaSeparation = Math.abs(ema20 - ema50);
+
+      if (touchesEma50 && emaSeparation >= atr * 0.5) {
+        pullbackTarget = 'EMA50';
+        pullbackEma = ema50;
+        pullbackTolerance = ema50Tolerance;
+      } else {
+        return null; // No valid pullback zone
+      }
+    } else {
+      return null; // Doesn't touch EMA20 and not strong enough for EMA50
+    }
   }
 
+  // Directional commitment: candle dips to EMA zone and closes in trade direction
+  if (isBullish) {
+    if (candle.low > pullbackEma + pullbackTolerance * 0.5) return null;
+    if (candle.close <= pullbackEma) return null;
+    if (candle.close <= candle.open) return null;
+  } else {
+    if (candle.high < pullbackEma - pullbackTolerance * 0.5) return null;
+    if (candle.close >= pullbackEma) return null;
+    if (candle.close >= candle.open) return null;
+  }
+
+  // EMA50 extra check: candle must close beyond EMA50 in trade direction
+  if (pullbackTarget === 'EMA50') {
+    if (isBullish && candle.close <= ema50) return null;
+    if (!isBullish && candle.close >= ema50) return null;
+  }
 
   // Confirmation pattern
   const hasEngulfing = detectEngulfing(m15Candles, idx);
   const hasStrongClose = detectStrongClose(m15Candles, idx);
   if (!hasEngulfing && !hasStrongClose) return null;
 
-
   // Build tags
-  const tags: string[] = ['PULLBACK_EMA20', 'V2.1'];
+  const tags: string[] = [
+    pullbackTarget === 'EMA50' ? 'PULLBACK_EMA50' : 'PULLBACK_EMA20',
+    'V2.8',
+    adxTier,
+  ];
   if (hasEngulfing) tags.push('ENGULFING');
   if (hasStrongClose) tags.push('STRONG_CLOSE');
   tags.push(regime === 'BULLISH' ? 'ADX_BULL' : 'ADX_BEAR');
 
-  // V2.1: Spread-adjusted entry price
+  // Spread-adjusted entry price
   const halfSpread = spread / 2;
   const entryPrice = isBullish
     ? candle.close + halfSpread  // BUY filled at ask
@@ -334,43 +469,47 @@ export function evaluateSetup(
       .slice(-3)
       .map((p) => p.price);
     const swingSL = recentLows.length > 0 ? Math.min(...recentLows) : entryPrice - atr * 2.0;
-    slPrice = Math.min(swingSL, entryPrice - atr * 1.0) - spreadBuffer;
+    const emaFloor = pullbackTarget === 'EMA50' ? ema50 - atr * 1.0 : entryPrice - atr * 1.0;
+    slPrice = Math.min(swingSL, emaFloor) - spreadBuffer;
   } else {
     const recentHighs = swingPoints
       .filter((p) => p.type === 'HIGH')
       .slice(-3)
       .map((p) => p.price);
     const swingSL = recentHighs.length > 0 ? Math.max(...recentHighs) : entryPrice + atr * 2.0;
-    slPrice = Math.max(swingSL, entryPrice + atr * 1.0) + spreadBuffer;
+    const emaCeiling = pullbackTarget === 'EMA50' ? ema50 + atr * 1.0 : entryPrice + atr * 1.0;
+    slPrice = Math.max(swingSL, emaCeiling) + spreadBuffer;
   }
 
-  // Clamp SL distance to [ATR*1.0, ATR*3.0]
+  // V2.7: Tiered SL clamp — WEAK ATR×2.0, MODERATE ATR×2.5, STRONG ATR×3.0
+  const slClampMax = adxTier === 'WEAK_TREND' ? atr * 2.0
+    : adxTier === 'MODERATE_TREND' ? atr * 2.5
+    : atr * 3.0;
   const slDistance = Math.abs(entryPrice - slPrice);
   if (slDistance < atr * 1.0) {
     slPrice = isBullish ? entryPrice - atr * 1.0 : entryPrice + atr * 1.0;
   }
-  if (slDistance > atr * 3.0) {
-    slPrice = isBullish ? entryPrice - atr * 3.0 : entryPrice + atr * 3.0;
+  if (slDistance > slClampMax) {
+    slPrice = isBullish ? entryPrice - slClampMax : entryPrice + slClampMax;
   }
 
-  // V2.1: TP at 2.0x risk (raised from 1.5x)
+  // V2.7: Tiered TP — WEAK 1.2R, MODERATE 1.5R, STRONG 2.0R
+  const tpMultiplier = adxTier === 'WEAK_TREND' ? 1.2
+    : adxTier === 'MODERATE_TREND' ? 1.5
+    : 2.0;
   const risk = Math.abs(entryPrice - slPrice);
-  // TP at 1.5x risk — achievable for pullback entries on gold
-  const tpPrice = isBullish ? entryPrice + risk * 1.5 : entryPrice - risk * 1.5;
+  const tpPrice = isBullish ? entryPrice + risk * tpMultiplier : entryPrice - risk * tpMultiplier;
 
-  // SR feasibility check removed — M15 swing points are too granular for pullback entries.
-  // The prior swing high/low is almost always within 1-2R of entry by definition of a pullback.
-  // TODO: Revisit with H1/H4 major S/R levels instead of M15 micro-swings.
-
+  const factor = Math.pow(10, pricePrecision);
 
   return {
     side: isBullish ? 'BUY' : 'SELL',
-    entryPrice: Math.round(entryPrice * 100) / 100,
-    slPrice: Math.round(slPrice * 100) / 100,
-    tpPrice: Math.round(tpPrice * 100) / 100,
+    entryPrice: Math.round(entryPrice * factor) / factor,
+    slPrice: Math.round(slPrice * factor) / factor,
+    tpPrice: Math.round(tpPrice * factor) / factor,
     setupTags: tags,
     h1Bias: bias,
     rsiAtEntry: Math.round(rsi * 100) / 100,
-    atrAtEntry: Math.round(atr * 100) / 100,
+    atrAtEntry: Math.round(atr * 100000) / 100000,
   };
 }

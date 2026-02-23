@@ -23,9 +23,12 @@ export class BacktestService {
   }
 
   async createAndRun(dto: CreateBacktestDto): Promise<{ id: string; status: string }> {
+    const symbol = dto.symbol ?? 'XAUUSD';
+
     // Create the run record
     const run = await this.prisma.backtestRun.create({
       data: {
+        symbol,
         startDate: new Date(dto.startDate),
         endDate: new Date(dto.endDate),
         initialBalance: dto.initialBalance,
@@ -44,6 +47,8 @@ export class BacktestService {
   }
 
   private async executeBacktest(runId: string, dto: CreateBacktestDto): Promise<void> {
+    const symbol = dto.symbol ?? 'XAUUSD';
+
     try {
       // Mark as running
       await this.prisma.backtestRun.update({
@@ -52,8 +57,8 @@ export class BacktestService {
       });
 
       // Fetch historical M15 candles
-      const m15Candles = await this.fetchCandles('M15', dto.startDate, dto.endDate);
-      this.logger.log(`Fetched ${m15Candles.length} M15 candles`);
+      const m15Candles = await this.fetchCandles(symbol, 'M15', dto.startDate, dto.endDate);
+      this.logger.log(`Fetched ${m15Candles.length} ${symbol} M15 candles`);
 
       if (m15Candles.length < 200) {
         throw new Error(
@@ -62,17 +67,18 @@ export class BacktestService {
       }
 
       // Fetch historical H1 candles (broader range for indicator warmup)
-      const h1Candles = await this.fetchCandles('H1', dto.startDate, dto.endDate);
-      this.logger.log(`Fetched ${h1Candles.length} H1 candles`);
+      const h1Candles = await this.fetchCandles(symbol, 'H1', dto.startDate, dto.endDate);
+      this.logger.log(`Fetched ${h1Candles.length} ${symbol} H1 candles`);
 
       // Run the engine
       const engine = new BacktestEngine();
       const config: EngineConfig = {
+        symbol,
         initialBalance: dto.initialBalance,
         riskPercent: dto.riskPercent,
-        maxDailyLossPercent: 3.0,
-        maxConsecutiveLosses: 3,
-        maxOpenPositions: 3,
+        maxDailyLossPercent: 6.0,
+        maxConsecutiveLosses: 4,
+        maxOpenPositions: 2,
       };
 
       const result = engine.run(m15Candles, h1Candles, config);
@@ -113,11 +119,15 @@ export class BacktestService {
 
       this.logger.log(`Backtest ${runId} completed: ${result.metrics.totalTrades} trades`);
     } catch (error) {
+      const detail = error.response?.data?.detail || error.response?.data || error.message;
+      const errorMessage = typeof detail === 'string' ? detail : JSON.stringify(detail);
+      this.logger.error(`Backtest ${runId} failed: ${errorMessage}`, error.stack);
+
       await this.prisma.backtestRun.update({
         where: { id: runId },
         data: {
           status: 'FAILED',
-          errorMessage: error.message,
+          errorMessage,
           completedAt: new Date(),
         },
       });
@@ -126,6 +136,7 @@ export class BacktestService {
   }
 
   private async fetchCandles(
+    symbol: string,
     timeframe: string,
     start: string,
     end: string,
@@ -133,7 +144,7 @@ export class BacktestService {
     const url = `${this.executionUrl}/historical-candles`;
     const res = await firstValueFrom(
       this.httpService.get<BacktestCandle[]>(url, {
-        params: { symbol: 'XAUUSD', timeframe, start, end },
+        params: { symbol, timeframe, start, end },
       }),
     );
     return res.data;
@@ -147,6 +158,7 @@ export class BacktestService {
 
     return {
       id: run.id,
+      symbol: run.symbol,
       startDate: run.startDate.toISOString(),
       endDate: run.endDate.toISOString(),
       initialBalance: run.initialBalance,
@@ -167,6 +179,7 @@ export class BacktestService {
     if (!run) return null;
 
     const candles = await this.fetchCandles(
+      run.symbol,
       'M15',
       run.startDate.toISOString().split('T')[0],
       run.endDate.toISOString().split('T')[0],

@@ -11,6 +11,9 @@ export class BacktestMetricsDto {
   @ApiProperty({ example: 20 })
   lossCount: number;
 
+  @ApiProperty({ example: 3 })
+  breakevenCount: number;
+
   @ApiProperty({ example: 0.6 })
   winRate: number;
 
@@ -113,6 +116,9 @@ export class BacktestTradeResult {
 export class BacktestRunResult {
   @ApiProperty({ example: 'uuid-123' })
   id: string;
+
+  @ApiProperty({ example: 'XAUUSD' })
+  symbol: string;
 
   @ApiProperty({ example: '2025-01-01' })
   startDate: string;

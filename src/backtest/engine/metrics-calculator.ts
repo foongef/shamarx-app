@@ -9,6 +9,7 @@ export function calculateMetrics(
       totalTrades: 0,
       winCount: 0,
       lossCount: 0,
+      breakevenCount: 0,
       winRate: 0,
       totalPnl: 0,
       profitFactor: 0,
@@ -28,8 +29,10 @@ export function calculateMetrics(
     };
   }
 
-  const wins = trades.filter((t) => t.pnl > 0);
-  const losses = trades.filter((t) => t.pnl <= 0);
+  const breakevenTrades = trades.filter((t) => t.exitReason === 'BREAKEVEN');
+  const decisiveTrades = trades.filter((t) => t.exitReason !== 'BREAKEVEN');
+  const wins = decisiveTrades.filter((t) => t.pnl > 0);
+  const losses = decisiveTrades.filter((t) => t.pnl <= 0);
 
   const totalPnl = trades.reduce((sum, t) => sum + t.pnl, 0);
   const grossProfit = wins.reduce((sum, t) => sum + t.pnl, 0);
@@ -63,13 +66,14 @@ export function calculateMetrics(
   const sharpeRatio =
     stdDev > 0 ? (avgReturn / stdDev) * Math.sqrt(252) : 0;
 
-  // Consecutive wins/losses
+  // Consecutive wins/losses (skip breakeven trades)
   let maxConsWins = 0;
   let maxConsLosses = 0;
   let curConsWins = 0;
   let curConsLosses = 0;
 
   for (const trade of trades) {
+    if (trade.exitReason === 'BREAKEVEN') continue; // skip BE for streaks
     if (trade.pnl > 0) {
       curConsWins++;
       curConsLosses = 0;
@@ -88,7 +92,10 @@ export function calculateMetrics(
     totalTrades: trades.length,
     winCount: wins.length,
     lossCount: losses.length,
-    winRate: Math.round((wins.length / trades.length) * 10000) / 100,
+    breakevenCount: breakevenTrades.length,
+    winRate: decisiveTrades.length > 0
+      ? Math.round((wins.length / decisiveTrades.length) * 10000) / 100
+      : 0,
     totalPnl: Math.round(totalPnl * 100) / 100,
     profitFactor:
       grossLoss > 0 ? Math.round((grossProfit / grossLoss) * 100) / 100 : grossProfit > 0 ? Infinity : 0,

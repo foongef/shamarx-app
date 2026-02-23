@@ -1,10 +1,15 @@
 import { NestFactory } from '@nestjs/core';
-import { Logger, ValidationPipe } from '@nestjs/common';
+import { ValidationPipe } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from './app.module';
+import { EnvAwareLoggerService } from './core/env-aware-logger.service';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, { bufferLogs: true });
+
+  const logger = app.get(EnvAwareLoggerService);
+  app.useLogger(logger);
+
   app.enableCors({
     origin: process.env.CORS_ORIGIN || 'http://localhost:3000',
   });
@@ -12,7 +17,7 @@ async function bootstrap() {
 
   const config = new DocumentBuilder()
     .setTitle('Trading Bot API')
-    .setDescription('XAUUSD Intraday Trading System')
+    .setDescription('Intraday Trading System')
     .setVersion('1.0')
     .build();
   const document = SwaggerModule.createDocument(app, config);
@@ -20,7 +25,7 @@ async function bootstrap() {
 
   const port = process.env.PORT || 9000;
   await app.listen(port);
-  Logger.log(`Trading Bot running on port ${port}`, 'Bootstrap');
-  Logger.log(`Swagger docs at http://localhost:${port}/docs`, 'Bootstrap');
+  logger.log(`Trading Bot running on port ${port}`, 'Bootstrap');
+  logger.log(`Swagger docs at http://localhost:${port}/docs`, 'Bootstrap');
 }
 bootstrap();

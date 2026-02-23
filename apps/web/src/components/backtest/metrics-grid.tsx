@@ -18,6 +18,11 @@ export function MetricsGrid({ metrics, initialBalance }: MetricsGridProps) {
       color: metrics.winRate >= 50 ? 'text-green-500' : 'text-red-500',
     },
     {
+      label: 'Breakeven',
+      value: (metrics.breakevenCount ?? 0).toString(),
+      color: 'text-amber-500',
+    },
+    {
       label: 'Profit Factor',
       value: formatNumber(metrics.profitFactor),
       color: metrics.profitFactor >= 1 ? 'text-green-500' : 'text-red-500',

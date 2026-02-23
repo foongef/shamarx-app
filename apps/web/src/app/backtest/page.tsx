@@ -6,7 +6,7 @@ export default function BacktestPage() {
       <div>
         <h1 className="text-2xl font-bold">Backtest</h1>
         <p className="text-muted-foreground">
-          Configure and run a historical backtest on XAUUSD.
+          Configure and run a historical backtest.
         </p>
       </div>
       <BacktestForm />

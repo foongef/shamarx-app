@@ -14,9 +14,10 @@ import type { BacktestTrade, BacktestCandle } from '@/lib/types';
 interface CandlestickChartProps {
   candles: BacktestCandle[];
   trades: BacktestTrade[];
+  symbol?: string;
 }
 
-export function CandlestickChart({ candles, trades }: CandlestickChartProps) {
+export function CandlestickChart({ candles, trades, symbol = 'XAUUSD' }: CandlestickChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
 
@@ -117,7 +118,7 @@ export function CandlestickChart({ candles, trades }: CandlestickChartProps) {
     <Card>
       <CardHeader className="pb-2">
         <CardTitle className="text-sm font-medium">
-          XAUUSD M15 &mdash; Price Action & Trades
+          {symbol} M15 &mdash; Price Action & Trades
         </CardTitle>
       </CardHeader>
       <CardContent>

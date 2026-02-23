@@ -7,12 +7,16 @@ Supports two data sources:
 
 import os
 import csv
+import logging
+import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Query, HTTPException
 from models import CandleData
+
+logger = logging.getLogger(__name__)
 
 DATA_DIR = Path(__file__).parent / "data"
 
@@ -102,7 +106,10 @@ async def get_historical_candles(
     if mode == "metaapi":
         try:
             return await _fetch_metaapi_candles(symbol, timeframe, start, end)
+        except HTTPException:
+            raise
         except Exception as e:
+            logger.error(f"MetaAPI error for {symbol} {timeframe}: {e}\n{traceback.format_exc()}")
             raise HTTPException(status_code=500, detail=f"MetaAPI error: {str(e)}")
 
     # CSV fallback

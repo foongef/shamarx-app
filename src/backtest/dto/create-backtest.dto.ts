@@ -1,8 +1,16 @@
-import { IsDateString, IsNumber, IsBoolean, IsOptional, Min, Max } from 'class-validator';
+import { IsDateString, IsNumber, IsBoolean, IsOptional, IsIn, IsString, Min, Max } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
+const SUPPORTED_SYMBOLS = ['XAUUSD', 'GBPUSD', 'EURUSD', 'USDJPY'] as const;
+
 export class CreateBacktestDto {
+  @ApiPropertyOptional({ example: 'XAUUSD', default: 'XAUUSD', enum: SUPPORTED_SYMBOLS })
+  @IsOptional()
+  @IsString()
+  @IsIn(SUPPORTED_SYMBOLS)
+  symbol?: string = 'XAUUSD';
+
   @ApiProperty({ example: '2025-01-01' })
   @IsDateString()
   startDate: string;

@@ -1,12 +1,13 @@
 import { BacktestRiskState, EngineConfig } from './types';
+import { getInstrumentConfig } from './instrument-config';
 
-const LOT_SIZE_UNITS = 100;
 const WEEKLY_DD_THRESHOLD = 5; // pause if equity drops 5% from weekly peak
 const WEEKLY_DD_PAUSE_DAYS = 5; // pause for 5 trading days
 
 export class RiskManager {
   private state: BacktestRiskState;
   private config: EngineConfig;
+  private readonly lotSizeUnits: number;
 
   // Weekly drawdown circuit breaker
   private weeklyPeakEquity: number;
@@ -15,6 +16,7 @@ export class RiskManager {
 
   constructor(config: EngineConfig) {
     this.config = config;
+    this.lotSizeUnits = getInstrumentConfig(config.symbol).lotSizeUnits;
     this.state = {
       balance: config.initialBalance,
       equity: config.initialBalance,
@@ -51,16 +53,19 @@ export class RiskManager {
    */
   calculateLotSize(slPoints: number): number {
     const riskAmount = this.state.balance * (this.config.riskPercent / 100);
-    // lot_size = risk_amount / (sl_points * 100oz)
-    const lotSize = riskAmount / (slPoints * LOT_SIZE_UNITS);
+    const lotSize = riskAmount / (slPoints * this.lotSizeUnits);
     // Clamp between 0.01 and 1.0
     return Math.round(Math.max(0.01, Math.min(lotSize, 1.0)) * 100) / 100;
   }
 
   /**
    * Record a closed trade's PnL.
+   * exitReason controls consecutive loss counting:
+   * - SL → increment consecutiveLosses
+   * - BREAKEVEN → no change (not a real loss)
+   * - TP → reset consecutiveLosses to 0
    */
-  recordTrade(pnl: number, tradeDate: string): void {
+  recordTrade(pnl: number, tradeDate: string, exitReason?: string): void {
     this.maybeResetDaily(tradeDate);
     this.maybeResetWeekly(tradeDate);
 
@@ -68,7 +73,9 @@ export class RiskManager {
     this.state.equity = this.state.balance;
     this.state.dailyPnl += pnl;
 
-    if (pnl < 0) {
+    if (exitReason === 'BREAKEVEN') {
+      // Breakeven — don't change consecutive losses
+    } else if (pnl < 0) {
       this.state.consecutiveLosses++;
     } else {
       this.state.consecutiveLosses = 0;

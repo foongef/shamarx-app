@@ -2,6 +2,7 @@ export interface BacktestMetrics {
   totalTrades: number;
   winCount: number;
   lossCount: number;
+  breakevenCount: number;
   winRate: number;
   totalPnl: number;
   profitFactor: number;
@@ -24,6 +25,7 @@ export type BacktestStatus = 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED';
 
 export interface BacktestRun {
   id: string;
+  symbol: string;
   startDate: string;
   endDate: string;
   initialBalance: number;
@@ -64,6 +66,7 @@ export interface BacktestCandle {
 }
 
 export interface CreateBacktestInput {
+  symbol?: string;
   startDate: string;
   endDate: string;
   initialBalance: number;

@@ -119,7 +119,7 @@ export default function BacktestResultPage({
       {drawdownSeries.length > 0 && <DrawdownChart data={drawdownSeries} />}
 
       {candles && candles.length > 0 && (
-        <CandlestickChart candles={candles} trades={trades ?? []} />
+        <CandlestickChart candles={candles} trades={trades ?? []} symbol={backtest.symbol} />
       )}
 
       <Separator />
@@ -137,7 +137,7 @@ export default function BacktestResultPage({
 function Header({
   backtest,
 }: {
-  backtest: { id: string; startDate: string; endDate: string; status: string; withLlm: boolean };
+  backtest: { id: string; symbol: string; startDate: string; endDate: string; status: string; withLlm: boolean };
 }) {
   const statusColor: Record<string, string> = {
     PENDING: 'bg-yellow-500/10 text-yellow-500',
@@ -149,7 +149,7 @@ function Header({
   return (
     <div className="flex items-center justify-between">
       <div>
-        <h1 className="text-2xl font-bold">Backtest Results</h1>
+        <h1 className="text-2xl font-bold">{backtest.symbol} Backtest</h1>
         <p className="text-sm text-muted-foreground">
           {backtest.startDate} &mdash; {backtest.endDate}
           {backtest.withLlm && (

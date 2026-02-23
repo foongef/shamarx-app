@@ -25,6 +25,9 @@ export interface SimulatedPosition {
   entryPrice: number;
   slPrice: number;
   tpPrice: number;
+  originalSlPrice: number;
+  breakevenActivated: boolean;
+  peakFavorablePrice: number;
   lotSize: number;
   entryTime: string;
   entryIndex: number;
@@ -46,7 +49,7 @@ export interface ClosedTrade {
   setupTags: string[];
   entryTime: string;
   exitTime: string;
-  exitReason: 'SL' | 'TP' | 'FORCED_CLOSE';
+  exitReason: 'SL' | 'TP' | 'BREAKEVEN' | 'FORCED_CLOSE';
   h1Bias: string;
   rsiAtEntry: number;
   atrAtEntry: number;
@@ -61,6 +64,7 @@ export interface BacktestRiskState {
 }
 
 export interface EngineConfig {
+  symbol: string;
   initialBalance: number;
   riskPercent: number;
   maxDailyLossPercent: number;
@@ -72,6 +76,7 @@ export interface BacktestMetrics {
   totalTrades: number;
   winCount: number;
   lossCount: number;
+  breakevenCount: number;
   winRate: number;
   totalPnl: number;
   profitFactor: number;

@@ -8,10 +8,20 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { useCreateBacktest } from '@/hooks/use-create-backtest';
 import { Loader2 } from 'lucide-react';
 
+const SYMBOLS = ['XAUUSD', 'GBPUSD', 'EURUSD', 'USDJPY'] as const;
+
 const schema = z.object({
+  symbol: z.enum(SYMBOLS),
   startDate: z.string().min(1, 'Start date is required'),
   endDate: z.string().min(1, 'End date is required'),
   initialBalance: z.coerce.number().min(100).max(1_000_000),
@@ -33,6 +43,7 @@ export function BacktestForm() {
   } = useForm<FormValues>({
     resolver: zodResolver(schema),
     defaultValues: {
+      symbol: 'XAUUSD',
       startDate: '2025-01-01',
       endDate: '2025-01-31',
       initialBalance: 10000,
@@ -42,6 +53,7 @@ export function BacktestForm() {
   });
 
   const withLlm = watch('withLlm');
+  const symbol = watch('symbol');
 
   function onSubmit(data: FormValues) {
     mutate(data);
@@ -54,6 +66,22 @@ export function BacktestForm() {
       </CardHeader>
       <CardContent>
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="symbol">Symbol</Label>
+            <Select value={symbol} onValueChange={(v) => setValue('symbol', v as FormValues['symbol'])}>
+              <SelectTrigger id="symbol">
+                <SelectValue placeholder="Select symbol" />
+              </SelectTrigger>
+              <SelectContent>
+                {SYMBOLS.map((s) => (
+                  <SelectItem key={s} value={s}>
+                    {s}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label htmlFor="startDate">Start Date</Label>

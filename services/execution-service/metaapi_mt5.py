@@ -33,12 +33,16 @@ TIMEFRAME_MAP = {
 
 
 class MetaApiMT5:
+    # Standard symbols we support
+    KNOWN_SYMBOLS = ["XAUUSD", "GBPUSD", "EURUSD", "USDJPY"]
+
     def __init__(self):
         self._api: Optional[MetaApi] = None
         self._connection = None
         self._account = None
         self._initialized = False
-        self._symbol_suffix = ""  # Pepperstone uses ".a" suffix
+        self._symbol_map: dict[str, str] = {}    # our symbol -> broker symbol
+        self._reverse_map: dict[str, str] = {}   # broker symbol -> our symbol
 
     async def initialize(self):
         if self._initialized:
@@ -62,25 +66,31 @@ class MetaApiMT5:
         await self._connection.connect()
         await self._connection.wait_synchronized()
 
-        # Detect symbol suffix by checking available symbols
-        symbols = await self._connection.get_symbols()
-        for s in symbols:
-            if s.startswith("XAUUSD"):
-                self._symbol_suffix = s.replace("XAUUSD", "")
-                break
+        # Build symbol map by matching broker symbols to our known symbols
+        broker_symbols = await self._connection.get_symbols()
+        for our_symbol in self.KNOWN_SYMBOLS:
+            for bs in broker_symbols:
+                if bs.startswith(our_symbol):
+                    self._symbol_map[our_symbol] = bs
+                    self._reverse_map[bs] = our_symbol
+                    break
 
         self._initialized = True
-        logger.info(f"MetaAPI connected. Symbol suffix: '{self._symbol_suffix}'")
+        logger.info(f"MetaAPI connected. Symbol map: {self._symbol_map}")
 
     def _broker_symbol(self, symbol: str) -> str:
         """Convert our symbol name to broker's symbol name."""
-        return f"{symbol}{self._symbol_suffix}"
+        broker = self._symbol_map.get(symbol)
+        if not broker:
+            raise ValueError(
+                f"No broker symbol found for '{symbol}'. "
+                f"Available: {self._symbol_map}"
+            )
+        return broker
 
     def _our_symbol(self, broker_symbol: str) -> str:
         """Convert broker's symbol name back to ours."""
-        if self._symbol_suffix and broker_symbol.endswith(self._symbol_suffix):
-            return broker_symbol[: -len(self._symbol_suffix)]
-        return broker_symbol
+        return self._reverse_map.get(broker_symbol, broker_symbol)
 
     async def place_order(self, request: OrderRequest) -> OrderResponse:
         await self.initialize()
