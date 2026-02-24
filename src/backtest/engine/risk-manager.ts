@@ -14,6 +14,12 @@ export class RiskManager {
   private currentWeekNumber: number = -1;
   private pauseUntilDate: string | null = null;
 
+  // Escalating consecutive loss pause — only a WIN resets the counter
+  private consecutiveLossPauseUntil: string | null = null;
+
+  // Overall peak equity for dynamic risk scaling
+  private overallPeakEquity: number;
+
   constructor(config: EngineConfig) {
     this.config = config;
     this.lotSizeUnits = getInstrumentConfig(config.symbol).lotSizeUnits;
@@ -25,6 +31,7 @@ export class RiskManager {
       lastTradeDate: null,
     };
     this.weeklyPeakEquity = config.initialBalance;
+    this.overallPeakEquity = config.initialBalance;
   }
 
   /**
@@ -35,14 +42,31 @@ export class RiskManager {
     this.maybeResetDaily(currentDate);
     this.maybeResetWeekly(currentDate);
 
+    const dateStr = currentDate.substring(0, 10);
+
     // Circuit breaker: paused after weekly drawdown
-    if (this.pauseUntilDate && currentDate.substring(0, 10) < this.pauseUntilDate) {
+    if (this.pauseUntilDate && dateStr < this.pauseUntilDate) {
       return false;
+    }
+
+    // Escalating consecutive loss pause — counter persists, only a WIN resets it
+    if (this.consecutiveLossPauseUntil) {
+      if (dateStr < this.consecutiveLossPauseUntil) return false;
+      // Pause expired → allow exactly 1 trade attempt (counter stays)
+      this.consecutiveLossPauseUntil = null;
     }
 
     const dailyLossPercent = (this.state.dailyPnl / this.state.balance) * 100;
     if (dailyLossPercent <= -this.config.maxDailyLossPercent) return false;
-    if (this.state.consecutiveLosses >= this.config.maxConsecutiveLosses) return false;
+
+    // Escalating pause: 3 losses → 1 day, 4 → 3 days, 5+ → 5 days
+    if (this.state.consecutiveLosses >= this.config.maxConsecutiveLosses) {
+      const excess = this.state.consecutiveLosses - this.config.maxConsecutiveLosses;
+      const pauseDays = excess >= 2 ? 5 : excess >= 1 ? 3 : 1;
+      this.consecutiveLossPauseUntil = this.addTradingDays(dateStr, pauseDays);
+      return false;
+    }
+
     if (openPositionCount >= this.config.maxOpenPositions) return false;
 
     return true;
@@ -52,7 +76,19 @@ export class RiskManager {
    * Calculate lot size based on current balance and risk percent.
    */
   calculateLotSize(slPoints: number): number {
-    const riskAmount = this.state.balance * (this.config.riskPercent / 100);
+    // Dynamic risk: scale down during drawdowns
+    let effectiveRisk = this.config.riskPercent;
+    const ddPercent = this.overallPeakEquity > 0
+      ? ((this.overallPeakEquity - this.state.equity) / this.overallPeakEquity) * 100
+      : 0;
+
+    if (ddPercent > 20) {
+      effectiveRisk *= 0.3;
+    } else if (ddPercent > 10) {
+      effectiveRisk *= 0.5;
+    }
+
+    const riskAmount = this.state.balance * (effectiveRisk / 100);
     const lotSize = riskAmount / (slPoints * this.lotSizeUnits);
     // Clamp between 0.01 and 1.0
     return Math.round(Math.max(0.01, Math.min(lotSize, 1.0)) * 100) / 100;
@@ -81,9 +117,12 @@ export class RiskManager {
       this.state.consecutiveLosses = 0;
     }
 
-    // Update weekly peak
+    // Update peak equity tracking
     if (this.state.equity > this.weeklyPeakEquity) {
       this.weeklyPeakEquity = this.state.equity;
+    }
+    if (this.state.equity > this.overallPeakEquity) {
+      this.overallPeakEquity = this.state.equity;
     }
 
     // Check weekly drawdown circuit breaker
@@ -110,7 +149,8 @@ export class RiskManager {
 
     if (lastDate && dateStr !== lastDate) {
       this.state.dailyPnl = 0;
-      this.state.consecutiveLosses = 0;
+      // consecutiveLosses intentionally NOT reset — persists across days
+      // resets only on a winning trade (in recordTrade) or after pause expires
     }
   }
 

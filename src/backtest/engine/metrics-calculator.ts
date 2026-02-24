@@ -30,9 +30,8 @@ export function calculateMetrics(
   }
 
   const breakevenTrades = trades.filter((t) => t.exitReason === 'BREAKEVEN');
-  const decisiveTrades = trades.filter((t) => t.exitReason !== 'BREAKEVEN');
-  const wins = decisiveTrades.filter((t) => t.pnl > 0);
-  const losses = decisiveTrades.filter((t) => t.pnl <= 0);
+  const wins = trades.filter((t) => t.pnl > 0);
+  const losses = trades.filter((t) => t.pnl <= 0);
 
   const totalPnl = trades.reduce((sum, t) => sum + t.pnl, 0);
   const grossProfit = wins.reduce((sum, t) => sum + t.pnl, 0);
@@ -93,8 +92,8 @@ export function calculateMetrics(
     winCount: wins.length,
     lossCount: losses.length,
     breakevenCount: breakevenTrades.length,
-    winRate: decisiveTrades.length > 0
-      ? Math.round((wins.length / decisiveTrades.length) * 10000) / 100
+    winRate: trades.length > 0
+      ? Math.round((wins.length / trades.length) * 10000) / 100
       : 0,
     totalPnl: Math.round(totalPnl * 100) / 100,
     profitFactor:

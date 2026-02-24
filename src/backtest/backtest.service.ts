@@ -76,8 +76,8 @@ export class BacktestService {
         symbol,
         initialBalance: dto.initialBalance,
         riskPercent: dto.riskPercent,
-        maxDailyLossPercent: 6.0,
-        maxConsecutiveLosses: 4,
+        maxDailyLossPercent: 4.0,
+        maxConsecutiveLosses: 3,
         maxOpenPositions: 2,
       };
 
@@ -92,7 +92,7 @@ export class BacktestService {
             entryPrice: t.entryPrice,
             exitPrice: t.exitPrice,
             slPrice: t.slPrice,
-            tpPrice: t.tpPrice,
+            tpPrice: t.tpPrice ?? 0,
             lotSize: t.lotSize,
             pnl: t.pnl,
             commission: t.commission,

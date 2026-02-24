@@ -361,6 +361,9 @@ export function evaluateSetup(
     adxTier = 'STRONG_TREND';
   }
 
+  // V3.1: Only STRONG_TREND for trend engine — WEAK/MODERATE are net negative
+  if (['WEAK_TREND', 'MODERATE_TREND'].includes(adxTier)) return null;
+
   const isBullish = regime === 'BULLISH';
 
   // V2.7: Quality gate for weak trends — confirmation candle body must exceed avg of prior 3
@@ -443,7 +446,7 @@ export function evaluateSetup(
   // Build tags
   const tags: string[] = [
     pullbackTarget === 'EMA50' ? 'PULLBACK_EMA50' : 'PULLBACK_EMA20',
-    'V2.8',
+    'V3.1',
     adxTier,
   ];
   if (hasEngulfing) tags.push('ENGULFING');
@@ -509,6 +512,121 @@ export function evaluateSetup(
     tpPrice: Math.round(tpPrice * factor) / factor,
     setupTags: tags,
     h1Bias: bias,
+    rsiAtEntry: Math.round(rsi * 100) / 100,
+    atrAtEntry: Math.round(atr * 100000) / 100000,
+  };
+}
+
+// ─── V3.1 Range Engine ──────────────────────────────────────────────────────
+
+/**
+ * V3.1: Mean reversion strategy for RANGING markets (H1 ADX < 20).
+ *
+ * Entry conditions:
+ * 1. H1 ADX < 20 (confirmed ranging)
+ * 2. Active session (same London/NY filter)
+ * 3. Price at ATR band extreme (EMA50 ± ATR*1.5)
+ *    - BUY: candle low touches lower band, RSI < 30, bullish close
+ *    - SELL: candle high touches upper band, RSI > 70, bearish close
+ * 4. Confirmation: engulfing, strong close, or pin bar
+ *
+ * Exit:
+ * - TP: EMA50 (midline of range)
+ * - SL: Beyond ATR band + buffer, clamped ATR*0.5 to ATR*2.0
+ * - R:R gate: skip if reward/risk < 0.8
+ */
+export function evaluateRangeSetup(
+  m15Candles: BacktestCandle[],
+  m15Indicators: IndicatorState,
+  h1Candles: BacktestCandle[],
+  h1Indicators: IndicatorState,
+  idx: number,
+  spread: number,
+  minAtr: number,
+  pricePrecision: number,
+): SetupSignal | null {
+  if (idx < 50) return null;
+
+  const candle = m15Candles[idx];
+  const ema50 = m15Indicators.ema50[idx];
+  const rsi = m15Indicators.rsi14[idx];
+  const atr = m15Indicators.atr14[idx];
+
+  if (isNaN(ema50) || isNaN(rsi) || isNaN(atr) || atr === 0) return null;
+  if (atr < minAtr) return null;
+
+  // Session filter (same as trend)
+  if (!isActiveTradingSession(candle.openTime)) return null;
+
+  // Must be ranging (ADX < 20)
+  const { h1Adx } = getH1Regime(h1Candles, h1Indicators, candle.openTime);
+  if (h1Adx >= 20) return null;
+
+  // ATR bands around EMA50
+  const upperBand = ema50 + atr * 1.5;
+  const lowerBand = ema50 - atr * 1.5;
+  const halfSpread = spread / 2;
+
+  let side: 'BUY' | 'SELL' | null = null;
+
+  // BUY: price at lower extreme, RSI oversold, bullish candle
+  if (candle.low <= lowerBand && rsi < 30 && candle.close > candle.open) {
+    side = 'BUY';
+  }
+  // SELL: price at upper extreme, RSI overbought, bearish candle
+  else if (candle.high >= upperBand && rsi > 70 && candle.close < candle.open) {
+    side = 'SELL';
+  }
+  if (!side) return null;
+
+  // Confirmation pattern (reuse existing detectors)
+  const hasEngulfing = detectEngulfing(m15Candles, idx);
+  const hasStrongClose = detectStrongClose(m15Candles, idx);
+  const hasPinBar = detectPinBar(m15Candles, idx, side);
+  if (!hasEngulfing && !hasStrongClose && !hasPinBar) return null;
+
+  // Spread-adjusted entry
+  const entryPrice = side === 'BUY'
+    ? candle.close + halfSpread
+    : candle.close - halfSpread;
+
+  // SL: beyond band + ATR buffer
+  let slPrice = side === 'BUY'
+    ? lowerBand - atr * 0.5
+    : upperBand + atr * 0.5;
+
+  // Clamp SL distance
+  const slDistance = Math.abs(entryPrice - slPrice);
+  if (slDistance < atr * 0.5) {
+    slPrice = side === 'BUY' ? entryPrice - atr * 0.5 : entryPrice + atr * 0.5;
+  }
+  if (slDistance > atr * 2.0) {
+    slPrice = side === 'BUY' ? entryPrice - atr * 2.0 : entryPrice + atr * 2.0;
+  }
+
+  // TP: mean reversion to EMA50 (midline)
+  const tpPrice = ema50;
+
+  // R:R gate — skip if reward too low
+  const risk = Math.abs(entryPrice - slPrice);
+  const reward = Math.abs(tpPrice - entryPrice);
+  if (risk === 0 || reward / risk < 0.8) return null;
+
+  const tags: string[] = ['RANGE_ENGINE', 'MEAN_REVERSION'];
+  if (hasEngulfing) tags.push('ENGULFING');
+  if (hasStrongClose) tags.push('STRONG_CLOSE');
+  if (hasPinBar) tags.push('PIN_BAR');
+  tags.push(side === 'BUY' ? 'RSI_OVERSOLD' : 'RSI_OVERBOUGHT');
+
+  const factor = Math.pow(10, pricePrecision);
+
+  return {
+    side,
+    entryPrice: Math.round(entryPrice * factor) / factor,
+    slPrice: Math.round(slPrice * factor) / factor,
+    tpPrice: Math.round(tpPrice * factor) / factor,
+    setupTags: tags,
+    h1Bias: 'NEUTRAL',
     rsiAtEntry: Math.round(rsi * 100) / 100,
     atrAtEntry: Math.round(atr * 100000) / 100000,
   };

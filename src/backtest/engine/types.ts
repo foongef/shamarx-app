@@ -24,7 +24,7 @@ export interface SimulatedPosition {
   side: 'BUY' | 'SELL';
   entryPrice: number;
   slPrice: number;
-  tpPrice: number;
+  tpPrice: number | null;
   originalSlPrice: number;
   breakevenActivated: boolean;
   peakFavorablePrice: number;
@@ -42,7 +42,7 @@ export interface ClosedTrade {
   entryPrice: number;
   exitPrice: number;
   slPrice: number;
-  tpPrice: number;
+  tpPrice: number | null;
   lotSize: number;
   pnl: number;
   commission: number;

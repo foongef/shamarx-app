@@ -7,7 +7,7 @@ import {
   BacktestMetrics,
 } from './types';
 import { computeIndicators } from './indicator-calculator';
-import { evaluateSetup } from './strategy-evaluator';
+import { evaluateSetup, evaluateRangeSetup, getH1Regime } from './strategy-evaluator';
 import { checkPositionExit, forceClosePosition, updatePositionManagement } from './position-simulator';
 import { RiskManager } from './risk-manager';
 import { calculateMetrics } from './metrics-calculator';
@@ -95,17 +95,18 @@ export class BacktestEngine {
 
       if (!riskManager.canTrade(currentDate, openPositions.length)) continue;
 
-      // Single-pass evaluation — spread passed for entry adjustment
-      const signal = evaluateSetup(
-        m15Candles,
-        m15Indicators,
-        h1Candles,
-        h1Indicators,
-        i,
-        spread,
-        minAtr,
-        pricePrecision,
-      );
+      // V3.1: Regime routing — right strategy for right market
+      const { h1Adx } = getH1Regime(h1Candles, h1Indicators, candle.openTime);
+
+      let signal = null;
+      if (h1Adx >= 28) {
+        // Trend Engine: STRONG_TREND EMA pullback + locker/runner
+        signal = evaluateSetup(m15Candles, m15Indicators, h1Candles, h1Indicators, i, spread, minAtr, pricePrecision);
+      } else if (h1Adx < 20) {
+        // Range Engine: mean reversion at ATR bands
+        signal = evaluateRangeSetup(m15Candles, m15Indicators, h1Candles, h1Indicators, i, spread, minAtr, pricePrecision);
+      }
+      // ADX 20-28: dead zone — no trade
 
       if (!signal) continue;
 
@@ -116,7 +117,7 @@ export class BacktestEngine {
       const slPoints = Math.abs(signal.entryPrice - signal.slPrice);
       const lotSize = riskManager.calculateLotSize(slPoints);
 
-      const position: SimulatedPosition = {
+      const basePosition: SimulatedPosition = {
         side: signal.side,
         entryPrice: signal.entryPrice,
         slPrice: signal.slPrice,
@@ -133,7 +134,35 @@ export class BacktestEngine {
         atrAtEntry: signal.atrAtEntry,
       };
 
-      openPositions.push(position);
+      const isStrongTrend = signal.setupTags.includes('STRONG_TREND');
+
+      if (isStrongTrend && lotSize >= 0.02) {
+        const halfLot = Math.round(lotSize * 0.5 * 100) / 100;
+        const risk = Math.abs(signal.entryPrice - signal.slPrice);
+        const lockerTp = signal.side === 'BUY'
+          ? signal.entryPrice + risk * 1.5
+          : signal.entryPrice - risk * 1.5;
+        const factor = Math.pow(10, pricePrecision);
+
+        // Locker: 50% lot, TP at 1.5R
+        openPositions.push({
+          ...basePosition,
+          lotSize: halfLot,
+          tpPrice: Math.round(lockerTp * factor) / factor,
+          setupTags: [...signal.setupTags, 'LOCKER'],
+        });
+        // Runner: 50% lot, no TP (trail-managed)
+        openPositions.push({
+          ...basePosition,
+          lotSize: halfLot,
+          tpPrice: null,
+          setupTags: [...signal.setupTags, 'RUNNER'],
+        });
+      } else {
+        // Standard single position (WEAK/MODERATE or can't split)
+        openPositions.push({ ...basePosition, lotSize });
+      }
+
       cooldownUntil = i + 2; // 30-min cooldown after entry
     }
 

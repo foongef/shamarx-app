@@ -18,6 +18,11 @@ export function updatePositionManagement(
   candle: BacktestCandle,
   spread: number,
 ): SimulatedPosition {
+  // Range trades: no dynamic management — fixed SL/TP only
+  if (position.setupTags.includes('RANGE_ENGINE')) {
+    return position;
+  }
+
   const risk = Math.abs(position.entryPrice - position.originalSlPrice);
   // V2.7: Unified BE at 1.0R for all trades (SCALP mode removed)
   const breakevenThreshold = risk;
@@ -44,7 +49,9 @@ export function updatePositionManagement(
     // V2.7: Trailing stop for all trades
     if (newBreakeven) {
       const favorableMove = updatedPeak - position.entryPrice;
-      const trailDistance = favorableMove >= risk * 1.5 ? risk * 0.75 : risk;
+      const trailDistance = favorableMove >= risk * 3.0 ? risk * 0.5
+        : favorableMove >= risk * 2.0 ? risk * 0.75
+        : risk;
       const trailSl = updatedPeak - trailDistance;
       if (trailSl > newSlPrice) {
         newSlPrice = trailSl;
@@ -68,7 +75,9 @@ export function updatePositionManagement(
     // V2.7: Trailing stop for all trades
     if (newBreakeven) {
       const favorableMove = position.entryPrice - updatedPeak;
-      const trailDistance = favorableMove >= risk * 1.5 ? risk * 0.75 : risk;
+      const trailDistance = favorableMove >= risk * 3.0 ? risk * 0.5
+        : favorableMove >= risk * 2.0 ? risk * 0.75
+        : risk;
       const trailSl = updatedPeak + trailDistance;
       if (trailSl < newSlPrice) {
         newSlPrice = trailSl;
@@ -114,11 +123,11 @@ export function checkPositionExit(
   if (side === 'BUY') {
     // BUY exits at bid: bid = price - halfSpread
     slHit = candle.low - halfSpread <= slPrice;
-    tpHit = candle.high - halfSpread >= tpPrice;
+    tpHit = tpPrice !== null && candle.high - halfSpread >= tpPrice;
   } else {
     // SELL exits at ask: ask = price + halfSpread
     slHit = candle.high + halfSpread >= slPrice;
-    tpHit = candle.low + halfSpread <= tpPrice;
+    tpHit = tpPrice !== null && candle.low + halfSpread <= tpPrice;
   }
 
   if (!slHit && !tpHit) return null;
@@ -132,7 +141,7 @@ export function checkPositionExit(
   } else {
     exitReason = 'TP';
   }
-  const exitPrice = exitReason === 'TP' ? tpPrice : slPrice;
+  const exitPrice = exitReason === 'TP' ? tpPrice! : slPrice;
 
   const pnl = calculatePnl(side, entryPrice, exitPrice, position.lotSize, commission, lotSizeUnits);
 
