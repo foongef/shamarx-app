@@ -65,6 +65,32 @@ export const INSTRUMENT_CONFIGS: Record<string, InstrumentConfig> = {
       offHours: 0.030,
     },
   },
+  US30: {
+    lotSizeUnits: 1,             // $1 per point per lot (Pepperstone index CFD)
+    commissionPerLot: 0,         // No commission — spread only
+    minAtr: 30,                  // ~30 points minimum M15 ATR
+    pricePrecision: 1,
+    spreads: {
+      londonNyOverlap: 2.4,     // US regular session — tightest
+      london: 3.6,              // Pre-US European morning
+      nyExtended: 2.4,          // US afternoon
+      asian: 8.0,               // After-hours — very wide
+      offHours: 4.8,            // Post-close
+    },
+  },
+  NAS100: {
+    lotSizeUnits: 1,             // $1 per point per lot (Pepperstone index CFD)
+    commissionPerLot: 0,         // No commission — spread only
+    minAtr: 20,                  // ~20 points minimum M15 ATR
+    pricePrecision: 1,
+    spreads: {
+      londonNyOverlap: 1.0,     // US regular session — tightest
+      london: 1.9,              // Pre-US European morning
+      nyExtended: 1.0,          // US afternoon
+      asian: 4.0,               // After-hours
+      offHours: 1.9,            // Post-close
+    },
+  },
 };
 
 export function getInstrumentConfig(symbol: string): InstrumentConfig {

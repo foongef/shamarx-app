@@ -1,3 +1,5 @@
+export type TradingMode = 'AGGRESSIVE' | 'NORMAL' | 'DEFENSIVE';
+
 export interface BacktestCandle {
   symbol: string;
   timeframe: string;
@@ -18,6 +20,7 @@ export interface IndicatorState {
   adx14: number[];
   plusDI14: number[];
   minusDI14: number[];
+  atrBaseline: number[];
 }
 
 export interface SimulatedPosition {
@@ -60,6 +63,7 @@ export interface BacktestRiskState {
   equity: number;
   dailyPnl: number;
   consecutiveLosses: number;
+  consecutiveWins: number;
   lastTradeDate: string | null;
 }
 

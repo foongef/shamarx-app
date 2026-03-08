@@ -34,7 +34,7 @@ TIMEFRAME_MAP = {
 
 class MetaApiMT5:
     # Standard symbols we support
-    KNOWN_SYMBOLS = ["XAUUSD", "GBPUSD", "EURUSD", "USDJPY"]
+    KNOWN_SYMBOLS = ["XAUUSD", "GBPUSD", "EURUSD", "USDJPY", "US30", "NAS100"]
 
     def __init__(self):
         self._api: Optional[MetaApi] = None

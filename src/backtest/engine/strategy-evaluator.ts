@@ -336,6 +336,10 @@ export function evaluateSetup(
   // Minimum volatility — low ATR markets get stopped on noise
   if (atr < minAtr) return null;
 
+  // V4: HIGH_VOLATILITY filter — ATR spiking vs baseline means chaotic price action
+  const atrBaseline = m15Indicators.atrBaseline[idx];
+  if (!isNaN(atrBaseline) && atrBaseline > 0 && atr / atrBaseline >= 1.6) return null;
+
   // Filter 1: Session filter (DST-safe)
   if (!isActiveTradingSession(candle.openTime)) return null;
 
@@ -348,14 +352,14 @@ export function evaluateSetup(
   // V2.8: Regime stability — require same H1 regime for 3 prior bars
   if (!isH1RegimeStable(h1Candles, h1Indicators, candle.openTime)) return null;
 
-  // V2.6: Fading trend (ADX ≥ 28 but declining) → reject entirely, not a valid pullback
-  if (h1Adx >= 28 && !adxRising) return null;
+  // V3.2: Fading trend — reject ANY declining ADX (compensates for lower threshold)
+  if (!adxRising) return null;
 
   // V2.7: 3-tier ADX system (replaces SCALP/TREND binary)
   let adxTier: 'WEAK_TREND' | 'MODERATE_TREND' | 'STRONG_TREND';
   if (h1Adx < 24) {
     adxTier = 'WEAK_TREND';
-  } else if (h1Adx < 28) {
+  } else if (h1Adx < 25) {
     adxTier = 'MODERATE_TREND';
   } else {
     adxTier = 'STRONG_TREND';
@@ -554,6 +558,10 @@ export function evaluateRangeSetup(
 
   if (isNaN(ema50) || isNaN(rsi) || isNaN(atr) || atr === 0) return null;
   if (atr < minAtr) return null;
+
+  // V4: HIGH_VOLATILITY filter
+  const atrBaseline = m15Indicators.atrBaseline[idx];
+  if (!isNaN(atrBaseline) && atrBaseline > 0 && atr / atrBaseline >= 1.6) return null;
 
   // Session filter (same as trend)
   if (!isActiveTradingSession(candle.openTime)) return null;

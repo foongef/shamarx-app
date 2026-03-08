@@ -78,7 +78,7 @@ export class BacktestService {
         riskPercent: dto.riskPercent,
         maxDailyLossPercent: 4.0,
         maxConsecutiveLosses: 3,
-        maxOpenPositions: 2,
+        maxOpenPositions: 3,
       };
 
       const result = engine.run(m15Candles, h1Candles, config);

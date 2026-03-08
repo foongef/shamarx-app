@@ -2,7 +2,7 @@ import { IsDateString, IsNumber, IsBoolean, IsOptional, IsIn, IsString, Min, Max
 import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
-const SUPPORTED_SYMBOLS = ['XAUUSD', 'GBPUSD', 'EURUSD', 'USDJPY'] as const;
+const SUPPORTED_SYMBOLS = ['XAUUSD', 'GBPUSD', 'EURUSD', 'USDJPY', 'US30', 'NAS100'] as const;
 
 export class CreateBacktestDto {
   @ApiPropertyOptional({ example: 'XAUUSD', default: 'XAUUSD', enum: SUPPORTED_SYMBOLS })

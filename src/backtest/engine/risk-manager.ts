@@ -1,4 +1,4 @@
-import { BacktestRiskState, EngineConfig } from './types';
+import { BacktestRiskState, EngineConfig, TradingMode } from './types';
 import { getInstrumentConfig } from './instrument-config';
 
 const WEEKLY_DD_THRESHOLD = 5; // pause if equity drops 5% from weekly peak
@@ -20,6 +20,12 @@ export class RiskManager {
   // Overall peak equity for dynamic risk scaling
   private overallPeakEquity: number;
 
+  // V4: Trade log for rolling 7-day loss stop
+  private tradeLog: { date: string; pnl: number; isLoss: boolean }[] = [];
+  private equityDdPauseUntil: string | null = null;
+  private lastDdTierTriggered: number = 0; // 0/15/25/35 — prevents re-triggering same tier
+  private rolling7DayPauseUntil: string | null = null;
+
   constructor(config: EngineConfig) {
     this.config = config;
     this.lotSizeUnits = getInstrumentConfig(config.symbol).lotSizeUnits;
@@ -28,6 +34,7 @@ export class RiskManager {
       equity: config.initialBalance,
       dailyPnl: 0,
       consecutiveLosses: 0,
+      consecutiveWins: 0,
       lastTradeDate: null,
     };
     this.weeklyPeakEquity = config.initialBalance;
@@ -46,6 +53,21 @@ export class RiskManager {
 
     // Circuit breaker: paused after weekly drawdown
     if (this.pauseUntilDate && dateStr < this.pauseUntilDate) {
+      return false;
+    }
+
+    // V4: Equity DD circuit breaker — enforce pause only (triggering moved to recordTrade)
+    if (this.equityDdPauseUntil) {
+      if (dateStr < this.equityDdPauseUntil) return false;
+      // Pause expired — clear and allow trading (DEFENSIVE mode still active via getTradingMode)
+      this.equityDdPauseUntil = null;
+    }
+
+    // V4: Rolling 7-day loss stop
+    if (this.rolling7DayPauseUntil && dateStr < this.rolling7DayPauseUntil) return false;
+
+    if (this.getRolling7DayLosses(dateStr) >= 4) {
+      this.rolling7DayPauseUntil = this.addTradingDays(dateStr, 5);
       return false;
     }
 
@@ -88,6 +110,11 @@ export class RiskManager {
       effectiveRisk *= 0.5;
     }
 
+    // V4: DEFENSIVE mode stacks with DD scaling
+    if (this.getTradingMode() === 'DEFENSIVE') {
+      effectiveRisk *= 0.5;
+    }
+
     const riskAmount = this.state.balance * (effectiveRisk / 100);
     const lotSize = riskAmount / (slPoints * this.lotSizeUnits);
     // Clamp between 0.01 and 1.0
@@ -109,13 +136,23 @@ export class RiskManager {
     this.state.equity = this.state.balance;
     this.state.dailyPnl += pnl;
 
+    // V4: Track trade in log for rolling 7-day loss stop
+    this.tradeLog.push({
+      date: tradeDate.substring(0, 10),
+      pnl,
+      isLoss: pnl < 0 && exitReason !== 'BREAKEVEN',
+    });
+
     if (exitReason === 'BREAKEVEN') {
-      // Breakeven — don't change consecutive losses
+      // Breakeven — don't change consecutive losses or wins
+    } else if (exitReason === 'TP') {
+      this.state.consecutiveLosses = 0;
+      this.state.consecutiveWins++;
     } else if (pnl < 0) {
       this.state.consecutiveLosses++;
-    } else {
-      this.state.consecutiveLosses = 0;
+      this.state.consecutiveWins = 0;
     }
+    // else: positive PnL from trailed SL — don't reset either counter
 
     // Update peak equity tracking
     if (this.state.equity > this.weeklyPeakEquity) {
@@ -123,6 +160,22 @@ export class RiskManager {
     }
     if (this.state.equity > this.overallPeakEquity) {
       this.overallPeakEquity = this.state.equity;
+      // New peak — reset tier tracker so future DD can trigger fresh pauses
+      this.lastDdTierTriggered = 0;
+    }
+
+    // V4: Equity DD tiered circuit breaker — event-triggered on new trade
+    const ddPercent = this.getEquityDdPercent();
+    const dateStrForPause = tradeDate.substring(0, 10);
+    if (ddPercent >= 35 && this.lastDdTierTriggered < 35) {
+      this.lastDdTierTriggered = 35;
+      this.equityDdPauseUntil = this.addTradingDays(dateStrForPause, 30);
+    } else if (ddPercent >= 25 && this.lastDdTierTriggered < 25) {
+      this.lastDdTierTriggered = 25;
+      this.equityDdPauseUntil = this.addTradingDays(dateStrForPause, 7);
+    } else if (ddPercent >= 15 && this.lastDdTierTriggered < 15) {
+      this.lastDdTierTriggered = 15;
+      this.equityDdPauseUntil = this.addTradingDays(dateStrForPause, 3);
     }
 
     // Check weekly drawdown circuit breaker
@@ -141,6 +194,48 @@ export class RiskManager {
 
   getState(): BacktestRiskState {
     return { ...this.state };
+  }
+
+  // V4: Equity drawdown percentage from overall peak
+  private getEquityDdPercent(): number {
+    return this.overallPeakEquity > 0
+      ? ((this.overallPeakEquity - this.state.equity) / this.overallPeakEquity) * 100
+      : 0;
+  }
+
+  // V4: Count losses within 7 calendar days of currentDate
+  private getRolling7DayLosses(currentDate: string): number {
+    const current = new Date(currentDate).getTime();
+    const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
+    return this.tradeLog.filter(
+      (t) => t.isLoss && current - new Date(t.date).getTime() <= sevenDaysMs,
+    ).length;
+  }
+
+  // V4: Adaptive trading mode based on drawdown, losses, and momentum
+  getTradingMode(): TradingMode {
+    const ddPercent = this.getEquityDdPercent();
+    const rolling7dLosses = this.getRolling7DayLosses(
+      this.state.lastTradeDate?.substring(0, 10) || '',
+    );
+
+    // DEFENSIVE
+    if (ddPercent >= 10) return 'DEFENSIVE';
+    if (this.state.consecutiveLosses >= 2) return 'DEFENSIVE';
+    if (rolling7dLosses >= 3) return 'DEFENSIVE';
+
+    // AGGRESSIVE — equity near peak + recent wins
+    if (ddPercent < 5 && this.state.consecutiveWins >= 2) return 'AGGRESSIVE';
+
+    return 'NORMAL';
+  }
+
+  // V4: Pyramid safety gate
+  canPyramid(): boolean {
+    if (this.getTradingMode() === 'DEFENSIVE') return false;
+    if (this.getEquityDdPercent() >= 10) return false;
+    if (this.state.consecutiveLosses >= 2) return false;
+    return true;
   }
 
   private maybeResetDaily(currentDate: string): void {

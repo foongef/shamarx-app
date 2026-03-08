@@ -30,6 +30,7 @@ export function updatePositionManagement(
   let updatedPeak = position.peakFavorablePrice;
   let newSlPrice = position.slPrice;
   let newBreakeven = position.breakevenActivated;
+  let newTpPrice = position.tpPrice;
 
   if (position.side === 'BUY') {
     // Track peak bid price
@@ -46,10 +47,19 @@ export function updatePositionManagement(
       newSlPrice = position.entryPrice + risk * 0.15;
     }
 
-    // V2.7: Trailing stop for all trades
+    // Trailing stop (after breakeven)
     if (newBreakeven) {
       const favorableMove = updatedPeak - position.entryPrice;
-      const trailDistance = favorableMove >= risk * 3.0 ? risk * 0.5
+
+      // Hybrid TP→Trail: at 2R+, remove TP and let trailing manage the exit
+      if (favorableMove >= risk * 2.0 && newTpPrice !== null) {
+        newTpPrice = null;
+      }
+
+      // 5-tier trailing schedule
+      const trailDistance = favorableMove >= risk * 5.0 ? risk * 0.4
+        : favorableMove >= risk * 4.0 ? risk * 0.5
+        : favorableMove >= risk * 3.0 ? risk * 0.6
         : favorableMove >= risk * 2.0 ? risk * 0.75
         : risk;
       const trailSl = updatedPeak - trailDistance;
@@ -72,10 +82,19 @@ export function updatePositionManagement(
       newSlPrice = position.entryPrice - risk * 0.15;
     }
 
-    // V2.7: Trailing stop for all trades
+    // Trailing stop (after breakeven)
     if (newBreakeven) {
       const favorableMove = position.entryPrice - updatedPeak;
-      const trailDistance = favorableMove >= risk * 3.0 ? risk * 0.5
+
+      // Hybrid TP→Trail: at 2R+, remove TP and let trailing manage the exit
+      if (favorableMove >= risk * 2.0 && newTpPrice !== null) {
+        newTpPrice = null;
+      }
+
+      // 5-tier trailing schedule
+      const trailDistance = favorableMove >= risk * 5.0 ? risk * 0.4
+        : favorableMove >= risk * 4.0 ? risk * 0.5
+        : favorableMove >= risk * 3.0 ? risk * 0.6
         : favorableMove >= risk * 2.0 ? risk * 0.75
         : risk;
       const trailSl = updatedPeak + trailDistance;
@@ -89,7 +108,8 @@ export function updatePositionManagement(
   if (
     updatedPeak === position.peakFavorablePrice &&
     newSlPrice === position.slPrice &&
-    newBreakeven === position.breakevenActivated
+    newBreakeven === position.breakevenActivated &&
+    newTpPrice === position.tpPrice
   ) {
     return position;
   }
@@ -99,6 +119,7 @@ export function updatePositionManagement(
     peakFavorablePrice: updatedPeak,
     slPrice: newSlPrice,
     breakevenActivated: newBreakeven,
+    tpPrice: newTpPrice,
   };
 }
 

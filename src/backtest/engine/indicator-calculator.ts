@@ -1,4 +1,4 @@
-import { EMA, RSI, ATR, ADX } from 'technicalindicators';
+import { EMA, RSI, ATR, ADX, SMA } from 'technicalindicators';
 import { BacktestCandle, IndicatorState } from './types';
 
 /**
@@ -21,6 +21,8 @@ export function computeIndicators(candles: BacktestCandle[]): IndicatorState {
     low: lows,
     close: closes,
   });
+
+  const atrBaselineRaw = SMA.calculate({ period: 20, values: atr14Raw });
 
   // ADX returns { adx, pdi, mdi } for each period
   const adxRaw = ADX.calculate({
@@ -45,5 +47,6 @@ export function computeIndicators(candles: BacktestCandle[]): IndicatorState {
     adx14: pad(adxRaw.map((v) => v.adx)),
     plusDI14: pad(adxRaw.map((v) => v.pdi)),
     minusDI14: pad(adxRaw.map((v) => v.mdi)),
+    atrBaseline: pad(atrBaselineRaw),
   };
 }

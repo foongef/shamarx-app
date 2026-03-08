@@ -95,20 +95,36 @@ export class BacktestEngine {
 
       if (!riskManager.canTrade(currentDate, openPositions.length)) continue;
 
-      // V3.1: Regime routing — right strategy for right market
-      const { h1Adx } = getH1Regime(h1Candles, h1Indicators, candle.openTime);
+      // V4: Get adaptive trading mode
+      const tradingMode = riskManager.getTradingMode();
+
+      // V3.2: Regime routing — right strategy for right market
+      const { h1Adx, adxRising } = getH1Regime(h1Candles, h1Indicators, candle.openTime);
 
       let signal = null;
-      if (h1Adx >= 28) {
-        // Trend Engine: STRONG_TREND EMA pullback + locker/runner
+      if (h1Adx >= 25 && adxRising) {
+        // Trend Engine: STRONG_TREND EMA pullback + locker/runner (ADX must be rising)
         signal = evaluateSetup(m15Candles, m15Indicators, h1Candles, h1Indicators, i, spread, minAtr, pricePrecision);
-      } else if (h1Adx < 20) {
-        // Range Engine: mean reversion at ATR bands
+      } else if (h1Adx < 20 && tradingMode !== 'DEFENSIVE') {
+        // Range Engine: mean reversion at ATR bands (V4: disabled in DEFENSIVE)
         signal = evaluateRangeSetup(m15Candles, m15Indicators, h1Candles, h1Indicators, i, spread, minAtr, pricePrecision);
       }
-      // ADX 20-28: dead zone — no trade
+      // ADX 20-25: dead zone — no trade
 
       if (!signal) continue;
+
+      // --- V3.2/V4: Pyramid tagging (gated by canPyramid) ---
+      if (signal.setupTags.includes('STRONG_TREND') && riskManager.canPyramid()) {
+        const bePosition = openPositions.find(p =>
+          p.breakevenActivated &&
+          p.setupTags.includes('STRONG_TREND') &&
+          !p.setupTags.includes('PYRAMID') &&
+          p.side === signal.side
+        );
+        if (bePosition) {
+          signal.setupTags.push('PYRAMID');
+        }
+      }
 
       // V2.8: Same-day direction limit — skip if already hit SL in this direction today
       if (dailySlCount[signal.side] >= 1) continue;
@@ -116,6 +132,38 @@ export class BacktestEngine {
       // Step 3: Calculate lot size and open position
       const slPoints = Math.abs(signal.entryPrice - signal.slPrice);
       const lotSize = riskManager.calculateLotSize(slPoints);
+
+      // V4: Direction stacking guards — position-state + event-risk cap
+      const sameDirectionPositions = openPositions.filter(p => p.side === signal.side);
+      if (sameDirectionPositions.length > 0) {
+        // Guard A: Position-state cap
+        const allAtBreakeven = sameDirectionPositions.every(p => p.breakevenActivated);
+        const isStrongTrend = signal.setupTags.includes('STRONG_TREND');
+        const atrRatio = m15Indicators.atr14[i] / m15Indicators.atrBaseline[i];
+        const elevatedVol = !isNaN(atrRatio) && atrRatio >= 1.3;
+
+        if (
+          sameDirectionPositions.length >= 2 ||
+          !allAtBreakeven ||
+          !isStrongTrend ||
+          tradingMode === 'DEFENSIVE' ||
+          elevatedVol
+        ) continue;
+
+        // Guard B: Event-risk cap — worst-case directional loss ≤ 20% of equity
+        const MAX_EVENT_RISK_PCT = 20;
+        const newPositionRisk = slPoints * lotSize * lotSizeUnits;
+        const sameDirectionRisk = sameDirectionPositions.reduce((sum, p) => {
+          const posRisk = Math.abs(p.entryPrice - p.slPrice) * p.lotSize * lotSizeUnits;
+          return sum + posRisk;
+        }, 0);
+        const totalDirectionRisk = sameDirectionRisk + newPositionRisk;
+        const maxEventRisk = riskManager.getBalance() * (MAX_EVENT_RISK_PCT / 100);
+        if (totalDirectionRisk > maxEventRisk) continue;
+      }
+
+      // V4: Tag trade with adaptive trading mode
+      signal.setupTags.push(tradingMode);
 
       const basePosition: SimulatedPosition = {
         side: signal.side,
@@ -135,8 +183,9 @@ export class BacktestEngine {
       };
 
       const isStrongTrend = signal.setupTags.includes('STRONG_TREND');
+      const isPyramid = signal.setupTags.includes('PYRAMID');
 
-      if (isStrongTrend && lotSize >= 0.02) {
+      if (isStrongTrend && !isPyramid && lotSize >= 0.02) {
         const halfLot = Math.round(lotSize * 0.5 * 100) / 100;
         const risk = Math.abs(signal.entryPrice - signal.slPrice);
         const lockerTp = signal.side === 'BUY'
