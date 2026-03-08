@@ -1,7 +1,7 @@
 import { BacktestRiskState, EngineConfig, TradingMode } from './types';
 import { getInstrumentConfig } from './instrument-config';
 
-const WEEKLY_DD_THRESHOLD = 5; // pause if equity drops 5% from weekly peak
+const WEEKLY_DD_THRESHOLD = 8; // V5: increased from 5% to 8% for more runway
 const WEEKLY_DD_PAUSE_DAYS = 5; // pause for 5 trading days
 
 export class RiskManager {
@@ -16,6 +16,7 @@ export class RiskManager {
 
   // Escalating consecutive loss pause — only a WIN resets the counter
   private consecutiveLossPauseUntil: string | null = null;
+  private awaitingPostPauseTrade: boolean = false; // V5: stays true until next trade fires
 
   // Overall peak equity for dynamic risk scaling
   private overallPeakEquity: number;
@@ -74,15 +75,17 @@ export class RiskManager {
     // Escalating consecutive loss pause — counter persists, only a WIN resets it
     if (this.consecutiveLossPauseUntil) {
       if (dateStr < this.consecutiveLossPauseUntil) return false;
-      // Pause expired → allow exactly 1 trade attempt (counter stays)
+      // Pause expired → allow trade attempts until next trade fires
       this.consecutiveLossPauseUntil = null;
+      this.awaitingPostPauseTrade = true;
     }
 
     const dailyLossPercent = (this.state.dailyPnl / this.state.balance) * 100;
     if (dailyLossPercent <= -this.config.maxDailyLossPercent) return false;
 
     // Escalating pause: 3 losses → 1 day, 4 → 3 days, 5+ → 5 days
-    if (this.state.consecutiveLosses >= this.config.maxConsecutiveLosses) {
+    // Skip if awaiting post-pause trade — allow signals until one fires
+    if (!this.awaitingPostPauseTrade && this.state.consecutiveLosses >= this.config.maxConsecutiveLosses) {
       const excess = this.state.consecutiveLosses - this.config.maxConsecutiveLosses;
       const pauseDays = excess >= 2 ? 5 : excess >= 1 ? 3 : 1;
       this.consecutiveLossPauseUntil = this.addTradingDays(dateStr, pauseDays);
@@ -97,7 +100,7 @@ export class RiskManager {
   /**
    * Calculate lot size based on current balance and risk percent.
    */
-  calculateLotSize(slPoints: number): number {
+  calculateLotSize(slPoints: number, qualityScore?: number): number {
     // Dynamic risk: scale down during drawdowns
     let effectiveRisk = this.config.riskPercent;
     const ddPercent = this.overallPeakEquity > 0
@@ -111,8 +114,14 @@ export class RiskManager {
     }
 
     // V4: DEFENSIVE mode stacks with DD scaling
-    if (this.getTradingMode() === 'DEFENSIVE') {
+    // V5.5b: Skip halving if recovering (3+ consecutive wins) to prevent death spiral
+    if (this.getTradingMode() === 'DEFENSIVE' && this.state.consecutiveWins < 3) {
       effectiveRisk *= 0.5;
+    }
+
+    // V5.5b: Quality gate — dampen low-Q setups (high-Q amplified via locker/runner split instead)
+    if (qualityScore !== undefined && qualityScore < 40) {
+      effectiveRisk *= 0.6;
     }
 
     const riskAmount = this.state.balance * (effectiveRisk / 100);
@@ -125,12 +134,15 @@ export class RiskManager {
    * Record a closed trade's PnL.
    * exitReason controls consecutive loss counting:
    * - SL → increment consecutiveLosses
-   * - BREAKEVEN → no change (not a real loss)
+   * - BREAKEVEN → reset consecutiveLosses (reached profit threshold)
    * - TP → reset consecutiveLosses to 0
    */
   recordTrade(pnl: number, tradeDate: string, exitReason?: string): void {
     this.maybeResetDaily(tradeDate);
     this.maybeResetWeekly(tradeDate);
+
+    // V5: Clear post-pause flag — a trade has fired
+    this.awaitingPostPauseTrade = false;
 
     this.state.balance += pnl;
     this.state.equity = this.state.balance;
@@ -144,7 +156,8 @@ export class RiskManager {
     });
 
     if (exitReason === 'BREAKEVEN') {
-      // Breakeven — don't change consecutive losses or wins
+      // V5.5: BE reached profit threshold — reset loss streak (prevents cascade)
+      this.state.consecutiveLosses = 0;
     } else if (exitReason === 'TP') {
       this.state.consecutiveLosses = 0;
       this.state.consecutiveWins++;
@@ -219,10 +232,10 @@ export class RiskManager {
       this.state.lastTradeDate?.substring(0, 10) || '',
     );
 
-    // DEFENSIVE
-    if (ddPercent >= 10) return 'DEFENSIVE';
-    if (this.state.consecutiveLosses >= 2) return 'DEFENSIVE';
-    if (rolling7dLosses >= 3) return 'DEFENSIVE';
+    // V5.1: Relaxed DEFENSIVE triggers — was too aggressive, shut down trading prematurely
+    if (ddPercent >= 15) return 'DEFENSIVE';
+    if (this.state.consecutiveLosses >= 4) return 'DEFENSIVE';
+    if (rolling7dLosses >= 5) return 'DEFENSIVE';
 
     // AGGRESSIVE — equity near peak + recent wins
     if (ddPercent < 5 && this.state.consecutiveWins >= 2) return 'AGGRESSIVE';

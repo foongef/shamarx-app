@@ -2,6 +2,10 @@ import {
   BacktestCandle,
   IndicatorState,
   SwingPoint,
+  SwingPointTracker,
+  BOSLevel,
+  FairValueGap,
+  SetupType,
 } from './types';
 
 // ─── Regime Detection (H1 ADX) ─────────────────────────────────────────────
@@ -297,6 +301,8 @@ export interface SetupSignal {
   h1Bias: string;
   rsiAtEntry: number;
   atrAtEntry: number;
+  setupType?: SetupType;
+  qualityScore?: number;
 }
 
 /**
@@ -518,6 +524,7 @@ export function evaluateSetup(
     h1Bias: bias,
     rsiAtEntry: Math.round(rsi * 100) / 100,
     atrAtEntry: Math.round(atr * 100000) / 100000,
+    setupType: 'TREND_PULLBACK',
   };
 }
 
@@ -637,5 +644,577 @@ export function evaluateRangeSetup(
     h1Bias: 'NEUTRAL',
     rsiAtEntry: Math.round(rsi * 100) / 100,
     atrAtEntry: Math.round(atr * 100000) / 100000,
+    setupType: 'RANGE_REVERSION',
   };
+}
+
+// ─── V5: Swing Point Tracker ─────────────────────────────────────────────────
+
+export function updateSwingTracker(
+  tracker: SwingPointTracker,
+  candles: BacktestCandle[],
+  idx: number,
+  lookback: number = 5,
+): void {
+  const candidateIdx = idx - lookback;
+  if (candidateIdx < lookback || candidateIdx >= candles.length) return;
+
+  const candidate = candles[candidateIdx];
+
+  // Check if local max among ±lookback neighbors
+  let isHigh = true;
+  let isLow = true;
+  for (let j = 1; j <= lookback; j++) {
+    const before = candidateIdx - j;
+    const after = candidateIdx + j;
+    if (before < 0 || after >= candles.length) {
+      isHigh = false;
+      isLow = false;
+      break;
+    }
+    if (candles[before].high >= candidate.high || candles[after].high >= candidate.high) {
+      isHigh = false;
+    }
+    if (candles[before].low <= candidate.low || candles[after].low <= candidate.low) {
+      isLow = false;
+    }
+  }
+
+  if (isHigh) {
+    tracker.recentHighs.push({ index: candidateIdx, price: candidate.high, type: 'HIGH' });
+    if (tracker.recentHighs.length > 20) tracker.recentHighs.shift();
+  }
+  if (isLow) {
+    tracker.recentLows.push({ index: candidateIdx, price: candidate.low, type: 'LOW' });
+    if (tracker.recentLows.length > 20) tracker.recentLows.shift();
+  }
+}
+
+// ─── V5: BOS Detection ──────────────────────────────────────────────────────
+
+export function detectBOSEvents(
+  candles: BacktestCandle[],
+  idx: number,
+  tracker: SwingPointTracker,
+  existingLevels: BOSLevel[],
+): BOSLevel[] {
+  const newLevels: BOSLevel[] = [];
+  const candle = candles[idx];
+
+  // Check bullish BOS: close breaks above recent swing highs
+  for (const swingHigh of tracker.recentHighs) {
+    if (candle.close > swingHigh.price) {
+      // Only register if not already tracked at this level
+      const alreadyTracked = existingLevels.some(
+        (l) => l.direction === 'BUY' && Math.abs(l.brokenLevel - swingHigh.price) < 0.01,
+      );
+      if (!alreadyTracked) {
+        newLevels.push({
+          direction: 'BUY',
+          brokenLevel: swingHigh.price,
+          breakIndex: idx,
+          traded: false,
+          expiryCandles: 48, // V5.1: extended from 32 (8hr) to 48 (12hr)
+        });
+      }
+    }
+  }
+
+  // Check bearish BOS: close breaks below recent swing lows
+  for (const swingLow of tracker.recentLows) {
+    if (candle.close < swingLow.price) {
+      const alreadyTracked = existingLevels.some(
+        (l) => l.direction === 'SELL' && Math.abs(l.brokenLevel - swingLow.price) < 0.01,
+      );
+      if (!alreadyTracked) {
+        newLevels.push({
+          direction: 'SELL',
+          brokenLevel: swingLow.price,
+          breakIndex: idx,
+          traded: false,
+          expiryCandles: 48, // V5.1: extended from 32 (8hr) to 48 (12hr)
+        });
+      }
+    }
+  }
+
+  return newLevels;
+}
+
+// ─── V5: BOS Retest Entry ────────────────────────────────────────────────────
+
+export function evaluateBOSRetest(
+  m15Candles: BacktestCandle[],
+  m15Indicators: IndicatorState,
+  h1Candles: BacktestCandle[],
+  h1Indicators: IndicatorState,
+  idx: number,
+  activeLevels: BOSLevel[],
+  spread: number,
+  minAtr: number,
+  pricePrecision: number,
+): SetupSignal | null {
+  if (idx < 50) return null;
+
+  const candle = m15Candles[idx];
+  const atr = m15Indicators.atr14[idx];
+  const rsi = m15Indicators.rsi14[idx];
+
+  if (isNaN(atr) || atr === 0 || isNaN(rsi)) return null;
+  if (atr < minAtr) return null;
+
+  // V5.1: Raised volatility ceiling from 1.6 to 2.0
+  const atrBaseline = m15Indicators.atrBaseline[idx];
+  if (!isNaN(atrBaseline) && atrBaseline > 0 && atr / atrBaseline >= 2.0) return null;
+
+  // Session filter
+  if (!isActiveTradingSession(candle.openTime)) return null;
+
+  // H1 filters — V5.1: lowered ADX threshold from 20 to 18
+  const { bias, h1Adx } = getH1Regime(h1Candles, h1Indicators, candle.openTime);
+  if (h1Adx < 18) return null;
+
+  // V5.1: Removed regime stability requirement — BOS structure break IS the confirmation
+
+  const tolerance = atr * 0.5; // V5.1: widened retest zone from 0.3 to 0.5
+  const halfSpread = spread / 2;
+  const factor = Math.pow(10, pricePrecision);
+
+  for (const level of activeLevels) {
+    if (level.traded) continue;
+    if (idx - level.breakIndex > level.expiryCandles) continue;
+
+    // H1 bias must match BOS direction
+    if (level.direction === 'BUY' && bias !== 'BULLISH') continue;
+    if (level.direction === 'SELL' && bias !== 'BEARISH') continue;
+
+    const isBullish = level.direction === 'BUY';
+
+    // V5.1: Widened RSI filter from 30-70 to 25-75
+    if (rsi < 25 || rsi > 75) continue;
+
+    // V5.3: Minimum break distance — filter weak breakouts (increased from 0.3 to 0.5 ATR)
+    const breakCandle = m15Candles[level.breakIndex];
+    if (isBullish && breakCandle.close - level.brokenLevel < atr * 0.5) continue;
+    if (!isBullish && level.brokenLevel - breakCandle.close < atr * 0.5) continue;
+
+    // V5.3: M15 EMA20 slope must agree with trade direction (filters counter-trend retests)
+    const ema20 = m15Indicators.ema20[idx];
+    const ema20Prev = idx >= 4 ? m15Indicators.ema20[idx - 4] : NaN;
+    if (!isNaN(ema20) && !isNaN(ema20Prev)) {
+      if (isBullish && ema20 <= ema20Prev) continue;
+      if (!isBullish && ema20 >= ema20Prev) continue;
+    }
+
+    // Retest: candle dips to/through broken level ± tolerance
+    if (isBullish) {
+      if (candle.low > level.brokenLevel + tolerance) continue;
+      // Confirmation: closes back above level (or very close)
+      if (candle.close < level.brokenLevel - atr * 0.1) continue;
+      // Must be a bullish close
+      if (candle.close <= candle.open) continue;
+    } else {
+      if (candle.high < level.brokenLevel - tolerance) continue;
+      if (candle.close > level.brokenLevel + atr * 0.1) continue;
+      if (candle.close >= candle.open) continue;
+    }
+
+    // V5.1: Relaxed confirmation — directional close IS the confirmation
+    // Engulfing/strong close/pin bar are optional bonus tags
+    const hasEngulfing = detectEngulfing(m15Candles, idx);
+    const hasStrongClose = detectStrongClose(m15Candles, idx);
+    const hasPinBar = detectPinBar(m15Candles, idx, level.direction);
+
+    // Entry price
+    const entryPrice = isBullish
+      ? candle.close + halfSpread
+      : candle.close - halfSpread;
+
+    // SL: beyond retest candle extreme + ATR*0.3
+    let slPrice = isBullish
+      ? candle.low - atr * 0.3
+      : candle.high + atr * 0.3;
+
+    // Clamp SL distance [ATR*0.6, ATR*2.0]  V5.1: tightened for better R:R
+    const slDistance = Math.abs(entryPrice - slPrice);
+    if (slDistance < atr * 0.6) {
+      slPrice = isBullish ? entryPrice - atr * 0.6 : entryPrice + atr * 0.6;
+    }
+    if (slDistance > atr * 2.0) {
+      slPrice = isBullish ? entryPrice - atr * 2.0 : entryPrice + atr * 2.0;
+    }
+
+    // V5.2: TP lowered to 1.0R — data shows even 1.5R never reached, all profit via trailing
+    const risk = Math.abs(entryPrice - slPrice);
+    const tpPrice = isBullish ? entryPrice + risk * 1.0 : entryPrice - risk * 1.0;
+
+    const tags: string[] = ['BOS_RETEST', isBullish ? 'ADX_BULL' : 'ADX_BEAR'];
+    if (hasEngulfing) tags.push('ENGULFING');
+    if (hasStrongClose) tags.push('STRONG_CLOSE');
+    if (hasPinBar) tags.push('PIN_BAR');
+
+    return {
+      side: isBullish ? 'BUY' : 'SELL',
+      entryPrice: Math.round(entryPrice * factor) / factor,
+      slPrice: Math.round(slPrice * factor) / factor,
+      tpPrice: Math.round(tpPrice * factor) / factor,
+      setupTags: tags,
+      h1Bias: bias,
+      rsiAtEntry: Math.round(rsi * 100) / 100,
+      atrAtEntry: Math.round(atr * 100000) / 100000,
+      setupType: 'BOS_RETEST',
+    };
+  }
+
+  return null;
+}
+
+// ─── V5: FVG Detection ──────────────────────────────────────────────────────
+
+export function detectFVGs(
+  candles: BacktestCandle[],
+  indicators: IndicatorState,
+  idx: number,
+): FairValueGap[] {
+  const fvgs: FairValueGap[] = [];
+  if (idx < 2) return fvgs;
+
+  const atr = indicators.atr14[idx];
+  if (isNaN(atr) || atr === 0) return fvgs;
+
+  const curr = candles[idx];
+  const prev = candles[idx - 1]; // middle candle
+  const prev2 = candles[idx - 2];
+
+  // V5.4: Relaxed middle candle quality — body > 40% (was 50%), range > 0.5× ATR (was 0.7×)
+  const middleBody = Math.abs(prev.close - prev.open);
+  const middleRange = prev.high - prev.low;
+  if (middleRange === 0) return fvgs;
+  if (middleBody / middleRange < 0.4) return fvgs;
+  if (middleRange < atr * 0.5) return fvgs;
+
+  // Bullish FVG: current candle's low > prev2 candle's high (gap up)
+  if (curr.low > prev2.high) {
+    fvgs.push({
+      direction: 'BUY',
+      zoneHigh: curr.low,
+      zoneLow: prev2.high,
+      createdAtIndex: idx,
+      expiryCandles: 96, // V5.4: extended to 96 (24hr) — more time for fills
+      traded: false,
+    });
+  }
+
+  // Bearish FVG: current candle's high < prev2 candle's low (gap down)
+  if (curr.high < prev2.low) {
+    fvgs.push({
+      direction: 'SELL',
+      zoneHigh: prev2.low,
+      zoneLow: curr.high,
+      createdAtIndex: idx,
+      expiryCandles: 96, // V5.4: extended to 96 (24hr) — more time for fills
+      traded: false,
+    });
+  }
+
+  return fvgs;
+}
+
+// ─── V5: FVG Fill Entry ─────────────────────────────────────────────────────
+
+export function evaluateFVGEntry(
+  m15Candles: BacktestCandle[],
+  m15Indicators: IndicatorState,
+  h1Candles: BacktestCandle[],
+  h1Indicators: IndicatorState,
+  idx: number,
+  activeFVGs: FairValueGap[],
+  spread: number,
+  minAtr: number,
+  pricePrecision: number,
+): SetupSignal | null {
+  if (idx < 50) return null;
+
+  const candle = m15Candles[idx];
+  const atr = m15Indicators.atr14[idx];
+  const rsi = m15Indicators.rsi14[idx];
+
+  if (isNaN(atr) || atr === 0 || isNaN(rsi)) return null;
+  if (atr < minAtr) return null;
+
+  // V5.1: Raised volatility ceiling from 1.6 to 2.0
+  const atrBaseline = m15Indicators.atrBaseline[idx];
+  if (!isNaN(atrBaseline) && atrBaseline > 0 && atr / atrBaseline >= 2.0) return null;
+
+  // Session filter
+  if (!isActiveTradingSession(candle.openTime)) return null;
+
+  // V5.4: lowered ADX threshold to 15 — FVG is structural, works in weaker trends too
+  const { bias, h1Adx } = getH1Regime(h1Candles, h1Indicators, candle.openTime);
+  if (h1Adx < 15) return null;
+
+  const halfSpread = spread / 2;
+  const factor = Math.pow(10, pricePrecision);
+
+  for (const fvg of activeFVGs) {
+    if (fvg.traded) continue;
+    if (idx - fvg.createdAtIndex > fvg.expiryCandles) continue;
+    // Don't trade FVG on the candle it was created
+    if (idx <= fvg.createdAtIndex) continue;
+
+    // V5.4: H1 bias must not oppose FVG direction (NEUTRAL is OK)
+    if (fvg.direction === 'BUY' && bias === 'BEARISH') continue;
+    if (fvg.direction === 'SELL' && bias === 'BULLISH') continue;
+
+    const isBullish = fvg.direction === 'BUY';
+
+    // V5.4: Widened RSI filter to 20-80 — FVG structure is strong enough
+    if (rsi < 20 || rsi > 80) continue;
+
+    // V5.4: When H1 bias is NEUTRAL, require M15 EMA alignment as backup confirmation
+    if (bias === 'NEUTRAL') {
+      const ema20 = m15Indicators.ema20[idx];
+      const ema50 = m15Indicators.ema50[idx];
+      if (!isNaN(ema20) && !isNaN(ema50)) {
+        if (isBullish && ema20 < ema50) continue;
+        if (!isBullish && ema20 > ema50) continue;
+      }
+    }
+
+    // Fill: candle enters FVG zone
+    if (isBullish) {
+      if (candle.low > fvg.zoneHigh || candle.high < fvg.zoneLow) continue;
+      if (candle.close <= candle.open) continue;
+    } else {
+      if (candle.high < fvg.zoneLow || candle.low > fvg.zoneHigh) continue;
+      if (candle.close >= candle.open) continue;
+    }
+
+    // Entry price
+    const entryPrice = isBullish
+      ? candle.close + halfSpread
+      : candle.close - halfSpread;
+
+    // SL: beyond FVG zone extreme + ATR*0.3
+    let slPrice = isBullish
+      ? fvg.zoneLow - atr * 0.3
+      : fvg.zoneHigh + atr * 0.3;
+
+    // V5.5b: SL clamp min ATR*0.6; reject >2.5 ATR, clamp moderate ones to 1.5
+    const slDistance = Math.abs(entryPrice - slPrice);
+    if (slDistance < atr * 0.6) {
+      slPrice = isBullish ? entryPrice - atr * 0.6 : entryPrice + atr * 0.6;
+    }
+    if (slDistance > atr * 2.5) continue; // Hard reject — FVG zone way too wide
+    if (slDistance > atr * 1.5) {
+      slPrice = isBullish ? entryPrice - atr * 1.5 : entryPrice + atr * 1.5;
+    }
+
+    // TP at 1.0R — proven achievable for FVG fills
+    const risk = Math.abs(entryPrice - slPrice);
+    const tpPrice = isBullish ? entryPrice + risk * 1.0 : entryPrice - risk * 1.0;
+
+    const tags: string[] = ['FVG_FILL', isBullish ? 'ADX_BULL' : 'ADX_BEAR'];
+
+    return {
+      side: isBullish ? 'BUY' : 'SELL',
+      entryPrice: Math.round(entryPrice * factor) / factor,
+      slPrice: Math.round(slPrice * factor) / factor,
+      tpPrice: Math.round(tpPrice * factor) / factor,
+      setupTags: tags,
+      h1Bias: bias,
+      rsiAtEntry: Math.round(rsi * 100) / 100,
+      atrAtEntry: Math.round(atr * 100000) / 100000,
+      setupType: 'FVG_FILL',
+    };
+  }
+
+  return null;
+}
+
+// ─── V5: Momentum Continuation Entry ────────────────────────────────────────
+
+export function evaluateMomentumContinuation(
+  m15Candles: BacktestCandle[],
+  m15Indicators: IndicatorState,
+  h1Candles: BacktestCandle[],
+  h1Indicators: IndicatorState,
+  idx: number,
+  spread: number,
+  minAtr: number,
+  pricePrecision: number,
+): SetupSignal | null {
+  if (idx < 50) return null;
+
+  const candle = m15Candles[idx];
+  const impulse = m15Candles[idx - 1];
+  const atr = m15Indicators.atr14[idx];
+  const rsi = m15Indicators.rsi14[idx];
+
+  if (isNaN(atr) || atr === 0 || isNaN(rsi)) return null;
+  if (atr < minAtr) return null;
+
+  // V5.1: Raised volatility ceiling from 1.6 to 2.0
+  const atrBaseline = m15Indicators.atrBaseline[idx];
+  if (!isNaN(atrBaseline) && atrBaseline > 0 && atr / atrBaseline >= 2.0) return null;
+
+  // Session filter
+  if (!isActiveTradingSession(candle.openTime)) return null;
+
+  // V5.1: lowered ADX threshold from 20 to 18
+  const { bias, h1Adx } = getH1Regime(h1Candles, h1Indicators, candle.openTime);
+  if (h1Adx < 18) return null;
+
+  // V5.1: Widened RSI filter from 30-70 to 25-75
+  if (rsi < 25 || rsi > 75) return null;
+
+  // V5.1: Relaxed impulse requirements — body > 60% (was 70%), range > 0.9× ATR (was 1.2×)
+  const impulseBody = Math.abs(impulse.close - impulse.open);
+  const impulseRange = impulse.high - impulse.low;
+  if (impulseRange === 0) return null;
+  if (impulseBody / impulseRange < 0.6) return null;
+  if (impulseRange < atr * 0.9) return null;
+
+  // Impulse must close in H1 bias direction
+  const impulseBullish = impulse.close > impulse.open;
+  if (bias === 'BULLISH' && !impulseBullish) return null;
+  if (bias === 'BEARISH' && impulseBullish) return null;
+  if (bias === 'NEUTRAL') return null;
+
+  const isBullish = bias === 'BULLISH';
+
+  // V5.1: Relaxed pullback allowance from 30% to 50% of impulse range
+  if (isBullish) {
+    const pullback = impulse.close - candle.low;
+    if (pullback > impulseRange * 0.5) return null;
+    if (candle.close <= candle.open) return null;
+  } else {
+    const pullback = candle.high - impulse.close;
+    if (pullback > impulseRange * 0.5) return null;
+    if (candle.close >= candle.open) return null;
+  }
+
+  const halfSpread = spread / 2;
+  const factor = Math.pow(10, pricePrecision);
+
+  // Entry price
+  const entryPrice = isBullish
+    ? candle.close + halfSpread
+    : candle.close - halfSpread;
+
+  // SL: beyond impulse candle's opposite extreme + ATR*0.2
+  let slPrice = isBullish
+    ? impulse.low - atr * 0.2
+    : impulse.high + atr * 0.2;
+
+  // Clamp SL distance [ATR*0.8, ATR*3.0]
+  const slDistance = Math.abs(entryPrice - slPrice);
+  if (slDistance < atr * 0.8) {
+    slPrice = isBullish ? entryPrice - atr * 0.8 : entryPrice + atr * 0.8;
+  }
+  if (slDistance > atr * 3.0) {
+    slPrice = isBullish ? entryPrice - atr * 3.0 : entryPrice + atr * 3.0;
+  }
+
+  // TP: 1.5R
+  const risk = Math.abs(entryPrice - slPrice);
+  const tpPrice = isBullish ? entryPrice + risk * 1.5 : entryPrice - risk * 1.5;
+
+  const tags: string[] = ['MOMENTUM_CONT', isBullish ? 'ADX_BULL' : 'ADX_BEAR'];
+
+  return {
+    side: isBullish ? 'BUY' : 'SELL',
+    entryPrice: Math.round(entryPrice * factor) / factor,
+    slPrice: Math.round(slPrice * factor) / factor,
+    tpPrice: Math.round(tpPrice * factor) / factor,
+    setupTags: tags,
+    h1Bias: bias,
+    rsiAtEntry: Math.round(rsi * 100) / 100,
+    atrAtEntry: Math.round(atr * 100000) / 100000,
+    setupType: 'MOMENTUM_CONT',
+  };
+}
+
+// ─── V5: Quality Score Calculator ────────────────────────────────────────────
+
+export function calculateQualityScore(
+  m15Candles: BacktestCandle[],
+  m15Indicators: IndicatorState,
+  h1Candles: BacktestCandle[],
+  h1Indicators: IndicatorState,
+  idx: number,
+  signal: SetupSignal,
+): number {
+  let score = 0;
+
+  const candle = m15Candles[idx];
+  const atr = m15Indicators.atr14[idx];
+  const rsi = m15Indicators.rsi14[idx];
+  const ema20 = m15Indicators.ema20[idx];
+  const ema50 = m15Indicators.ema50[idx];
+  const ema200 = m15Indicators.ema200[idx];
+
+  // H1 ADX strength
+  const { h1Adx, bias } = getH1Regime(h1Candles, h1Indicators, candle.openTime);
+  if (h1Adx >= 30) score += 20;
+  else if (h1Adx >= 25) score += 10;
+  else if (h1Adx >= 20) score += 5;
+
+  // RSI alignment
+  if (signal.side === 'BUY' && rsi >= 40 && rsi <= 60) score += 10;
+  if (signal.side === 'SELL' && rsi >= 40 && rsi <= 60) score += 10;
+
+  // H1 bias alignment
+  if (
+    (signal.side === 'BUY' && bias === 'BULLISH') ||
+    (signal.side === 'SELL' && bias === 'BEARISH')
+  ) {
+    score += 15;
+  }
+
+  // Confirmation quality
+  if (signal.setupTags.includes('ENGULFING')) score += 10;
+  else if (signal.setupTags.includes('STRONG_CLOSE') || signal.setupTags.includes('PIN_BAR')) score += 8;
+
+  // Regime stability
+  if (isH1RegimeStable(h1Candles, h1Indicators, candle.openTime, 3)) score += 10;
+  else if (isH1RegimeStable(h1Candles, h1Indicators, candle.openTime, 2)) score += 5;
+
+  // EMA stack alignment
+  if (!isNaN(ema20) && !isNaN(ema50) && !isNaN(ema200)) {
+    if (ema20 > ema50 && ema50 > ema200 && signal.side === 'BUY') score += 10;
+    if (ema20 < ema50 && ema50 < ema200 && signal.side === 'SELL') score += 10;
+  }
+
+  // Session quality
+  const londonHour = getLocalHourForScore(candle.openTime, 'Europe/London');
+  const nyHour = getLocalHourForScore(candle.openTime, 'America/New_York');
+  // London-NY overlap: London 13-16, NY 8-11
+  if (londonHour >= 13 && londonHour < 17 && nyHour >= 8 && nyHour < 12) {
+    score += 7;
+  } else if (londonHour >= 8 && londonHour < 17) {
+    score += 5;
+  } else if (nyHour >= 8 && nyHour < 14) {
+    score += 3;
+  }
+
+  // Healthy volatility (ATR/baseline 0.8-1.3)
+  const atrBaseline = m15Indicators.atrBaseline[idx];
+  if (!isNaN(atrBaseline) && atrBaseline > 0) {
+    const ratio = atr / atrBaseline;
+    if (ratio >= 0.8 && ratio <= 1.3) score += 10;
+  }
+
+  return score;
+}
+
+function getLocalHourForScore(utcTime: string, tz: string): number {
+  const d = new Date(utcTime);
+  return parseInt(
+    new Intl.DateTimeFormat('en', {
+      hour: 'numeric',
+      hour12: false,
+      timeZone: tz,
+    }).format(d),
+  );
 }

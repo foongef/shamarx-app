@@ -24,8 +24,10 @@ export function updatePositionManagement(
   }
 
   const risk = Math.abs(position.entryPrice - position.originalSlPrice);
-  // V2.7: Unified BE at 1.0R for all trades (SCALP mode removed)
-  const breakevenThreshold = risk;
+  const isFVG = position.setupTags.includes('FVG_FILL');
+  // V5.4: FVG gets 0.8R BE threshold — structural levels give more confidence
+  // Others stay at 1.0R — 0.5R caused too many premature micro-profit BEs
+  const breakevenThreshold = isFVG ? risk * 0.8 : risk;
 
   let updatedPeak = position.peakFavorablePrice;
   let newSlPrice = position.slPrice;
@@ -33,73 +35,83 @@ export function updatePositionManagement(
   let newTpPrice = position.tpPrice;
 
   if (position.side === 'BUY') {
-    // Track peak bid price
     const halfSpread = spread / 2;
     const currentBid = candle.high - halfSpread;
     if (currentBid > updatedPeak) {
       updatedPeak = currentBid;
     }
 
-    // Check breakeven activation
     if (!newBreakeven && updatedPeak >= position.entryPrice + breakevenThreshold) {
       newBreakeven = true;
-      // V2.7: Micro-profit BE at entry + 0.15R (covers commission)
-      newSlPrice = position.entryPrice + risk * 0.15;
+      newSlPrice = position.entryPrice + risk * 0.1;
     }
 
-    // Trailing stop (after breakeven)
     if (newBreakeven) {
       const favorableMove = updatedPeak - position.entryPrice;
 
-      // Hybrid TP→Trail: at 2R+, remove TP and let trailing manage the exit
-      if (favorableMove >= risk * 2.0 && newTpPrice !== null) {
-        newTpPrice = null;
-      }
-
-      // 5-tier trailing schedule
-      const trailDistance = favorableMove >= risk * 5.0 ? risk * 0.4
-        : favorableMove >= risk * 4.0 ? risk * 0.5
-        : favorableMove >= risk * 3.0 ? risk * 0.6
-        : favorableMove >= risk * 2.0 ? risk * 0.75
-        : risk;
-      const trailSl = updatedPeak - trailDistance;
-      if (trailSl > newSlPrice) {
-        newSlPrice = trailSl;
+      if (isFVG) {
+        // V5.4: FVG trail — wider to let structural fills run
+        if (favorableMove >= risk * 1.5 && newTpPrice !== null) {
+          newTpPrice = null; // Remove TP, let runner trail
+        }
+        const trailDistance = favorableMove >= risk * 3.0 ? risk * 0.5
+          : favorableMove >= risk * 2.0 ? risk * 0.6
+          : favorableMove >= risk * 1.5 ? risk * 0.7
+          : risk;
+        const trailSl = updatedPeak - trailDistance;
+        if (trailSl > newSlPrice) newSlPrice = trailSl;
+      } else {
+        // TREND_PULLBACK: 5-tier aggressive trail for strong trends
+        if (favorableMove >= risk * 2.0 && newTpPrice !== null) {
+          newTpPrice = null;
+        }
+        const trailDistance = favorableMove >= risk * 5.0 ? risk * 0.4
+          : favorableMove >= risk * 4.0 ? risk * 0.5
+          : favorableMove >= risk * 3.0 ? risk * 0.6
+          : favorableMove >= risk * 2.0 ? risk * 0.75
+          : risk;
+        const trailSl = updatedPeak - trailDistance;
+        if (trailSl > newSlPrice) newSlPrice = trailSl;
       }
     }
   } else {
-    // Track peak ask price (lowest is best for SELL)
     const halfSpread = spread / 2;
     const currentAsk = candle.low + halfSpread;
     if (currentAsk < updatedPeak) {
       updatedPeak = currentAsk;
     }
 
-    // Check breakeven activation
     if (!newBreakeven && updatedPeak <= position.entryPrice - breakevenThreshold) {
       newBreakeven = true;
-      // V2.7: Micro-profit BE at entry - 0.15R (covers commission)
-      newSlPrice = position.entryPrice - risk * 0.15;
+      newSlPrice = position.entryPrice - risk * 0.1;
     }
 
-    // Trailing stop (after breakeven)
     if (newBreakeven) {
       const favorableMove = position.entryPrice - updatedPeak;
 
-      // Hybrid TP→Trail: at 2R+, remove TP and let trailing manage the exit
-      if (favorableMove >= risk * 2.0 && newTpPrice !== null) {
-        newTpPrice = null;
-      }
-
-      // 5-tier trailing schedule
-      const trailDistance = favorableMove >= risk * 5.0 ? risk * 0.4
-        : favorableMove >= risk * 4.0 ? risk * 0.5
-        : favorableMove >= risk * 3.0 ? risk * 0.6
-        : favorableMove >= risk * 2.0 ? risk * 0.75
-        : risk;
-      const trailSl = updatedPeak + trailDistance;
-      if (trailSl < newSlPrice) {
-        newSlPrice = trailSl;
+      if (isFVG) {
+        // V5.4: FVG trail — wider to let structural fills run
+        if (favorableMove >= risk * 1.5 && newTpPrice !== null) {
+          newTpPrice = null;
+        }
+        const trailDistance = favorableMove >= risk * 3.0 ? risk * 0.5
+          : favorableMove >= risk * 2.0 ? risk * 0.6
+          : favorableMove >= risk * 1.5 ? risk * 0.7
+          : risk;
+        const trailSl = updatedPeak + trailDistance;
+        if (trailSl < newSlPrice) newSlPrice = trailSl;
+      } else {
+        // TREND_PULLBACK: 5-tier aggressive trail for strong trends
+        if (favorableMove >= risk * 2.0 && newTpPrice !== null) {
+          newTpPrice = null;
+        }
+        const trailDistance = favorableMove >= risk * 5.0 ? risk * 0.4
+          : favorableMove >= risk * 4.0 ? risk * 0.5
+          : favorableMove >= risk * 3.0 ? risk * 0.6
+          : favorableMove >= risk * 2.0 ? risk * 0.75
+          : risk;
+        const trailSl = updatedPeak + trailDistance;
+        if (trailSl < newSlPrice) newSlPrice = trailSl;
       }
     }
   }
@@ -153,10 +165,15 @@ export function checkPositionExit(
 
   if (!slHit && !tpHit) return null;
 
-  // Conservative: when both SL and TP hit on the same candle, always assume SL first
+  // V5.2: When breakeven active and both hit, prioritize TP (trade is already in profit)
+  // When NOT at breakeven and both hit, SL wins (conservative, unknown execution order)
   let exitReason: 'SL' | 'TP' | 'BREAKEVEN';
   if (slHit && tpHit) {
-    exitReason = position.breakevenActivated ? 'BREAKEVEN' : 'SL';
+    if (position.breakevenActivated) {
+      exitReason = 'TP'; // We're in profit — TP is the intended target
+    } else {
+      exitReason = 'SL'; // Not at BE — conservatively assume SL first
+    }
   } else if (slHit) {
     exitReason = position.breakevenActivated ? 'BREAKEVEN' : 'SL';
   } else {

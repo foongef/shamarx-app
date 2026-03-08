@@ -77,7 +77,7 @@ export class BacktestService {
         initialBalance: dto.initialBalance,
         riskPercent: dto.riskPercent,
         maxDailyLossPercent: 4.0,
-        maxConsecutiveLosses: 3,
+        maxConsecutiveLosses: 5, // V5.1: raised from 3 — with 50% WR, 3 consec losses is common
         maxOpenPositions: 3,
       };
 

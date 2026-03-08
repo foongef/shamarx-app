@@ -5,9 +5,19 @@ import {
   SimulatedPosition,
   EngineConfig,
   BacktestMetrics,
+  EngineState,
 } from './types';
 import { computeIndicators } from './indicator-calculator';
-import { evaluateSetup, evaluateRangeSetup, getH1Regime } from './strategy-evaluator';
+import {
+  evaluateSetup,
+  evaluateRangeSetup,
+  evaluateFVGEntry,
+  calculateQualityScore,
+  updateSwingTracker,
+  detectBOSEvents,
+  detectFVGs,
+  getH1Regime,
+} from './strategy-evaluator';
 import { checkPositionExit, forceClosePosition, updatePositionManagement } from './position-simulator';
 import { RiskManager } from './risk-manager';
 import { calculateMetrics } from './metrics-calculator';
@@ -44,6 +54,13 @@ export class BacktestEngine {
     let cooldownUntil = -1; // entry cooldown (candle index)
     let slCooldownUntil = -1; // extra cooldown after SL hit
 
+    // V5: Engine state for BOS/FVG tracking
+    const engineState: EngineState = {
+      swingTracker: { recentHighs: [], recentLows: [] },
+      activeBOSLevels: [],
+      activeFVGs: [],
+    };
+
     // V2.8: Same-day direction limit — block re-entry in a direction after 1 SL hit that day
     let dailySlCount = { BUY: 0, SELL: 0 };
     let lastDate = '';
@@ -60,6 +77,21 @@ export class BacktestEngine {
         lastDate = currentDate;
       }
 
+      // V5: Update swing tracker, detect BOS events and FVGs
+      updateSwingTracker(engineState.swingTracker, m15Candles, i);
+      const newBOSLevels = detectBOSEvents(m15Candles, i, engineState.swingTracker, engineState.activeBOSLevels);
+      engineState.activeBOSLevels.push(...newBOSLevels);
+      const newFVGs = detectFVGs(m15Candles, m15Indicators, i);
+      engineState.activeFVGs.push(...newFVGs);
+
+      // Expire stale BOS levels and FVGs
+      engineState.activeBOSLevels = engineState.activeBOSLevels.filter(
+        (l) => !l.traded && i - l.breakIndex <= l.expiryCandles,
+      );
+      engineState.activeFVGs = engineState.activeFVGs.filter(
+        (f) => !f.traded && i - f.createdAtIndex <= f.expiryCandles,
+      );
+
       // Step 0: Update trade management (breakeven + trailing stop)
       for (let j = 0; j < openPositions.length; j++) {
         openPositions[j] = updatePositionManagement(openPositions[j], candle, spread);
@@ -75,15 +107,15 @@ export class BacktestEngine {
           closedTrades.push(result);
           openPositions.splice(j, 1);
 
-          // Set cooldown based on exit type
+          // Set cooldown based on exit type (V5: reduced cooldowns)
           if (result.exitReason === 'TP') {
-            cooldownUntil = i + 2; // 30-min cooldown after TP — trend confirmed, re-enter fast
+            cooldownUntil = i + 1; // 15-min cooldown after TP
           } else if (result.exitReason === 'BREAKEVEN') {
-            cooldownUntil = i + 2; // 30-min cooldown after BE — setup was valid, try again
+            cooldownUntil = i + 1; // 15-min cooldown after BE
           } else if (result.exitReason === 'SL') {
-            // V2.7: Uniform 4-candle (1hr) SL cooldown for all trades
-            cooldownUntil = i + 4;
-            slCooldownUntil = i + 4;
+            // V5: Reduced SL cooldown from 4 to 2 candles (30min)
+            cooldownUntil = i + 2;
+            slCooldownUntil = i + 2;
             // V2.8: Track SL direction for same-day limit
             dailySlCount[pos.side]++;
           }
@@ -101,17 +133,43 @@ export class BacktestEngine {
       // V3.2: Regime routing — right strategy for right market
       const { h1Adx, adxRising } = getH1Regime(h1Candles, h1Indicators, candle.openTime);
 
+      // V5: Priority chain — fill the ADX 20-25 dead zone with new entry types
       let signal = null;
+
       if (h1Adx >= 25 && adxRising) {
-        // Trend Engine: STRONG_TREND EMA pullback + locker/runner (ADX must be rising)
+        // 1. Trend Engine: STRONG_TREND EMA pullback + locker/runner (ADX must be rising)
         signal = evaluateSetup(m15Candles, m15Indicators, h1Candles, h1Indicators, i, spread, minAtr, pricePrecision);
-      } else if (h1Adx < 20 && tradingMode !== 'DEFENSIVE') {
-        // Range Engine: mean reversion at ATR bands (V4: disabled in DEFENSIVE)
+      }
+
+      // V5.4: BOS_RETEST disabled — negative across all backtested years (-$145, -$21, -$94)
+
+      if (!signal && h1Adx >= 15) {
+        // 2. FVG Fill: gap-based entry (V5.4: ADX lowered to 15, primary V5 strategy)
+        signal = evaluateFVGEntry(m15Candles, m15Indicators, h1Candles, h1Indicators, i, engineState.activeFVGs, spread, minAtr, pricePrecision);
+        if (signal) {
+          for (const fvg of engineState.activeFVGs) {
+            if (!fvg.traded && fvg.direction === signal.side &&
+                i - fvg.createdAtIndex <= fvg.expiryCandles) {
+              fvg.traded = true;
+              break;
+            }
+          }
+        }
+      }
+
+      // V5.4: MOMENTUM_CONT disabled — 0 TPs across all years, -$238 in 2025
+
+      if (!signal && h1Adx < 20 && tradingMode !== 'DEFENSIVE') {
+        // 5. Range Engine: mean reversion at ATR bands (V4: disabled in DEFENSIVE)
         signal = evaluateRangeSetup(m15Candles, m15Indicators, h1Candles, h1Indicators, i, spread, minAtr, pricePrecision);
       }
-      // ADX 20-25: dead zone — no trade
 
       if (!signal) continue;
+
+      // V5: Calculate and tag quality score
+      const qualityScore = calculateQualityScore(m15Candles, m15Indicators, h1Candles, h1Indicators, i, signal);
+      signal.qualityScore = qualityScore;
+      signal.setupTags.push(`Q${qualityScore}`);
 
       // --- V3.2/V4: Pyramid tagging (gated by canPyramid) ---
       if (signal.setupTags.includes('STRONG_TREND') && riskManager.canPyramid()) {
@@ -126,12 +184,12 @@ export class BacktestEngine {
         }
       }
 
-      // V2.8: Same-day direction limit — skip if already hit SL in this direction today
-      if (dailySlCount[signal.side] >= 1) continue;
+      // V5.1: Same-day direction limit — increased from 2 to 3
+      if (dailySlCount[signal.side] >= 3) continue;
 
       // Step 3: Calculate lot size and open position
       const slPoints = Math.abs(signal.entryPrice - signal.slPrice);
-      const lotSize = riskManager.calculateLotSize(slPoints);
+      const lotSize = riskManager.calculateLotSize(slPoints, signal.qualityScore);
 
       // V4: Direction stacking guards — position-state + event-risk cap
       const sameDirectionPositions = openPositions.filter(p => p.side === signal.side);
@@ -185,34 +243,37 @@ export class BacktestEngine {
       const isStrongTrend = signal.setupTags.includes('STRONG_TREND');
       const isPyramid = signal.setupTags.includes('PYRAMID');
 
-      if (isStrongTrend && !isPyramid && lotSize >= 0.02) {
-        const halfLot = Math.round(lotSize * 0.5 * 100) / 100;
+      // V5.5b: High-quality setups get full-size runner + bonus locker (1.3x total exposure)
+      const isHighQuality = (signal.qualityScore ?? 0) >= 65;
+      if ((isStrongTrend || isHighQuality) && !isPyramid && lotSize >= 0.02) {
         const risk = Math.abs(signal.entryPrice - signal.slPrice);
         const lockerTp = signal.side === 'BUY'
-          ? signal.entryPrice + risk * 1.5
-          : signal.entryPrice - risk * 1.5;
+          ? signal.entryPrice + risk * 1.0
+          : signal.entryPrice - risk * 1.0;
         const factor = Math.pow(10, pricePrecision);
+        const lockerLot = Math.round(lotSize * 0.3 * 100) / 100;
 
-        // Locker: 50% lot, TP at 1.5R
+        // Runner: FULL lot, normal TP (preserves trend capture)
         openPositions.push({
           ...basePosition,
-          lotSize: halfLot,
-          tpPrice: Math.round(lockerTp * factor) / factor,
-          setupTags: [...signal.setupTags, 'LOCKER'],
-        });
-        // Runner: 50% lot, no TP (trail-managed)
-        openPositions.push({
-          ...basePosition,
-          lotSize: halfLot,
-          tpPrice: null,
+          lotSize,
           setupTags: [...signal.setupTags, 'RUNNER'],
         });
+        // Bonus locker: 30% lot, TP at 1.0R (quick secured win)
+        if (lockerLot >= 0.01) {
+          openPositions.push({
+            ...basePosition,
+            lotSize: lockerLot,
+            tpPrice: Math.round(lockerTp * factor) / factor,
+            setupTags: [...signal.setupTags, 'LOCKER'],
+          });
+        }
       } else {
-        // Standard single position (WEAK/MODERATE or can't split)
+        // Standard single position (low-Q or can't split)
         openPositions.push({ ...basePosition, lotSize });
       }
 
-      cooldownUntil = i + 2; // 30-min cooldown after entry
+      cooldownUntil = i + 1; // V5.1: 15-min cooldown after entry (was 30min)
     }
 
     // Force-close any remaining open positions at last candle's close

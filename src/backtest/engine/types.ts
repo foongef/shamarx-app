@@ -110,3 +110,33 @@ export interface BOSEvent {
   brokenLevel: number;
   candleIndex: number;
 }
+
+export type SetupType = 'TREND_PULLBACK' | 'RANGE_REVERSION' | 'BOS_RETEST' | 'FVG_FILL' | 'MOMENTUM_CONT';
+
+export interface BOSLevel {
+  direction: 'BUY' | 'SELL';
+  brokenLevel: number;
+  breakIndex: number;
+  traded: boolean;
+  expiryCandles: number; // 32 = 8 hours
+}
+
+export interface FairValueGap {
+  direction: 'BUY' | 'SELL';
+  zoneHigh: number;
+  zoneLow: number;
+  createdAtIndex: number;
+  expiryCandles: number; // 48 = 12 hours
+  traded: boolean;
+}
+
+export interface SwingPointTracker {
+  recentHighs: SwingPoint[];
+  recentLows: SwingPoint[];
+}
+
+export interface EngineState {
+  swingTracker: SwingPointTracker;
+  activeBOSLevels: BOSLevel[];
+  activeFVGs: FairValueGap[];
+}
