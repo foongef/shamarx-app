@@ -135,6 +135,9 @@ export class BacktestRunResult {
   @ApiProperty({ example: false })
   withLlm: boolean;
 
+  @ApiProperty({ example: 'V6-alt', nullable: true, enum: ['V5.5b', 'V6', 'V6-alt'] })
+  strategyVersion: string | null;
+
   @ApiProperty({ example: 'COMPLETED' })
   status: string;
 

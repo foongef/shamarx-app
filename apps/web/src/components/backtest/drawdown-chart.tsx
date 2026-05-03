@@ -1,72 +1,98 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
-import { createChart, AreaSeries, type IChartApi } from 'lightweight-charts';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import type { DrawdownPoint } from '@/lib/chart-utils';
+import {
+  createChart,
+  AreaSeries,
+  type IChartApi,
+  type UTCTimestamp,
+  LineStyle,
+} from 'lightweight-charts';
+import type { EquityPoint } from '@/lib/trade-stats';
+import { useTheme } from 'next-themes';
 
-interface DrawdownChartProps {
-  data: DrawdownPoint[];
-}
-
-export function DrawdownChart({ data }: DrawdownChartProps) {
+export function DrawdownChart({
+  data,
+  height = 160,
+}: {
+  data: EquityPoint[];
+  height?: number;
+}) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
+  const { resolvedTheme } = useTheme();
 
   useEffect(() => {
-    if (!containerRef.current || data.length === 0) return;
+    if (!containerRef.current || data.length < 2) return;
+    const isDark = resolvedTheme !== 'light';
+    const TXT = isDark ? 'rgba(232,232,234,0.65)' : 'rgba(40,40,50,0.7)';
+    const GRID = isDark ? 'rgba(255,255,255,0.045)' : 'rgba(0,0,0,0.05)';
+    const BORDER = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.1)';
+    const LOSS = '#ef7373';
+    const ACCENT = '#d4ff3a';
 
     const chart = createChart(containerRef.current, {
-      height: 200,
+      height,
+      autoSize: true,
       layout: {
         background: { color: 'transparent' },
-        textColor: '#9ca3af',
+        textColor: TXT,
+        fontFamily: '"Geist Mono", ui-monospace, monospace',
+        fontSize: 10,
       },
       grid: {
-        vertLines: { color: 'rgba(255,255,255,0.05)' },
-        horzLines: { color: 'rgba(255,255,255,0.05)' },
+        vertLines: { color: GRID },
+        horzLines: { color: GRID },
       },
-      rightPriceScale: {
-        borderColor: 'rgba(255,255,255,0.1)',
-      },
+      rightPriceScale: { borderColor: BORDER },
       timeScale: {
-        borderColor: 'rgba(255,255,255,0.1)',
+        borderColor: BORDER,
+        timeVisible: true,
+        secondsVisible: false,
+      },
+      crosshair: {
+        mode: 0,
+        vertLine: {
+          style: LineStyle.Dashed,
+          width: 1,
+          color: ACCENT,
+          labelBackgroundColor: ACCENT,
+        },
+        horzLine: {
+          style: LineStyle.Dashed,
+          width: 1,
+          color: ACCENT,
+          labelBackgroundColor: ACCENT,
+        },
       },
     });
 
     const series = chart.addSeries(AreaSeries, {
-      lineColor: '#ef4444',
-      topColor: 'rgba(239,68,68,0.01)',
-      bottomColor: 'rgba(239,68,68,0.3)',
-      lineWidth: 2,
+      lineColor: LOSS,
+      lineWidth: 1,
+      topColor: 'rgba(239,115,115,0)',
+      bottomColor: 'rgba(239,115,115,0.32)',
+      invertFilledArea: true,
+      priceFormat: {
+        type: 'custom',
+        formatter: (v: number) => `${(v * 100).toFixed(1)}%`,
+        minMove: 0.001,
+      },
     });
 
-    series.setData(data);
+    series.setData(
+      data.map((p) => ({
+        time: p.time as UTCTimestamp,
+        value: -p.drawdown, // negative so the area drops below zero
+      })),
+    );
     chart.timeScale().fitContent();
     chartRef.current = chart;
-
-    const observer = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        chart.applyOptions({ width: entry.contentRect.width });
-      }
-    });
-    observer.observe(containerRef.current);
-
     return () => {
-      observer.disconnect();
       chart.remove();
       chartRef.current = null;
     };
-  }, [data]);
+  }, [data, height, resolvedTheme]);
 
-  return (
-    <Card>
-      <CardHeader className="pb-2">
-        <CardTitle className="text-sm font-medium">Drawdown (%)</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <div ref={containerRef} />
-      </CardContent>
-    </Card>
-  );
+  return <div ref={containerRef} className="w-full" style={{ height }} />;
 }

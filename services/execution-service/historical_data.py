@@ -1,8 +1,9 @@
 """Historical candle data endpoint for backtesting.
 
-Supports two data sources:
-- MT5_MODE=mock: loads from CSV files in data/ directory
-- MT5_MODE=metaapi: fetches real data from MetaAPI (Pepperstone MT5)
+Source priority (per request):
+  1. Postgres `Candle` table (populated by `pnpm data:import` from Dukascopy)
+  2. MetaAPI (when MT5_MODE=metaapi)
+  3. CSV fallback (`data/{symbol}_{tf}.csv`)
 """
 
 import os
@@ -15,6 +16,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Query, HTTPException
 from models import CandleData
+from db import fetch_candles_db
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +92,15 @@ async def _fetch_metaapi_candles(
     )
 
 
+def _normalize_dt(s: Optional[str], default_dt: datetime, end_of_day: bool = False) -> datetime:
+    if not s:
+        return default_dt
+    dt = datetime.fromisoformat(s)
+    if end_of_day and len(s) == 10:
+        dt = dt.replace(hour=23, minute=59, second=59)
+    return dt
+
+
 @historical_router.get("", response_model=list[CandleData])
 async def get_historical_candles(
     symbol: str = Query(default="XAUUSD"),
@@ -97,12 +108,21 @@ async def get_historical_candles(
     start: Optional[str] = Query(default=None, description="Start date ISO format (e.g. 2025-01-01)"),
     end: Optional[str] = Query(default=None, description="End date ISO format (e.g. 2025-01-31)"),
 ):
-    """Return historical candles filtered by date range.
+    """Return historical candles. Priority: Postgres → MetaAPI → CSV."""
+    start_dt = _normalize_dt(start, datetime(2023, 1, 1))
+    end_dt = _normalize_dt(end, datetime.now(timezone.utc).replace(tzinfo=None), end_of_day=True)
 
-    Uses MetaAPI for real data when MT5_MODE=metaapi, otherwise falls back to CSV files.
-    """
+    # 1) Postgres (preferred — Dukascopy-imported data)
+    try:
+        db_rows = await fetch_candles_db(symbol.upper(), timeframe.upper(), start_dt, end_dt)
+        if db_rows:
+            logger.info(f"DB hit: {symbol} {timeframe} {len(db_rows)} rows")
+            return db_rows
+    except Exception as e:
+        logger.warning(f"DB read failed (will fall back): {e}")
+
+    # 2) MetaAPI (if explicitly configured)
     mode = os.getenv("MT5_MODE", "mock")
-
     if mode == "metaapi":
         try:
             return await _fetch_metaapi_candles(symbol, timeframe, start, end)
@@ -110,26 +130,19 @@ async def get_historical_candles(
             raise
         except Exception as e:
             logger.error(f"MetaAPI error for {symbol} {timeframe}: {e}\n{traceback.format_exc()}")
-            raise HTTPException(status_code=500, detail=f"MetaAPI error: {str(e)}")
+            # Fall through to CSV instead of erroring out
 
-    # CSV fallback
+    # 3) CSV fallback
     rows = _load_csv(symbol, timeframe)
     if not rows:
         raise HTTPException(
             status_code=404,
-            detail=f"No historical data for {symbol} {timeframe}",
+            detail=f"No historical data for {symbol} {timeframe} in DB / MetaAPI / CSV",
         )
 
-    filtered = rows
-
-    if start:
-        start_dt = datetime.fromisoformat(start)
-        filtered = [r for r in filtered if datetime.fromisoformat(r["openTime"]) >= start_dt]
-
-    if end:
-        end_dt = datetime.fromisoformat(end)
-        if len(end) == 10:
-            end_dt = end_dt.replace(hour=23, minute=59, second=59)
-        filtered = [r for r in filtered if datetime.fromisoformat(r["openTime"]) <= end_dt]
-
+    filtered = [
+        r for r in rows
+        if datetime.fromisoformat(r["openTime"]) >= start_dt
+        and datetime.fromisoformat(r["openTime"]) <= end_dt
+    ]
     return filtered

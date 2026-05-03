@@ -20,6 +20,7 @@
     "prisma:generate": "prisma generate --schema=libs/prisma/schema.prisma",
     "prisma:migrate": "prisma migrate dev --schema=libs/prisma/schema.prisma",
     "prisma:push": "prisma db push --schema=libs/prisma/schema.prisma",
+    "data:import": "bash scripts/data-import.sh",
     "test": "jest",
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",

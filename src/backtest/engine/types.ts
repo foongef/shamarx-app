@@ -23,6 +23,60 @@ export interface IndicatorState {
   atrBaseline: number[];
 }
 
+// V6: Detailed regime classification
+export type DetailedRegime = 'STRONG_TREND' | 'WEAK_TREND' | 'RANGING' | 'VOLATILE' | 'TRANSITIONING';
+
+// V6: Engine type for performance tracking
+export type EngineType =
+  | 'TREND_PULLBACK'
+  | 'FVG_FILL'
+  | 'RANGE_ENGINE'
+  | 'BB_REVERSAL'   // V6: Bollinger reversal (replaces RANGE_ENGINE in V6 profile)
+  | 'SMC';          // V6-alt: order-flow / smart money concepts
+
+// V6: Strategy version selector
+export type StrategyVersion = 'V5.5b' | 'V6' | 'V6-alt';
+
+// V6: D1 trend bias for HTF confluence filter
+export type D1Bias = 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+
+// V6: Volatility regime (ATR-percentile based)
+export type VolatilityRegime = 'LOW' | 'NORMAL' | 'HIGH' | 'EXTREME';
+
+// V6: News event for blackout calendar
+export interface NewsEvent {
+  time: string;        // ISO 8601 UTC
+  impact: 'HIGH' | 'MEDIUM' | 'LOW';
+  title: string;
+  currency: string;
+}
+
+// V6: Regime state machine output
+export interface RegimeState {
+  regime: DetailedRegime;
+  direction: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+  durationBars: number;
+  adx: number;
+  adxSlope: number; // positive = rising, from 3-bar lookback
+  diSeparation: number;
+  atrRatio: number; // current ATR / baseline
+  emaStackAligned: boolean;
+  h1Idx: number;
+  // V6 additions
+  d1Bias?: D1Bias;
+  volRegime?: VolatilityRegime;
+  inNewsBlackout?: boolean;
+}
+
+// V6: Per-regime trade parameters
+export interface RegimeTradeParams {
+  trendTpR: number;       // Trend engine TP in R multiples
+  fvgTpR: number;         // FVG engine TP in R multiples
+  beThresholdR: number;   // Breakeven activation threshold in R
+  tpRemovalR: number;     // Favorable move to remove TP (0 = never remove)
+  slClampMaxAtr: number;  // Max SL distance in ATR multiples
+}
+
 export interface SimulatedPosition {
   side: 'BUY' | 'SELL';
   entryPrice: number;
@@ -38,6 +92,13 @@ export interface SimulatedPosition {
   h1Bias: string;
   rsiAtEntry: number;
   atrAtEntry: number;
+  // V6: Regime-adaptive trailing config
+  trailConfig?: RegimeTradeParams;
+  regimeAtEntry?: DetailedRegime;
+  // V6: Scale-in tracking
+  isScaleIn?: boolean;
+  parentEntryPrice?: number;
+  hasScaleIn?: boolean;
 }
 
 export interface ClosedTrade {
@@ -56,6 +117,10 @@ export interface ClosedTrade {
   h1Bias: string;
   rsiAtEntry: number;
   atrAtEntry: number;
+  // V6: Performance tracking fields
+  rMultiple?: number;
+  regimeAtEntry?: DetailedRegime;
+  engineType?: EngineType;
 }
 
 export interface BacktestRiskState {
@@ -74,6 +139,8 @@ export interface EngineConfig {
   maxDailyLossPercent: number;
   maxConsecutiveLosses: number;
   maxOpenPositions: number;
+  // V6: Selects which strategy version to run. Default 'V5.5b' for backward compat.
+  strategyVersion?: StrategyVersion;
 }
 
 export interface BacktestMetrics {

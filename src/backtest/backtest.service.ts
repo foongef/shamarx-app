@@ -25,7 +25,7 @@ export class BacktestService {
   async createAndRun(dto: CreateBacktestDto): Promise<{ id: string; status: string }> {
     const symbol = dto.symbol ?? 'XAUUSD';
 
-    // Create the run record
+    // Create the run record (persist strategyVersion so the dashboard badge is accurate)
     const run = await this.prisma.backtestRun.create({
       data: {
         symbol,
@@ -34,6 +34,7 @@ export class BacktestService {
         initialBalance: dto.initialBalance,
         riskPercent: dto.riskPercent,
         withLlm: dto.withLlm ?? false,
+        strategyVersion: dto.strategyVersion ?? 'V6',
         status: 'PENDING',
       },
     });
@@ -56,7 +57,17 @@ export class BacktestService {
         data: { status: 'RUNNING' },
       });
 
-      // Fetch historical M15 candles
+      // HTF indicator warm-up — D1 ADX(14) + EMA50 both need ~50 bars of
+      // history before they stabilize, otherwise the SMC engine sits on its
+      // hands for the first 1-2 months of the requested range. Pre-fetch HTF
+      // bars from `startDate − 90 days` so indicators are warm on day 1.
+      // M15 stays at the requested start so the walk-forward is unaffected.
+      const warmupDays = 90;
+      const htfStart = new Date(dto.startDate);
+      htfStart.setUTCDate(htfStart.getUTCDate() - warmupDays);
+      const htfStartStr = htfStart.toISOString().slice(0, 10);
+
+      // Fetch M15 at the requested range (the engine walks forward over these)
       const m15Candles = await this.fetchCandles(symbol, 'M15', dto.startDate, dto.endDate);
       this.logger.log(`Fetched ${m15Candles.length} ${symbol} M15 candles`);
 
@@ -66,9 +77,24 @@ export class BacktestService {
         );
       }
 
-      // Fetch historical H1 candles (broader range for indicator warmup)
-      const h1Candles = await this.fetchCandles(symbol, 'H1', dto.startDate, dto.endDate);
-      this.logger.log(`Fetched ${h1Candles.length} ${symbol} H1 candles`);
+      // H1 with warm-up for indicator stability + V6 regime detection
+      const h1Candles = await this.fetchCandles(symbol, 'H1', htfStartStr, dto.endDate);
+      this.logger.log(`Fetched ${h1Candles.length} ${symbol} H1 candles (incl. ${warmupDays}d warm-up)`);
+
+      // V6 / V6-alt: pull H4/D1 with the same warm-up window so D1 ADX +
+      // EMA50 are valid on day 1 of the M15 walk-forward.
+      const strategyVersion = dto.strategyVersion ?? 'V6';
+      let h4Candles: BacktestCandle[] = [];
+      let d1Candles: BacktestCandle[] = [];
+      if (strategyVersion !== 'V5.5b') {
+        try {
+          h4Candles = await this.fetchCandles(symbol, 'H4', htfStartStr, dto.endDate);
+          d1Candles = await this.fetchCandles(symbol, 'D1', htfStartStr, dto.endDate);
+          this.logger.log(`Fetched ${h4Candles.length} H4 + ${d1Candles.length} D1 candles (incl. ${warmupDays}d warm-up) for ${strategyVersion}`);
+        } catch (e) {
+          this.logger.warn(`Could not fetch H4/D1 for ${strategyVersion} — proceeding without HTF confluence: ${e.message}`);
+        }
+      }
 
       // Run the engine
       const engine = new BacktestEngine();
@@ -77,11 +103,12 @@ export class BacktestService {
         initialBalance: dto.initialBalance,
         riskPercent: dto.riskPercent,
         maxDailyLossPercent: 4.0,
-        maxConsecutiveLosses: 5, // V5.1: raised from 3 — with 50% WR, 3 consec losses is common
-        maxOpenPositions: 3,
+        maxConsecutiveLosses: 5,
+        maxOpenPositions: 4, // V6: raised from 3 to accommodate scale-ins
+        strategyVersion,
       };
 
-      const result = engine.run(m15Candles, h1Candles, config);
+      const result = engine.run(m15Candles, h1Candles, config, { h4Candles, d1Candles });
 
       // Store trades
       if (result.trades.length > 0) {
@@ -150,6 +177,28 @@ export class BacktestService {
     return res.data;
   }
 
+  async listRuns(limit = 50): Promise<BacktestRunResult[]> {
+    const runs = await this.prisma.backtestRun.findMany({
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+    });
+    return runs.map((run) => ({
+      id: run.id,
+      symbol: run.symbol,
+      startDate: run.startDate.toISOString(),
+      endDate: run.endDate.toISOString(),
+      initialBalance: run.initialBalance,
+      riskPercent: run.riskPercent,
+      withLlm: run.withLlm,
+      strategyVersion: run.strategyVersion ?? null,
+      status: run.status,
+      metrics: run.metrics as any,
+      errorMessage: run.errorMessage,
+      createdAt: run.createdAt.toISOString(),
+      completedAt: run.completedAt?.toISOString() ?? null,
+    }));
+  }
+
   async getRun(id: string): Promise<BacktestRunResult | null> {
     const run = await this.prisma.backtestRun.findUnique({
       where: { id },
@@ -164,6 +213,7 @@ export class BacktestService {
       initialBalance: run.initialBalance,
       riskPercent: run.riskPercent,
       withLlm: run.withLlm,
+      strategyVersion: run.strategyVersion ?? null,
       status: run.status,
       metrics: run.metrics as any,
       errorMessage: run.errorMessage,

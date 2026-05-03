@@ -27,6 +27,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  listBacktests() {
+    return request<BacktestRun[]>('/api/backtest');
+  },
+
   createBacktest(input: CreateBacktestInput) {
     return request<CreateBacktestResponse>('/api/backtest', {
       method: 'POST',

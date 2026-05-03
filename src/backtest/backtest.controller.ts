@@ -27,6 +27,13 @@ export class BacktestController {
     return { id: run.id, status: run.status };
   }
 
+  @Get()
+  @ApiOperation({ summary: 'List recent backtest runs (newest first)' })
+  @ApiOkResponse({ type: [BacktestRunResult] })
+  async listBacktests() {
+    return this.backtestService.listRuns(50);
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Get backtest run results by ID' })
   @ApiParam({ name: 'id', description: 'Backtest run ID' })

@@ -1,8 +1,8 @@
-import { BacktestRiskState, EngineConfig, TradingMode } from './types';
+import { BacktestRiskState, EngineConfig, TradingMode, DetailedRegime } from './types';
 import { getInstrumentConfig } from './instrument-config';
 
-const WEEKLY_DD_THRESHOLD = 8; // V5: increased from 5% to 8% for more runway
-const WEEKLY_DD_PAUSE_DAYS = 5; // pause for 5 trading days
+const WEEKLY_DD_THRESHOLD = 8;
+const WEEKLY_DD_PAUSE_DAYS = 5;
 
 export class RiskManager {
   private state: BacktestRiskState;
@@ -14,9 +14,9 @@ export class RiskManager {
   private currentWeekNumber: number = -1;
   private pauseUntilDate: string | null = null;
 
-  // Escalating consecutive loss pause — only a WIN resets the counter
+  // Escalating consecutive loss pause
   private consecutiveLossPauseUntil: string | null = null;
-  private awaitingPostPauseTrade: boolean = false; // V5: stays true until next trade fires
+  private awaitingPostPauseTrade: boolean = false;
 
   // Overall peak equity for dynamic risk scaling
   private overallPeakEquity: number;
@@ -24,8 +24,13 @@ export class RiskManager {
   // V4: Trade log for rolling 7-day loss stop
   private tradeLog: { date: string; pnl: number; isLoss: boolean }[] = [];
   private equityDdPauseUntil: string | null = null;
-  private lastDdTierTriggered: number = 0; // 0/15/25/35 — prevents re-triggering same tier
+  private lastDdTierTriggered: number = 0;
   private rolling7DayPauseUntil: string | null = null;
+
+  // 40% hard kill switch — once triggered, no more trades for the rest of the
+  // backtest. Default budget = 40% from peak equity.
+  private static readonly HARD_KILL_DD_PERCENT = 40;
+  private hardKilled: boolean = false;
 
   constructor(config: EngineConfig) {
     this.config = config;
@@ -42,29 +47,24 @@ export class RiskManager {
     this.overallPeakEquity = config.initialBalance;
   }
 
-  /**
-   * Check if we can open a new trade.
-   */
   canTrade(currentDate: string, openPositionCount: number): boolean {
-    // Reset daily PnL if new day
+    // Hard kill switch — once tripped, no more trades ever. Manual reset only.
+    if (this.hardKilled) return false;
+
     this.maybeResetDaily(currentDate);
     this.maybeResetWeekly(currentDate);
 
     const dateStr = currentDate.substring(0, 10);
 
-    // Circuit breaker: paused after weekly drawdown
     if (this.pauseUntilDate && dateStr < this.pauseUntilDate) {
       return false;
     }
 
-    // V4: Equity DD circuit breaker — enforce pause only (triggering moved to recordTrade)
     if (this.equityDdPauseUntil) {
       if (dateStr < this.equityDdPauseUntil) return false;
-      // Pause expired — clear and allow trading (DEFENSIVE mode still active via getTradingMode)
       this.equityDdPauseUntil = null;
     }
 
-    // V4: Rolling 7-day loss stop
     if (this.rolling7DayPauseUntil && dateStr < this.rolling7DayPauseUntil) return false;
 
     if (this.getRolling7DayLosses(dateStr) >= 4) {
@@ -72,10 +72,8 @@ export class RiskManager {
       return false;
     }
 
-    // Escalating consecutive loss pause — counter persists, only a WIN resets it
     if (this.consecutiveLossPauseUntil) {
       if (dateStr < this.consecutiveLossPauseUntil) return false;
-      // Pause expired → allow trade attempts until next trade fires
       this.consecutiveLossPauseUntil = null;
       this.awaitingPostPauseTrade = true;
     }
@@ -83,8 +81,6 @@ export class RiskManager {
     const dailyLossPercent = (this.state.dailyPnl / this.state.balance) * 100;
     if (dailyLossPercent <= -this.config.maxDailyLossPercent) return false;
 
-    // Escalating pause: 3 losses → 1 day, 4 → 3 days, 5+ → 5 days
-    // Skip if awaiting post-pause trade — allow signals until one fires
     if (!this.awaitingPostPauseTrade && this.state.consecutiveLosses >= this.config.maxConsecutiveLosses) {
       const excess = this.state.consecutiveLosses - this.config.maxConsecutiveLosses;
       const pauseDays = excess >= 2 ? 5 : excess >= 1 ? 3 : 1;
@@ -98,57 +94,135 @@ export class RiskManager {
   }
 
   /**
-   * Calculate lot size based on current balance and risk percent.
+   * V6: Dynamic lot sizing with regime, quality, and confidence multipliers.
+   *
+   * effectiveRisk = baseRisk (2.0%)
+   *   x regimeMultiplier    (0.6 - 1.2)
+   *   x qualityMultiplier   (0.5 - 1.3)
+   *   x confidenceMultiplier (0.7 - 1.2)
+   *   -> clamped to [0.5%, 4.0%]
    */
-  calculateLotSize(slPoints: number, qualityScore?: number): number {
-    // Dynamic risk: scale down during drawdowns
+  calculateLotSize(
+    slPoints: number,
+    qualityScore?: number,
+    regime?: DetailedRegime,
+    engineConfidence?: number,
+  ): number {
     let effectiveRisk = this.config.riskPercent;
+
+    // V6: Regime multiplier
+    const regimeMult = this.getRegimeMultiplier(regime);
+    effectiveRisk *= regimeMult;
+
+    // V6: Quality multiplier (continuous, replaces binary gate)
+    const qualityMult = this.getQualityMultiplier(qualityScore);
+    effectiveRisk *= qualityMult;
+
+    // V6: Engine confidence multiplier (from performance tracker)
+    const confMult = this.getConfidenceMultiplier(engineConfidence);
+    effectiveRisk *= confMult;
+
+    // DD-adaptive risk (anti-martingale) — risk scales DOWN as we lose, UP
+    // (back to normal, never above) as we recover. Smoother than the prior
+    // step function. Stacks below mode/quality multipliers.
     const ddPercent = this.overallPeakEquity > 0
       ? ((this.overallPeakEquity - this.state.equity) / this.overallPeakEquity) * 100
       : 0;
+    effectiveRisk *= this.getDdMultiplier(ddPercent);
 
-    if (ddPercent > 20) {
-      effectiveRisk *= 0.3;
-    } else if (ddPercent > 10) {
-      effectiveRisk *= 0.5;
-    }
-
-    // V4: DEFENSIVE mode stacks with DD scaling
-    // V5.5b: Skip halving if recovering (3+ consecutive wins) to prevent death spiral
+    // DEFENSIVE mode stacks with DD scaling (skip if recovering)
     if (this.getTradingMode() === 'DEFENSIVE' && this.state.consecutiveWins < 3) {
       effectiveRisk *= 0.5;
     }
 
-    // V5.5b: Quality gate — dampen low-Q setups (high-Q amplified via locker/runner split instead)
-    if (qualityScore !== undefined && qualityScore < 40) {
-      effectiveRisk *= 0.6;
-    }
+    // V6: Clamp effective risk to [0.5%, 4.0%]
+    effectiveRisk = Math.max(0.5, Math.min(4.0, effectiveRisk));
 
     const riskAmount = this.state.balance * (effectiveRisk / 100);
-    const lotSize = riskAmount / (slPoints * this.lotSizeUnits);
-    // Clamp between 0.01 and 1.0
-    return Math.round(Math.max(0.01, Math.min(lotSize, 1.0)) * 100) / 100;
+    const idealLot = riskAmount / (slPoints * this.lotSizeUnits);
+
+    // Lot floor + cap: minimum tradeable lot is 0.01, max 1.0.
+    const lotSize = Math.round(Math.max(0.01, Math.min(1.0, idealLot)) * 100) / 100;
+
+    // V6 (round 4): honest risk cap — actual risk must not exceed effective
+    // risk by more than 10%. Without this, a $100 account forced to trade
+    // 0.01 lot on a 5-point SL ends up risking 5% instead of the intended 1.5%.
+    const actualRiskAmount = lotSize * slPoints * this.lotSizeUnits;
+    const actualRiskPct = (actualRiskAmount / this.state.balance) * 100;
+    if (actualRiskPct > effectiveRisk * 1.10) {
+      return 0; // skip the trade — lot floor would over-risk this account
+    }
+
+    return lotSize;
   }
 
   /**
-   * Record a closed trade's PnL.
-   * exitReason controls consecutive loss counting:
-   * - SL → increment consecutiveLosses
-   * - BREAKEVEN → reset consecutiveLosses (reached profit threshold)
-   * - TP → reset consecutiveLosses to 0
+   * Regime risk multiplier: STRONG_TREND most aggressive, VOLATILE most conservative.
    */
+  private getRegimeMultiplier(regime?: DetailedRegime): number {
+    if (!regime) return 1.0;
+    switch (regime) {
+      case 'STRONG_TREND': return 1.2;
+      case 'WEAK_TREND': return 0.9;
+      case 'RANGING': return 0.7;
+      case 'VOLATILE': return 0.6;
+      case 'TRANSITIONING': return 0.8;
+    }
+  }
+
+  /**
+   * Quality risk multiplier: high-Q setups get amplified, low-Q get dampened.
+   */
+  private getQualityMultiplier(quality?: number): number {
+    if (quality === undefined) return 1.0;
+    if (quality >= 75) return 1.3;
+    if (quality >= 65) return 1.15;
+    if (quality >= 55) return 1.0;
+    if (quality >= 45) return 0.85;
+    if (quality >= 35) return 0.7;
+    return 0.5;
+  }
+
+  /**
+   * Anti-martingale DD scaling. Returns 1.0 when healthy, drops sharply
+   * once distress is real. Tuned (iter2b) to preserve performance during
+   * normal noise (DD < 10%) and only kick in when actually wounded.
+   *   DD 0-10%  → 1.00  (full risk — normal noise, no penalty)
+   *   DD 10-20% → 0.50  (cooling off)
+   *   DD 20-30% → 0.25  (recovery mode)
+   *   DD 30-40% → 0.10  (survival mode)
+   *   DD ≥ 40%  → hard kill switch trips elsewhere; this never fires
+   */
+  private getDdMultiplier(ddPercent: number): number {
+    if (ddPercent < 10) return 1.0;
+    if (ddPercent < 20) return 0.5;
+    if (ddPercent < 30) return 0.25;
+    return 0.10;
+  }
+
+  /**
+   * Engine confidence multiplier from performance tracker.
+   */
+  private getConfidenceMultiplier(confidence?: number): number {
+    if (confidence === undefined) return 1.0;
+    if (confidence >= 70) return 1.2;
+    if (confidence >= 60) return 1.1;
+    if (confidence >= 50) return 1.0;
+    if (confidence >= 40) return 0.9;
+    if (confidence >= 30) return 0.8;
+    return 0.7;
+  }
+
   recordTrade(pnl: number, tradeDate: string, exitReason?: string): void {
     this.maybeResetDaily(tradeDate);
     this.maybeResetWeekly(tradeDate);
 
-    // V5: Clear post-pause flag — a trade has fired
     this.awaitingPostPauseTrade = false;
 
     this.state.balance += pnl;
     this.state.equity = this.state.balance;
     this.state.dailyPnl += pnl;
 
-    // V4: Track trade in log for rolling 7-day loss stop
     this.tradeLog.push({
       date: tradeDate.substring(0, 10),
       pnl,
@@ -156,7 +230,6 @@ export class RiskManager {
     });
 
     if (exitReason === 'BREAKEVEN') {
-      // V5.5: BE reached profit threshold — reset loss streak (prevents cascade)
       this.state.consecutiveLosses = 0;
     } else if (exitReason === 'TP') {
       this.state.consecutiveLosses = 0;
@@ -165,21 +238,25 @@ export class RiskManager {
       this.state.consecutiveLosses++;
       this.state.consecutiveWins = 0;
     }
-    // else: positive PnL from trailed SL — don't reset either counter
 
-    // Update peak equity tracking
     if (this.state.equity > this.weeklyPeakEquity) {
       this.weeklyPeakEquity = this.state.equity;
     }
     if (this.state.equity > this.overallPeakEquity) {
       this.overallPeakEquity = this.state.equity;
-      // New peak — reset tier tracker so future DD can trigger fresh pauses
       this.lastDdTierTriggered = 0;
     }
 
-    // V4: Equity DD tiered circuit breaker — event-triggered on new trade
     const ddPercent = this.getEquityDdPercent();
     const dateStrForPause = tradeDate.substring(0, 10);
+
+    // Hard kill switch at 40% DD — trips once, never resets. Most aggressive
+    // safety net; protects from black-swan scenarios where the tiered pauses
+    // aren't enough.
+    if (ddPercent >= RiskManager.HARD_KILL_DD_PERCENT) {
+      this.hardKilled = true;
+    }
+
     if (ddPercent >= 35 && this.lastDdTierTriggered < 35) {
       this.lastDdTierTriggered = 35;
       this.equityDdPauseUntil = this.addTradingDays(dateStrForPause, 30);
@@ -191,10 +268,8 @@ export class RiskManager {
       this.equityDdPauseUntil = this.addTradingDays(dateStrForPause, 3);
     }
 
-    // Check weekly drawdown circuit breaker
     const weeklyDDPercent = ((this.weeklyPeakEquity - this.state.equity) / this.weeklyPeakEquity) * 100;
     if (weeklyDDPercent >= WEEKLY_DD_THRESHOLD) {
-      // Pause for 5 trading days from today
       this.pauseUntilDate = this.addTradingDays(tradeDate.substring(0, 10), WEEKLY_DD_PAUSE_DAYS);
     }
 
@@ -205,18 +280,21 @@ export class RiskManager {
     return this.state.balance;
   }
 
+  /** True iff the 40% hard-kill switch has tripped. */
+  isHardKilled(): boolean {
+    return this.hardKilled;
+  }
+
   getState(): BacktestRiskState {
     return { ...this.state };
   }
 
-  // V4: Equity drawdown percentage from overall peak
   private getEquityDdPercent(): number {
     return this.overallPeakEquity > 0
       ? ((this.overallPeakEquity - this.state.equity) / this.overallPeakEquity) * 100
       : 0;
   }
 
-  // V4: Count losses within 7 calendar days of currentDate
   private getRolling7DayLosses(currentDate: string): number {
     const current = new Date(currentDate).getTime();
     const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
@@ -225,25 +303,21 @@ export class RiskManager {
     ).length;
   }
 
-  // V4: Adaptive trading mode based on drawdown, losses, and momentum
   getTradingMode(): TradingMode {
     const ddPercent = this.getEquityDdPercent();
     const rolling7dLosses = this.getRolling7DayLosses(
       this.state.lastTradeDate?.substring(0, 10) || '',
     );
 
-    // V5.1: Relaxed DEFENSIVE triggers — was too aggressive, shut down trading prematurely
     if (ddPercent >= 15) return 'DEFENSIVE';
     if (this.state.consecutiveLosses >= 4) return 'DEFENSIVE';
     if (rolling7dLosses >= 5) return 'DEFENSIVE';
 
-    // AGGRESSIVE — equity near peak + recent wins
     if (ddPercent < 5 && this.state.consecutiveWins >= 2) return 'AGGRESSIVE';
 
     return 'NORMAL';
   }
 
-  // V4: Pyramid safety gate
   canPyramid(): boolean {
     if (this.getTradingMode() === 'DEFENSIVE') return false;
     if (this.getEquityDdPercent() >= 10) return false;
@@ -252,13 +326,11 @@ export class RiskManager {
   }
 
   private maybeResetDaily(currentDate: string): void {
-    const dateStr = currentDate.substring(0, 10); // YYYY-MM-DD
+    const dateStr = currentDate.substring(0, 10);
     const lastDate = this.state.lastTradeDate?.substring(0, 10);
 
     if (lastDate && dateStr !== lastDate) {
       this.state.dailyPnl = 0;
-      // consecutiveLosses intentionally NOT reset — persists across days
-      // resets only on a winning trade (in recordTrade) or after pause expires
     }
   }
 
@@ -277,16 +349,13 @@ export class RiskManager {
     return Math.ceil(dayOfYear / 7);
   }
 
-  /**
-   * Add N calendar days (approximate trading days — skip weekends).
-   */
   private addTradingDays(dateStr: string, days: number): string {
     const d = new Date(dateStr);
     let added = 0;
     while (added < days) {
       d.setDate(d.getDate() + 1);
       const dow = d.getDay();
-      if (dow !== 0 && dow !== 6) added++; // skip weekends
+      if (dow !== 0 && dow !== 6) added++;
     }
     return d.toISOString().substring(0, 10);
   }

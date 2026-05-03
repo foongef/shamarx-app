@@ -1,0 +1,1854 @@
+[
+  {
+    "config": {
+      "sweepBufferAtr": 0.1,
+      "trendingD1Adx": 22,
+      "slBufferAtrM15": 0.3,
+      "tp2R": 2.5,
+      "d1AdxFloor": 14,
+      "setupExpiryH1Bars": 12,
+      "killzones": [
+        [
+          7,
+          11
+        ],
+        [
+          13,
+          17
+        ]
+      ]
+    },
+    "byPeriod": {
+      "2023": {
+        "trades": 158,
+        "tradesPerMonth": 13.5,
+        "return": 28.63,
+        "pf": 1.64,
+        "sharpe": 3.14,
+        "maxDD": 9.55,
+        "winRate": 62.03
+      },
+      "2024": {
+        "trades": 118,
+        "tradesPerMonth": 9.7,
+        "return": 15.7,
+        "pf": 1.52,
+        "sharpe": 2.54,
+        "maxDD": 9.12,
+        "winRate": 58.47
+      },
+      "2025": {
+        "trades": 214,
+        "tradesPerMonth": 17.6,
+        "return": 46.06,
+        "pf": 1.77,
+        "sharpe": 3.45,
+        "maxDD": 5.51,
+        "winRate": 64.02
+      },
+      "2026-YTD": {
+        "trades": 22,
+        "tradesPerMonth": 5.5,
+        "return": -1.85,
+        "pf": 0.78,
+        "sharpe": -1.24,
+        "maxDD": 6.41,
+        "winRate": 31.82
+      }
+    },
+    "totalReturn": 88.54,
+    "avgPF": 1.4275,
+    "avgSharpe": 1.9724999999999997,
+    "totalTrades": 512,
+    "profitableYears": 3,
+    "score": 292.7575
+  },
+  {
+    "config": {
+      "sweepBufferAtr": 0.25,
+      "trendingD1Adx": 20,
+      "slBufferAtrM15": 0.3,
+      "tp2R": 3.5,
+      "d1AdxFloor": 10,
+      "setupExpiryH1Bars": 12,
+      "killzones": [
+        [
+          7,
+          11
+        ],
+        [
+          13,
+          17
+        ]
+      ]
+    },
+    "byPeriod": {
+      "2023": {
+        "trades": 136,
+        "tradesPerMonth": 11.7,
+        "return": 20.61,
+        "pf": 1.57,
+        "sharpe": 2.84,
+        "maxDD": 3.23,
+        "winRate": 65.44
+      },
+      "2024": {
+        "trades": 76,
+        "tradesPerMonth": 6.2,
+        "return": 5.59,
+        "pf": 1.26,
+        "sharpe": 1.43,
+        "maxDD": 5.94,
+        "winRate": 51.32
+      },
+      "2025": {
+        "trades": 188,
+        "tradesPerMonth": 15.5,
+        "return": 34.8,
+        "pf": 1.7,
+        "sharpe": 3.38,
+        "maxDD": 6.17,
+        "winRate": 65.96
+      },
+      "2026-YTD": {
+        "trades": 16,
+        "tradesPerMonth": 4,
+        "return": 0.19,
+        "pf": 1.03,
+        "sharpe": 0.15,
+        "maxDD": 4.57,
+        "winRate": 50
+      }
+    },
+    "totalReturn": 61.19,
+    "avgPF": 1.3900000000000001,
+    "avgSharpe": 1.95,
+    "totalTrades": 416,
+    "profitableYears": 4,
+    "score": 271.71
+  },
+  {
+    "config": {
+      "sweepBufferAtr": 0.25,
+      "trendingD1Adx": 20,
+      "slBufferAtrM15": 0.3,
+      "tp2R": 2.5,
+      "d1AdxFloor": 10,
+      "setupExpiryH1Bars": 12,
+      "killzones": [
+        [
+          7,
+          11
+        ],
+        [
+          13,
+          17
+        ]
+      ]
+    },
+    "byPeriod": {
+      "2023": {
+        "trades": 138,
+        "tradesPerMonth": 11.8,
+        "return": 18.2,
+        "pf": 1.48,
+        "sharpe": 2.43,
+        "maxDD": 3.29,
+        "winRate": 63.77
+      },
+      "2024": {
+        "trades": 76,
+        "tradesPerMonth": 6.2,
+        "return": 6.11,
+        "pf": 1.28,
+        "sharpe": 1.52,
+        "maxDD": 5.94,
+        "winRate": 51.32
+      },
+      "2025": {
+        "trades": 188,
+        "tradesPerMonth": 15.5,
+        "return": 35.24,
+        "pf": 1.71,
+        "sharpe": 3.39,
+        "maxDD": 6.28,
+        "winRate": 65.96
+      },
+      "2026-YTD": {
+        "trades": 16,
+        "tradesPerMonth": 4,
+        "return": 0.19,
+        "pf": 1.03,
+        "sharpe": 0.15,
+        "maxDD": 4.57,
+        "winRate": 50
+      }
+    },
+    "totalReturn": 59.739999999999995,
+    "avgPF": 1.375,
+    "avgSharpe": 1.8725,
+    "totalTrades": 418,
+    "profitableYears": 4,
+    "score": 265.835
+  },
+  {
+    "config": {
+      "sweepBufferAtr": 0.25,
+      "trendingD1Adx": 22,
+      "slBufferAtrM15": 0.3,
+      "tp2R": 3.5,
+      "d1AdxFloor": 10,
+      "setupExpiryH1Bars": 12,
+      "killzones": [
+        [
+          7,
+          11
+        ],
+        [
+          13,
+          17
+        ]
+      ]
+    },
+    "byPeriod": {
+      "2023": {
+        "trades": 146,
+        "tradesPerMonth": 12.5,
+        "return": 11.57,
+        "pf": 1.3,
+        "sharpe": 1.66,
+        "maxDD": 6.81,
+        "winRate": 60.27
+      },
+      "2024": {
+        "trades": 94,
+        "tradesPerMonth": 7.7,
+        "return": 6.09,
+        "pf": 1.23,
+        "sharpe": 1.24,
+        "maxDD": 7.49,
+        "winRate": 48.94
+      },
+      "2025": {
+        "trades": 186,
+        "tradesPerMonth": 15.3,
+        "return": 35.1,
+        "pf": 1.74,
+        "sharpe": 3.53,
+        "maxDD": 6.13,
+        "winRate": 65.05
+      },
+      "2026-YTD": {
+        "trades": 24,
+        "tradesPerMonth": 6.1,
+        "return": 5.17,
+        "pf": 1.72,
+        "sharpe": 2.89,
+        "maxDD": 2.82,
+        "winRate": 62.5
+      }
+    },
+    "totalReturn": 57.93000000000001,
+    "avgPF": 1.4975,
+    "avgSharpe": 2.33,
+    "totalTrades": 450,
+    "profitableYears": 4,
+    "score": 259.20750000000004
+  },
+  {
+    "config": {
+      "sweepBufferAtr": 0.25,
+      "trendingD1Adx": 22,
+      "slBufferAtrM15": 0.3,
+      "tp2R": 2.5,
+      "d1AdxFloor": 10,
+      "setupExpiryH1Bars": 12,
+      "killzones": [
+        [
+          7,
+          11
+        ],
+        [
+          13,
+          17
+        ]
+      ]
+    },
+    "byPeriod": {
+      "2023": {
+        "trades": 144,
+        "tradesPerMonth": 12.3,
+        "return": 7.35,
+        "pf": 1.19,
+        "sharpe": 1.06,
+        "maxDD": 6.97,
+        "winRate": 57.64
+      },
+      "2024": {
+        "trades": 94,
+        "tradesPerMonth": 7.7,
+        "return": 6.98,
+        "pf": 1.26,
+        "sharpe": 1.36,
+        "maxDD": 7.5,
+        "winRate": 48.94
+      },
+      "2025": {
+        "trades": 186,
+        "tradesPerMonth": 15.3,
+        "return": 36.29,
+        "pf": 1.76,
+        "sharpe": 3.56,
+        "maxDD": 6.17,
+        "winRate": 65.05
+      },
+      "2026-YTD": {
+        "trades": 24,
+        "tradesPerMonth": 6.1,
+        "return": 6.09,
+        "pf": 1.84,
+        "sharpe": 3.27,
+        "maxDD": 2.82,
+        "winRate": 62.5
+      }
+    },
+    "totalReturn": 56.709999999999994,
+    "avgPF": 1.5125,
+    "avgSharpe": 2.3125,
+    "totalTrades": 448,
+    "profitableYears": 4,
+    "score": 254.40249999999997
+  },
+  {
+    "config": {
+      "sweepBufferAtr": 0.25,
+      "trendingD1Adx": 22,
+      "slBufferAtrM15": 0.3,
+      "tp2R": 2.5,
+      "d1AdxFloor": 14,
+      "setupExpiryH1Bars": 12,
+      "killzones": [
+        [
+          7,
+          11
+        ],
+        [
+          13,
+          17
+        ]
+      ]
+    },
+    "byPeriod": {
+      "2023": {
+        "trades": 140,
+        "tradesPerMonth": 12,
+        "return": 10.69,
+        "pf": 1.28,
+        "sharpe": 1.52,
+        "maxDD": 6.76,
+        "winRate": 58.57
+      },
+      "2024": {
+        "trades": 90,
+        "tradesPerMonth": 7.4,
+        "return": 7.36,
+        "pf": 1.29,
+        "sharpe": 1.48,
+        "maxDD": 7.5,
+        "winRate": 48.89
+      },
+      "2025": {
+        "trades": 152,
+        "tradesPerMonth": 12.5,
+        "return": 29.53,
+        "pf": 1.71,
+        "sharpe": 3.17,
+        "maxDD": 6.11,
+        "winRate": 63.82
+      },
+      "2026-YTD": {
+        "trades": 24,
+        "tradesPerMonth": 6.1,
+        "return": 6.09,
+        "pf": 1.84,
+        "sharpe": 3.27,
+        "maxDD": 2.82,
+        "winRate": 62.5
+      }
+    },
+    "totalReturn": 53.67,
+    "avgPF": 1.53,
+    "avgSharpe": 2.36,
+    "totalTrades": 406,
+    "profitableYears": 4,
+    "score": 242.33
+  },
+  {
+    "config": {
+      "sweepBufferAtr": 0.1,
+      "trendingD1Adx": 22,
+      "slBufferAtrM15": 0.2,
+      "tp2R": 2.5,
+      "d1AdxFloor": 10,
+      "setupExpiryH1Bars": 12,
+      "killzones": [
+        [
+          7,
+          11
+        ],
+        [
+          13,
+          17
+        ]
+      ]
+    },
+    "byPeriod": {
+      "2023": {
+        "trades": 158,
+        "tradesPerMonth": 13.5,
+        "return": 17.23,
+        "pf": 1.41,
+        "sharpe": 2.14,
+        "maxDD": 10.69,
+        "winRate": 63.92
+      },
+      "2024": {
+        "trades": 126,
+        "tradesPerMonth": 10.4,
+        "return": 15.08,
+        "pf": 1.46,
+        "sharpe": 2.3,
+        "maxDD": 9.39,
+        "winRate": 61.9
+      },
+      "2025": {
+        "trades": 240,
+        "tradesPerMonth": 19.8,
+        "return": 40.62,
+        "pf": 1.61,
+        "sharpe": 2.99,
+        "maxDD": 5.26,
+        "winRate": 63.75
+      },
+      "2026-YTD": {
+        "trades": 22,
+        "tradesPerMonth": 5.5,
+        "return": -3.15,
+        "pf": 0.64,
+        "sharpe": -2.51,
+        "maxDD": 6.78,
+        "winRate": 31.82
+      }
+    },
+    "totalReturn": 69.78,
+    "avgPF": 1.28,
+    "avgSharpe": 1.23,
+    "totalTrades": 546,
+    "profitableYears": 3,
+    "score": 235.74
+  },
+  {
+    "config": {
+      "sweepBufferAtr": 0.1,
+      "trendingD1Adx": 20,
+      "slBufferAtrM15": 0.3,
+      "tp2R": 2.5,
+      "d1AdxFloor": 14,
+      "setupExpiryH1Bars": 12,
+      "killzones": [
+        [
+          12,
+          16
+        ]
+      ]
+    },
+    "byPeriod": {
+      "2023": {
+        "trades": 118,
+        "tradesPerMonth": 10.1,
+        "return": 11.94,
+        "pf": 1.37,
+        "sharpe": 1.99,
+        "maxDD": 9.34,
+        "winRate": 62.71
+      },
+      "2024": {
+        "trades": 76,
+        "tradesPerMonth": 6.2,
+        "return": 14.97,
+        "pf": 1.62,
+        "sharpe": 2.6,
+        "maxDD": 3.74,
+        "winRate": 57.89
+      },
+      "2025": {
+        "trades": 152,
+        "tradesPerMonth": 12.5,
+        "return": 17.64,
+        "pf": 1.37,
+        "sharpe": 1.89,
+        "maxDD": 7.14,
+        "winRate": 56.58
+      },
+      "2026-YTD": {
+        "trades": 18,
+        "tradesPerMonth": 4.5,
+        "return": 6.91,
+        "pf": 2.23,
+        "sharpe": 3.27,
+        "maxDD": 4.17,
+        "winRate": 61.11
+      }
+    },
+    "totalReturn": 51.459999999999994,
+    "avgPF": 1.6475,
+    "avgSharpe": 2.4375,
+    "totalTrades": 364,
+    "profitableYears": 4,
+    "score": 232.74416666666664
+  },
+  {
+    "config": {
+      "sweepBufferAtr": 0.1,
+      "trendingD1Adx": 22,
+      "slBufferAtrM15": 0.3,
+      "tp2R": 3.5,
+      "d1AdxFloor": 14,
+      "setupExpiryH1Bars": 12,
+      "killzones": [
+        [
+          7,
+          11
+        ],
+        [
+          13,
+          17
+        ]
+      ]
+    },
+    "byPeriod": {
+      "2023": {
+        "trades": 134,
+        "tradesPerMonth": 11.5,
+        "return": 11.6,
+        "pf": 1.35,
+        "sharpe": 1.84,
+        "maxDD": 11.24,
+        "winRate": 58.96
+      },
+      "2024": {
+        "trades": 118,
+        "tradesPerMonth": 9.7,
+        "return": 14.76,
+        "pf": 1.49,
+        "sharpe": 2.45,
+        "maxDD": 9.23,
+        "winRate": 58.47
+      },
+      "2025": {
+        "trades": 214,
+        "tradesPerMonth": 17.6,
+        "return": 44.03,
+        "pf": 1.74,
+        "sharpe": 3.39,
+        "maxDD": 5.51,
+        "winRate": 64.02
+      },
+      "2026-YTD": {
+        "trades": 22,
+        "tradesPerMonth": 5.5,
+        "return": -1.85,
+        "pf": 0.78,
+        "sharpe": -1.24,
+        "maxDD": 6.41,
+        "winRate": 31.82
+      }
+    },
+    "totalReturn": 68.54,
+    "avgPF": 1.34,
+    "avgSharpe": 1.6099999999999999,
+    "totalTrades": 488,
+    "profitableYears": 3,
+    "score": 232.32
+  },
+  {
+    "config": {
+      "sweepBufferAtr": 0.1,
+      "trendingD1Adx": 20,
+      "slBufferAtrM15": 0.2,
+      "tp2R": 2.5,
+      "d1AdxFloor": 14,
+      "setupExpiryH1Bars": 12,
+      "killzones": [
+        [
+          12,
+          16
+        ]
+      ]
+    },
+    "byPeriod": {
+      "2023": {
+        "trades": 108,
+        "tradesPerMonth": 9.3,
+        "return": 9.88,
+        "pf": 1.33,
+        "sharpe": 1.79,
+        "maxDD": 6.84,
+        "winRate": 60.19
+      },
+      "2024": {
+        "trades": 80,
+        "tradesPerMonth": 6.6,
+        "return": 14.97,
+        "pf": 1.58,
+        "sharpe": 2.41,
+        "maxDD": 3.93,
+        "winRate": 58.75
+      },
+      "2025": {
+        "trades": 160,
+        "tradesPerMonth": 13.2,
+        "return": 17.76,
+        "pf": 1.36,
+        "sharpe": 1.8,
+        "maxDD": 7.18,
+        "winRate": 56.25
+      },
+      "2026-YTD": {
+        "trades": 18,
+        "tradesPerMonth": 4.5,
+        "return": 7.62,
+        "pf": 2.57,
+        "sharpe": 3.52,
+        "maxDD": 4.31,
+        "winRate": 66.67
+      }
+    },
+    "totalReturn": 50.23,
+    "avgPF": 1.71,
+    "avgSharpe": 2.38,
+    "totalTrades": 366,
+    "profitableYears": 4,
+    "score": 228.23923076923077
+  },
+  {
+    "config": {
+      "sweepBufferAtr": 0.25,
+      "trendingD1Adx": 22,
+      "slBufferAtrM15": 0.3,
+      "tp2R": 3.5,
+      "d1AdxFloor": 14,
+      "setupExpiryH1Bars": 12,
+      "killzones": [
+        [
+          7,
+          11
+        ],
+        [
+          13,
+          17
+        ]
+      ]
+    },
+    "byPeriod": {
+      "2023": {
+        "trades": 140,
+        "tradesPerMonth": 12,
+        "return": 9.3,
+        "pf": 1.25,
+        "sharpe": 1.4,
+        "maxDD": 6.8,
+        "winRate": 58.57
+      },
+      "2024": {
+        "trades": 90,
+        "tradesPerMonth": 7.4,
+        "return": 6.71,
+        "pf": 1.26,
+        "sharpe": 1.37,
+        "maxDD": 7.49,
+        "winRate": 48.89
+      },
+      "2025": {
+        "trades": 152,
+        "tradesPerMonth": 12.5,
+        "return": 28.49,
+        "pf": 1.68,
+        "sharpe": 3.09,
+        "maxDD": 6.13,
+        "winRate": 63.82
+      },
+      "2026-YTD": {
+        "trades": 24,
+        "tradesPerMonth": 6.1,
+        "return": 5.17,
+        "pf": 1.72,
+        "sharpe": 2.89,
+        "maxDD": 2.82,
+        "winRate": 62.5
+      }
+    },
+    "totalReturn": 49.67,
+    "avgPF": 1.4774999999999998,
+    "avgSharpe": 2.1875,
+    "totalTrades": 406,
+    "profitableYears": 4,
+    "score": 226.0675
+  },
+  {
+    "config": {
+      "sweepBufferAtr": 0.25,
+      "trendingD1Adx": 20,
+      "slBufferAtrM15": 0.3,
+      "tp2R": 2.5,
+      "d1AdxFloor": 14,
+      "setupExpiryH1Bars": 12,
+      "killzones": [
+        [
+          7,
+          11
+        ],
+        [
+          13,
+          17
+        ]
+      ]
+    },
+    "byPeriod": {
+      "2023": {
+        "trades": 130,
+        "tradesPerMonth": 11.1,
+        "return": 20.59,
+        "pf": 1.57,
+        "sharpe": 2.75,
+        "maxDD": 3.23,
+        "winRate": 63.85
+      },
+      "2024": {
+        "trades": 76,
+        "tradesPerMonth": 6.2,
+        "return": 6.11,
+        "pf": 1.28,
+        "sharpe": 1.52,
+        "maxDD": 5.94,
+        "winRate": 51.32
+      },
+      "2025": {
+        "trades": 138,
+        "tradesPerMonth": 11.4,
+        "return": 22.15,
+        "pf": 1.56,
+        "sharpe": 2.62,
+        "maxDD": 6.11,
+        "winRate": 61.59
+      },
+      "2026-YTD": {
+        "trades": 16,
+        "tradesPerMonth": 4,
+        "return": 0.19,
+        "pf": 1.03,
+        "sharpe": 0.15,
+        "maxDD": 4.57,
+        "winRate": 50
+      }
+    },
+    "totalReturn": 49.03999999999999,
+    "avgPF": 1.36,
+    "avgSharpe": 1.76,
+    "totalTrades": 360,
+    "profitableYears": 4,
+    "score": 221.42153846153843
+  },
+  {
+    "config": {
+      "sweepBufferAtr": 0.1,
+      "trendingD1Adx": 20,
+      "slBufferAtrM15": 0.3,
+      "tp2R": 3.5,
+      "d1AdxFloor": 14,
+      "setupExpiryH1Bars": 12,
+      "killzones": [
+        [
+          12,
+          16
+        ]
+      ]
+    },
+    "byPeriod": {
+      "2023": {
+        "trades": 118,
+        "tradesPerMonth": 10.1,
+        "return": 11.93,
+        "pf": 1.36,
+        "sharpe": 1.96,
+        "maxDD": 9.48,
+        "winRate": 62.71
+      },
+      "2024": {
+        "trades": 76,
+        "tradesPerMonth": 6.2,
+        "return": 12.95,
+        "pf": 1.54,
+        "sharpe": 2.34,
+        "maxDD": 3.8,
+        "winRate": 57.89
+      },
+      "2025": {
+        "trades": 152,
+        "tradesPerMonth": 12.5,
+        "return": 16.05,
+        "pf": 1.34,
+        "sharpe": 1.77,
+        "maxDD": 7.14,
+        "winRate": 56.58
+      },
+      "2026-YTD": {
+        "trades": 18,
+        "tradesPerMonth": 4.5,
+        "return": 6.91,
+        "pf": 2.23,
+        "sharpe": 3.27,
+        "maxDD": 4.17,
+        "winRate": 61.11
+      }
+    },
+    "totalReturn": 47.84,
+    "avgPF": 1.6175000000000002,
+    "avgSharpe": 2.335,
+    "totalTrades": 364,
+    "profitableYears": 4,
+    "score": 218.11416666666668
+  },
+  {
+    "config": {
+      "sweepBufferAtr": 0.1,
+      "trendingD1Adx": 20,
+      "slBufferAtrM15": 0.2,
+      "tp2R": 2.5,
+      "d1AdxFloor": 10,
+      "setupExpiryH1Bars": 12,
+      "killzones": [
+        [
+          12,
+          16
+        ]
+      ]
+    },
+    "byPeriod": {
+      "2023": {
+        "trades": 108,
+        "tradesPerMonth": 9.3,
+        "return": 10.28,
+        "pf": 1.33,
+        "sharpe": 1.82,
+        "maxDD": 7.12,
+        "winRate": 61.11
+      },
+      "2024": {
+        "trades": 84,
+        "tradesPerMonth": 6.9,
+        "return": 8.53,
+        "pf": 1.32,
+        "sharpe": 1.73,
+        "maxDD": 4.66,
+        "winRate": 54.76
+      },
+      "2025": {
+        "trades": 174,
+        "tradesPerMonth": 14.3,
+        "return": 21.06,
+        "pf": 1.41,
+        "sharpe": 1.99,
+        "maxDD": 7.99,
+        "winRate": 56.32
+      },
+      "2026-YTD": {
+        "trades": 18,
+        "tradesPerMonth": 4.5,
+        "return": 7.62,
+        "pf": 2.57,
+        "sharpe": 3.52,
+        "maxDD": 4.31,
+        "winRate": 66.67
+      }
+    },
+    "totalReturn": 47.489999999999995,
+    "avgPF": 1.6575000000000002,
+    "avgSharpe": 2.265,
+    "totalTrades": 384,
+    "profitableYears": 4,
+    "score": 217.93980769230765
+  },
+  {
+    "config": {
+      "sweepBufferAtr": 0.2,
+      "trendingD1Adx": 22,
+      "slBufferAtrM15": 0.2,
+      "tp2R": 2.5,
+      "d1AdxFloor": 10,
+      "setupExpiryH1Bars": 12,
+      "killzones": [
+        [
+          12,
+          16
+        ]
+      ]
+    },
+    "byPeriod": {
+      "2023": {
+        "trades": 134,
+        "tradesPerMonth": 11.5,
+        "return": 8.96,
+        "pf": 1.24,
+        "sharpe": 1.35,
+        "maxDD": 8.25,
+        "winRate": 60.45
+      },
+      "2024": {
+        "trades": 82,
+        "tradesPerMonth": 6.7,
+        "return": 4.64,
+        "pf": 1.17,
+        "sharpe": 0.98,
+        "maxDD": 4.25,
+        "winRate": 52.44
+      },
+      "2025": {
+        "trades": 168,
+        "tradesPerMonth": 13.8,
+        "return": 27.38,
+        "pf": 1.58,
+        "sharpe": 2.59,
+        "maxDD": 8.4,
+        "winRate": 58.93
+      },
+      "2026-YTD": {
+        "trades": 22,
+        "tradesPerMonth": 5.5,
+        "return": 6.15,
+        "pf": 1.84,
+        "sharpe": 2.36,
+        "maxDD": 3.78,
+        "winRate": 59.09
+      }
+    },
+    "totalReturn": 47.13,
+    "avgPF": 1.4575,
+    "avgSharpe": 1.8199999999999998,
+    "totalTrades": 406,
+    "profitableYears": 4,
+    "score": 215.8075
+  },
+  {
+    "config": {
+      "sweepBufferAtr": 0.1,
+      "trendingD1Adx": 20,
+      "slBufferAtrM15": 0.2,
+      "tp2R": 3.5,
+      "d1AdxFloor": 14,
+      "setupExpiryH1Bars": 12,
+      "killzones": [
+        [
+          12,
+          16
+        ]
+      ]
+    },
+    "byPeriod": {
+      "2023": {
+        "trades": 108,
+        "tradesPerMonth": 9.3,
+        "return": 9,
+        "pf": 1.3,
+        "sharpe": 1.66,
+        "maxDD": 6.84,
+        "winRate": 60.19
+      },
+      "2024": {
+        "trades": 80,
+        "tradesPerMonth": 6.6,
+        "return": 13.95,
+        "pf": 1.55,
+        "sharpe": 2.28,
+        "maxDD": 3.97,
+        "winRate": 58.75
+      },
+      "2025": {
+        "trades": 160,
+        "tradesPerMonth": 13.2,
+        "return": 16.45,
+        "pf": 1.34,
+        "sharpe": 1.69,
+        "maxDD": 7.18,
+        "winRate": 56.25
+      },
+      "2026-YTD": {
+        "trades": 18,
+        "tradesPerMonth": 4.5,
+        "return": 7.62,
+        "pf": 2.57,
+        "sharpe": 3.52,
+        "maxDD": 4.31,
+        "winRate": 66.67
+      }
+    },
+    "totalReturn": 47.019999999999996,
+    "avgPF": 1.69,
+    "avgSharpe": 2.2874999999999996,
+    "totalTrades": 366,
+    "profitableYears": 4,
+    "score": 215.29923076923075
+  },
+  {
+    "config": {
+      "sweepBufferAtr": 0.2,
+      "trendingD1Adx": 22,
+      "slBufferAtrM15": 0.2,
+      "tp2R": 2.5,
+      "d1AdxFloor": 14,
+      "setupExpiryH1Bars": 12,
+      "killzones": [
+        [
+          12,
+          16
+        ]
+      ]
+    },
+    "byPeriod": {
+      "2023": {
+        "trades": 128,
+        "tradesPerMonth": 11,
+        "return": 12.86,
+        "pf": 1.36,
+        "sharpe": 2,
+        "maxDD": 7.08,
+        "winRate": 60.16
+      },
+      "2024": {
+        "trades": 76,
+        "tradesPerMonth": 6.2,
+        "return": 6.07,
+        "pf": 1.23,
+        "sharpe": 1.08,
+        "maxDD": 5.08,
+        "winRate": 50
+      },
+      "2025": {
+        "trades": 162,
+        "tradesPerMonth": 13.4,
+        "return": 21.82,
+        "pf": 1.47,
+        "sharpe": 2.18,
+        "maxDD": 8.39,
+        "winRate": 58.02
+      },
+      "2026-YTD": {
+        "trades": 22,
+        "tradesPerMonth": 5.5,
+        "return": 6.15,
+        "pf": 1.84,
+        "sharpe": 2.36,
+        "maxDD": 3.78,
+        "winRate": 59.09
+      }
+    },
+    "totalReturn": 46.9,
+    "avgPF": 1.4749999999999999,
+    "avgSharpe": 1.9049999999999998,
+    "totalTrades": 388,
+    "profitableYears": 4,
+    "score": 214.87243589743588
+  },
+  {
+    "config": {
+      "sweepBufferAtr": 0.1,
+      "trendingD1Adx": 20,
+      "slBufferAtrM15": 0.3,
+      "tp2R": 2.5,
+      "d1AdxFloor": 10,
+      "setupExpiryH1Bars": 12,
+      "killzones": [
+        [
+          12,
+          16
+        ]
+      ]
+    },
+    "byPeriod": {
+      "2023": {
+        "trades": 118,
+        "tradesPerMonth": 10.1,
+        "return": 10.52,
+        "pf": 1.31,
+        "sharpe": 1.73,
+        "maxDD": 9.09,
+        "winRate": 63.56
+      },
+      "2024": {
+        "trades": 76,
+        "tradesPerMonth": 6.2,
+        "return": 5.52,
+        "pf": 1.24,
+        "sharpe": 1.38,
+        "maxDD": 5.74,
+        "winRate": 56.58
+      },
+      "2025": {
+        "trades": 164,
+        "tradesPerMonth": 13.5,
+        "return": 23.29,
+        "pf": 1.46,
+        "sharpe": 2.3,
+        "maxDD": 7.17,
+        "winRate": 57.93
+      },
+      "2026-YTD": {
+        "trades": 18,
+        "tradesPerMonth": 4.5,
+        "return": 6.91,
+        "pf": 2.23,
+        "sharpe": 3.27,
+        "maxDD": 4.17,
+        "winRate": 61.11
+      }
+    },
+    "totalReturn": 46.239999999999995,
+    "avgPF": 1.56,
+    "avgSharpe": 2.17,
+    "totalTrades": 376,
+    "profitableYears": 4,
+    "score": 212.04205128205126
+  },
+  {
+    "config": {
+      "sweepBufferAtr": 0.1,
+      "trendingD1Adx": 20,
+      "slBufferAtrM15": 0.3,
+      "tp2R": 2.5,
+      "d1AdxFloor": 14,
+      "setupExpiryH1Bars": 12,
+      "killzones": [
+        [
+          7,
+          11
+        ],
+        [
+          13,
+          17
+        ]
+      ]
+    },
+    "byPeriod": {
+      "2023": {
+        "trades": 136,
+        "tradesPerMonth": 11.7,
+        "return": 24.79,
+        "pf": 1.66,
+        "sharpe": 3.25,
+        "maxDD": 7.5,
+        "winRate": 63.24
+      },
+      "2024": {
+        "trades": 96,
+        "tradesPerMonth": 7.9,
+        "return": 7.89,
+        "pf": 1.3,
+        "sharpe": 1.58,
+        "maxDD": 8.3,
+        "winRate": 57.29
+      },
+      "2025": {
+        "trades": 192,
+        "tradesPerMonth": 15.8,
+        "return": 31.75,
+        "pf": 1.53,
+        "sharpe": 2.62,
+        "maxDD": 4.16,
+        "winRate": 62.5
+      },
+      "2026-YTD": {
+        "trades": 14,
+        "tradesPerMonth": 3.5,
+        "return": -2.63,
+        "pf": 0.62,
+        "sharpe": -2.34,
+        "maxDD": 6.58,
+        "winRate": 21.43
+      }
+    },
+    "totalReturn": 61.800000000000004,
+    "avgPF": 1.2775,
+    "avgSharpe": 1.2775,
+    "totalTrades": 438,
+    "profitableYears": 3,
+    "score": 211.7875
+  },
+  {
+    "config": {
+      "sweepBufferAtr": 0.1,
+      "trendingD1Adx": 20,
+      "slBufferAtrM15": 0.2,
+      "tp2R": 3.5,
+      "d1AdxFloor": 10,
+      "setupExpiryH1Bars": 12,
+      "killzones": [
+        [
+          12,
+          16
+        ]
+      ]
+    },
+    "byPeriod": {
+      "2023": {
+        "trades": 108,
+        "tradesPerMonth": 9.3,
+        "return": 9.39,
+        "pf": 1.3,
+        "sharpe": 1.67,
+        "maxDD": 6.48,
+        "winRate": 61.11
+      },
+      "2024": {
+        "trades": 86,
+        "tradesPerMonth": 7.1,
+        "return": 8.66,
+        "pf": 1.32,
+        "sharpe": 1.77,
+        "maxDD": 3.95,
+        "winRate": 56.98
+      },
+      "2025": {
+        "trades": 174,
+        "tradesPerMonth": 14.3,
+        "return": 19.53,
+        "pf": 1.38,
+        "sharpe": 1.88,
+        "maxDD": 7.99,
+        "winRate": 56.32
+      },
+      "2026-YTD": {
+        "trades": 18,
+        "tradesPerMonth": 4.5,
+        "return": 7.62,
+        "pf": 2.57,
+        "sharpe": 3.52,
+        "maxDD": 4.31,
+        "winRate": 66.67
+      }
+    },
+    "totalReturn": 45.199999999999996,
+    "avgPF": 1.6425,
+    "avgSharpe": 2.21,
+    "totalTrades": 386,
+    "profitableYears": 4,
+    "score": 208.80737179487178
+  },
+  {
+    "config": {
+      "sweepBufferAtr": 0.1,
+      "trendingD1Adx": 22,
+      "slBufferAtrM15": 0.2,
+      "tp2R": 2.5,
+      "d1AdxFloor": 10,
+      "setupExpiryH1Bars": 12,
+      "killzones": [
+        [
+          12,
+          16
+        ]
+      ]
+    },
+    "byPeriod": {
+      "2023": {
+        "trades": 144,
+        "tradesPerMonth": 12.3,
+        "return": 4.48,
+        "pf": 1.11,
+        "sharpe": 0.64,
+        "maxDD": 8.07,
+        "winRate": 59.03
+      },
+      "2024": {
+        "trades": 100,
+        "tradesPerMonth": 8.2,
+        "return": 9.45,
+        "pf": 1.3,
+        "sharpe": 1.65,
+        "maxDD": 4.81,
+        "winRate": 57
+      },
+      "2025": {
+        "trades": 178,
+        "tradesPerMonth": 14.7,
+        "return": 21.81,
+        "pf": 1.42,
+        "sharpe": 2.03,
+        "maxDD": 7.99,
+        "winRate": 56.74
+      },
+      "2026-YTD": {
+        "trades": 28,
+        "tradesPerMonth": 7.1,
+        "return": 8.81,
+        "pf": 2.18,
+        "sharpe": 2.98,
+        "maxDD": 3.79,
+        "winRate": 67.86
+      }
+    },
+    "totalReturn": 44.55,
+    "avgPF": 1.5025,
+    "avgSharpe": 1.8250000000000002,
+    "totalTrades": 450,
+    "profitableYears": 4,
+    "score": 205.71249999999998
+  },
+  {
+    "config": {
+      "sweepBufferAtr": 0.1,
+      "trendingD1Adx": 20,
+      "slBufferAtrM15": 0.3,
+      "tp2R": 3.5,
+      "d1AdxFloor": 10,
+      "setupExpiryH1Bars": 12,
+      "killzones": [
+        [
+          12,
+          16
+        ]
+      ]
+    },
+    "byPeriod": {
+      "2023": {
+        "trades": 118,
+        "tradesPerMonth": 10.1,
+        "return": 10.9,
+        "pf": 1.32,
+        "sharpe": 1.77,
+        "maxDD": 8.57,
+        "winRate": 63.56
+      },
+      "2024": {
+        "trades": 76,
+        "tradesPerMonth": 6.2,
+        "return": 4.08,
+        "pf": 1.18,
+        "sharpe": 1.09,
+        "maxDD": 5.77,
+        "winRate": 56.58
+      },
+      "2025": {
+        "trades": 162,
+        "tradesPerMonth": 13.4,
+        "return": 22.07,
+        "pf": 1.45,
+        "sharpe": 2.23,
+        "maxDD": 7.17,
+        "winRate": 58.02
+      },
+      "2026-YTD": {
+        "trades": 18,
+        "tradesPerMonth": 4.5,
+        "return": 6.91,
+        "pf": 2.23,
+        "sharpe": 3.27,
+        "maxDD": 4.17,
+        "winRate": 61.11
+      }
+    },
+    "totalReturn": 43.959999999999994,
+    "avgPF": 1.545,
+    "avgSharpe": 2.09,
+    "totalTrades": 374,
+    "profitableYears": 4,
+    "score": 202.74448717948715
+  },
+  {
+    "config": {
+      "sweepBufferAtr": 0.25,
+      "trendingD1Adx": 20,
+      "slBufferAtrM15": 0.3,
+      "tp2R": 3.5,
+      "d1AdxFloor": 14,
+      "setupExpiryH1Bars": 12,
+      "killzones": [
+        [
+          7,
+          11
+        ],
+        [
+          13,
+          17
+        ]
+      ]
+    },
+    "byPeriod": {
+      "2023": {
+        "trades": 130,
+        "tradesPerMonth": 11.1,
+        "return": 17.12,
+        "pf": 1.49,
+        "sharpe": 2.5,
+        "maxDD": 3.28,
+        "winRate": 63.85
+      },
+      "2024": {
+        "trades": 76,
+        "tradesPerMonth": 6.2,
+        "return": 5.59,
+        "pf": 1.26,
+        "sharpe": 1.43,
+        "maxDD": 5.94,
+        "winRate": 51.32
+      },
+      "2025": {
+        "trades": 138,
+        "tradesPerMonth": 11.4,
+        "return": 21.48,
+        "pf": 1.55,
+        "sharpe": 2.57,
+        "maxDD": 6.13,
+        "winRate": 61.59
+      },
+      "2026-YTD": {
+        "trades": 16,
+        "tradesPerMonth": 4,
+        "return": 0.19,
+        "pf": 1.03,
+        "sharpe": 0.15,
+        "maxDD": 4.57,
+        "winRate": 50
+      }
+    },
+    "totalReturn": 44.379999999999995,
+    "avgPF": 1.3325,
+    "avgSharpe": 1.6625,
+    "totalTrades": 360,
+    "profitableYears": 4,
+    "score": 202.64403846153843
+  },
+  {
+    "config": {
+      "sweepBufferAtr": 0.15,
+      "trendingD1Adx": 20,
+      "slBufferAtrM15": 0.2,
+      "tp2R": 2.5,
+      "d1AdxFloor": 10,
+      "setupExpiryH1Bars": 12,
+      "killzones": [
+        [
+          12,
+          16
+        ]
+      ]
+    },
+    "byPeriod": {
+      "2023": {
+        "trades": 108,
+        "tradesPerMonth": 9.3,
+        "return": 10.28,
+        "pf": 1.33,
+        "sharpe": 1.82,
+        "maxDD": 7.12,
+        "winRate": 61.11
+      },
+      "2024": {
+        "trades": 74,
+        "tradesPerMonth": 6.1,
+        "return": 5.54,
+        "pf": 1.22,
+        "sharpe": 1.28,
+        "maxDD": 5.37,
+        "winRate": 54.05
+      },
+      "2025": {
+        "trades": 170,
+        "tradesPerMonth": 14,
+        "return": 21.02,
+        "pf": 1.42,
+        "sharpe": 2.01,
+        "maxDD": 7.24,
+        "winRate": 57.06
+      },
+      "2026-YTD": {
+        "trades": 16,
+        "tradesPerMonth": 4,
+        "return": 6.79,
+        "pf": 2.4,
+        "sharpe": 3.33,
+        "maxDD": 4.34,
+        "winRate": 62.5
+      }
+    },
+    "totalReturn": 43.63,
+    "avgPF": 1.5924999999999998,
+    "avgSharpe": 2.11,
+    "totalTrades": 368,
+    "profitableYears": 4,
+    "score": 201.35429487179488
+  },
+  {
+    "config": {
+      "sweepBufferAtr": 0.1,
+      "trendingD1Adx": 22,
+      "slBufferAtrM15": 0.3,
+      "tp2R": 2.5,
+      "d1AdxFloor": 10,
+      "setupExpiryH1Bars": 12,
+      "killzones": [
+        [
+          12,
+          16
+        ]
+      ]
+    },
+    "byPeriod": {
+      "2023": {
+        "trades": 140,
+        "tradesPerMonth": 12,
+        "return": 8.38,
+        "pf": 1.21,
+        "sharpe": 1.23,
+        "maxDD": 8.55,
+        "winRate": 62.14
+      },
+      "2024": {
+        "trades": 98,
+        "tradesPerMonth": 8.1,
+        "return": 4.38,
+        "pf": 1.14,
+        "sharpe": 0.86,
+        "maxDD": 5.75,
+        "winRate": 54.08
+      },
+      "2025": {
+        "trades": 166,
+        "tradesPerMonth": 13.7,
+        "return": 23.59,
+        "pf": 1.47,
+        "sharpe": 2.31,
+        "maxDD": 7.26,
+        "winRate": 58.43
+      },
+      "2026-YTD": {
+        "trades": 28,
+        "tradesPerMonth": 7.1,
+        "return": 7.18,
+        "pf": 1.87,
+        "sharpe": 2.61,
+        "maxDD": 4.27,
+        "winRate": 60.71
+      }
+    },
+    "totalReturn": 43.53,
+    "avgPF": 1.4224999999999999,
+    "avgSharpe": 1.7525,
+    "totalTrades": 432,
+    "profitableYears": 4,
+    "score": 201.23250000000002
+  },
+  {
+    "config": {
+      "sweepBufferAtr": 0.1,
+      "trendingD1Adx": 22,
+      "slBufferAtrM15": 0.3,
+      "tp2R": 2.5,
+      "d1AdxFloor": 14,
+      "setupExpiryH1Bars": 12,
+      "killzones": [
+        [
+          12,
+          16
+        ]
+      ]
+    },
+    "byPeriod": {
+      "2023": {
+        "trades": 138,
+        "tradesPerMonth": 11.8,
+        "return": 10.72,
+        "pf": 1.27,
+        "sharpe": 1.58,
+        "maxDD": 7.77,
+        "winRate": 61.59
+      },
+      "2024": {
+        "trades": 90,
+        "tradesPerMonth": 7.4,
+        "return": 10.87,
+        "pf": 1.36,
+        "sharpe": 1.69,
+        "maxDD": 4.48,
+        "winRate": 55.56
+      },
+      "2025": {
+        "trades": 156,
+        "tradesPerMonth": 12.9,
+        "return": 14.68,
+        "pf": 1.31,
+        "sharpe": 1.61,
+        "maxDD": 7.78,
+        "winRate": 57.05
+      },
+      "2026-YTD": {
+        "trades": 28,
+        "tradesPerMonth": 7.1,
+        "return": 7.18,
+        "pf": 1.87,
+        "sharpe": 2.61,
+        "maxDD": 4.27,
+        "winRate": 60.71
+      }
+    },
+    "totalReturn": 43.449999999999996,
+    "avgPF": 1.4525000000000001,
+    "avgSharpe": 1.8725,
+    "totalTrades": 412,
+    "profitableYears": 4,
+    "score": 201.06249999999997
+  },
+  {
+    "config": {
+      "sweepBufferAtr": 0.2,
+      "trendingD1Adx": 22,
+      "slBufferAtrM15": 0.2,
+      "tp2R": 3.5,
+      "d1AdxFloor": 10,
+      "setupExpiryH1Bars": 12,
+      "killzones": [
+        [
+          12,
+          16
+        ]
+      ]
+    },
+    "byPeriod": {
+      "2023": {
+        "trades": 134,
+        "tradesPerMonth": 11.5,
+        "return": 8.96,
+        "pf": 1.24,
+        "sharpe": 1.34,
+        "maxDD": 7.63,
+        "winRate": 60.45
+      },
+      "2024": {
+        "trades": 82,
+        "tradesPerMonth": 6.7,
+        "return": 3.05,
+        "pf": 1.11,
+        "sharpe": 0.67,
+        "maxDD": 4.28,
+        "winRate": 52.44
+      },
+      "2025": {
+        "trades": 168,
+        "tradesPerMonth": 13.8,
+        "return": 24.67,
+        "pf": 1.52,
+        "sharpe": 2.41,
+        "maxDD": 8.4,
+        "winRate": 58.93
+      },
+      "2026-YTD": {
+        "trades": 22,
+        "tradesPerMonth": 5.5,
+        "return": 6.15,
+        "pf": 1.84,
+        "sharpe": 2.36,
+        "maxDD": 3.78,
+        "winRate": 59.09
+      }
+    },
+    "totalReturn": 42.830000000000005,
+    "avgPF": 1.4275,
+    "avgSharpe": 1.6949999999999998,
+    "totalTrades": 406,
+    "profitableYears": 4,
+    "score": 198.4575
+  },
+  {
+    "config": {
+      "sweepBufferAtr": 0.2,
+      "trendingD1Adx": 22,
+      "slBufferAtrM15": 0.2,
+      "tp2R": 3.5,
+      "d1AdxFloor": 14,
+      "setupExpiryH1Bars": 12,
+      "killzones": [
+        [
+          12,
+          16
+        ]
+      ]
+    },
+    "byPeriod": {
+      "2023": {
+        "trades": 128,
+        "tradesPerMonth": 11,
+        "return": 11.96,
+        "pf": 1.34,
+        "sharpe": 1.88,
+        "maxDD": 7.08,
+        "winRate": 60.16
+      },
+      "2024": {
+        "trades": 76,
+        "tradesPerMonth": 6.2,
+        "return": 4.77,
+        "pf": 1.18,
+        "sharpe": 0.88,
+        "maxDD": 5.06,
+        "winRate": 50
+      },
+      "2025": {
+        "trades": 162,
+        "tradesPerMonth": 13.4,
+        "return": 19.91,
+        "pf": 1.43,
+        "sharpe": 2.04,
+        "maxDD": 8.39,
+        "winRate": 58.02
+      },
+      "2026-YTD": {
+        "trades": 22,
+        "tradesPerMonth": 5.5,
+        "return": 6.15,
+        "pf": 1.84,
+        "sharpe": 2.36,
+        "maxDD": 3.78,
+        "winRate": 59.09
+      }
+    },
+    "totalReturn": 42.79,
+    "avgPF": 1.4475,
+    "avgSharpe": 1.79,
+    "totalTrades": 388,
+    "profitableYears": 4,
+    "score": 198.2949358974359
+  },
+  {
+    "config": {
+      "sweepBufferAtr": 0.15,
+      "trendingD1Adx": 22,
+      "slBufferAtrM15": 0.2,
+      "tp2R": 3.5,
+      "d1AdxFloor": 10,
+      "setupExpiryH1Bars": 12,
+      "killzones": [
+        [
+          12,
+          16
+        ]
+      ]
+    },
+    "byPeriod": {
+      "2023": {
+        "trades": 140,
+        "tradesPerMonth": 12,
+        "return": 1.91,
+        "pf": 1.04,
+        "sharpe": 0.28,
+        "maxDD": 9.95,
+        "winRate": 57.14
+      },
+      "2024": {
+        "trades": 90,
+        "tradesPerMonth": 7.4,
+        "return": 6.02,
+        "pf": 1.19,
+        "sharpe": 0.97,
+        "maxDD": 4.72,
+        "winRate": 52.22
+      },
+      "2025": {
+        "trades": 182,
+        "tradesPerMonth": 15,
+        "return": 26.83,
+        "pf": 1.53,
+        "sharpe": 2.47,
+        "maxDD": 6.79,
+        "winRate": 59.34
+      },
+      "2026-YTD": {
+        "trades": 26,
+        "tradesPerMonth": 6.6,
+        "return": 7.96,
+        "pf": 2.06,
+        "sharpe": 2.8,
+        "maxDD": 3.84,
+        "winRate": 65.38
+      }
+    },
+    "totalReturn": 42.72,
+    "avgPF": 1.455,
+    "avgSharpe": 1.63,
+    "totalTrades": 438,
+    "profitableYears": 4,
+    "score": 198.155
+  },
+  {
+    "config": {
+      "sweepBufferAtr": 0.1,
+      "trendingD1Adx": 20,
+      "slBufferAtrM15": 0.3,
+      "tp2R": 3.5,
+      "d1AdxFloor": 14,
+      "setupExpiryH1Bars": 12,
+      "killzones": [
+        [
+          7,
+          11
+        ],
+        [
+          13,
+          17
+        ]
+      ]
+    },
+    "byPeriod": {
+      "2023": {
+        "trades": 134,
+        "tradesPerMonth": 11.5,
+        "return": 22.28,
+        "pf": 1.62,
+        "sharpe": 3.08,
+        "maxDD": 7.74,
+        "winRate": 62.69
+      },
+      "2024": {
+        "trades": 96,
+        "tradesPerMonth": 7.9,
+        "return": 7.29,
+        "pf": 1.27,
+        "sharpe": 1.48,
+        "maxDD": 8.29,
+        "winRate": 57.29
+      },
+      "2025": {
+        "trades": 192,
+        "tradesPerMonth": 15.8,
+        "return": 30.29,
+        "pf": 1.51,
+        "sharpe": 2.57,
+        "maxDD": 4.19,
+        "winRate": 62.5
+      },
+      "2026-YTD": {
+        "trades": 14,
+        "tradesPerMonth": 3.5,
+        "return": -2.63,
+        "pf": 0.62,
+        "sharpe": -2.34,
+        "maxDD": 6.58,
+        "winRate": 21.43
+      }
+    },
+    "totalReturn": 57.23,
+    "avgPF": 1.2550000000000001,
+    "avgSharpe": 1.1975000000000002,
+    "totalTrades": 436,
+    "profitableYears": 3,
+    "score": 197.965
+  }
+]

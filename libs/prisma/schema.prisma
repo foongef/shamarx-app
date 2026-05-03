@@ -23,6 +23,18 @@ model Candle {
   @@index([symbol, timeframe, openTime])
 }
 
+model ImportCheckpoint {
+  id           String   @id @default(uuid())
+  symbol       String
+  timeframe    String
+  source       String   @default("dukascopy")
+  lastOpenTime DateTime
+  rowsImported Int      @default(0)
+  updatedAt    DateTime @updatedAt
+
+  @@unique([symbol, timeframe, source])
+}
+
 model Indicator {
   id        String   @id @default(uuid())
   symbol    String
@@ -185,6 +197,7 @@ model BacktestRun {
   initialBalance Float
   riskPercent    Float
   withLlm        Boolean   @default(false)
+  strategyVersion String?  // V5.5b | V6 | V6-alt — null for legacy runs
   status         String    @default("PENDING") // PENDING, RUNNING, COMPLETED, FAILED
   metrics        Json?
   errorMessage   String?

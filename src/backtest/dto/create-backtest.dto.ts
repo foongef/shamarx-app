@@ -3,6 +3,7 @@ import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 const SUPPORTED_SYMBOLS = ['XAUUSD', 'GBPUSD', 'EURUSD', 'USDJPY', 'US30', 'NAS100'] as const;
+const SUPPORTED_STRATEGIES = ['V5.5b', 'V6', 'V6-alt'] as const;
 
 export class CreateBacktestDto {
   @ApiPropertyOptional({ example: 'XAUUSD', default: 'XAUUSD', enum: SUPPORTED_SYMBOLS })
@@ -37,4 +38,15 @@ export class CreateBacktestDto {
   @IsOptional()
   @IsBoolean()
   withLlm?: boolean = false;
+
+  @ApiPropertyOptional({
+    example: 'V6',
+    default: 'V6',
+    enum: SUPPORTED_STRATEGIES,
+    description: 'Strategy version: V5.5b = legacy baseline, V6 = evolved, V6-alt = SMC/order-flow',
+  })
+  @IsOptional()
+  @IsString()
+  @IsIn(SUPPORTED_STRATEGIES)
+  strategyVersion?: 'V5.5b' | 'V6' | 'V6-alt' = 'V6';
 }

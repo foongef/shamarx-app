@@ -1,17 +1,19 @@
-import { BacktestCandle, SimulatedPosition, ClosedTrade } from './types';
+import { BacktestCandle, SimulatedPosition, ClosedTrade, RegimeTradeParams } from './types';
+
+// Default trail config (matches STRONG_TREND behavior from V5.5b)
+const DEFAULT_TRAIL_CONFIG: RegimeTradeParams = {
+  trendTpR: 2.0,
+  fvgTpR: 1.0,
+  beThresholdR: 1.0,
+  tpRemovalR: 2.0,
+  slClampMaxAtr: 3.0,
+};
 
 /**
- * Update trade management:
- * 1. Track peak favorable price (best bid for BUY, best ask for SELL)
- * 2. At 1R favorable: activate breakeven (move SL to entry)
- * 3. After breakeven: trail SL at (peak - 1R), locking in profit as price extends
+ * V6: Update trade management with regime-adaptive parameters.
  *
- * The trailing stop is mathematically >= the fixed breakeven stop:
- * - At peak = 1R: trail SL = entry (same as BE)
- * - At peak > 1R: trail SL > entry (captures partial profit)
- * - TP still triggers normally, so TP winners are unaffected
- *
- * Returns a new position object (does not mutate).
+ * Reads trail config from position.trailConfig (set at entry from RegimeTradeParams).
+ * Different regimes get different BE thresholds, TP removal thresholds, and trail tightness.
  */
 export function updatePositionManagement(
   position: SimulatedPosition,
@@ -24,10 +26,14 @@ export function updatePositionManagement(
   }
 
   const risk = Math.abs(position.entryPrice - position.originalSlPrice);
+  const config = position.trailConfig ?? DEFAULT_TRAIL_CONFIG;
   const isFVG = position.setupTags.includes('FVG_FILL');
-  // V5.4: FVG gets 0.8R BE threshold — structural levels give more confidence
-  // Others stay at 1.0R — 0.5R caused too many premature micro-profit BEs
-  const breakevenThreshold = isFVG ? risk * 0.8 : risk;
+
+  // V6: Regime-adaptive breakeven threshold
+  const breakevenThreshold = risk * config.beThresholdR;
+
+  // V6: Regime-adaptive TP removal threshold (0 = never remove)
+  const tpRemovalThreshold = config.tpRemovalR > 0 ? risk * config.tpRemovalR : Infinity;
 
   let updatedPeak = position.peakFavorablePrice;
   let newSlPrice = position.slPrice;
@@ -49,30 +55,15 @@ export function updatePositionManagement(
     if (newBreakeven) {
       const favorableMove = updatedPeak - position.entryPrice;
 
-      if (isFVG) {
-        // V5.4: FVG trail — wider to let structural fills run
-        if (favorableMove >= risk * 1.5 && newTpPrice !== null) {
-          newTpPrice = null; // Remove TP, let runner trail
-        }
-        const trailDistance = favorableMove >= risk * 3.0 ? risk * 0.5
-          : favorableMove >= risk * 2.0 ? risk * 0.6
-          : favorableMove >= risk * 1.5 ? risk * 0.7
-          : risk;
-        const trailSl = updatedPeak - trailDistance;
-        if (trailSl > newSlPrice) newSlPrice = trailSl;
-      } else {
-        // TREND_PULLBACK: 5-tier aggressive trail for strong trends
-        if (favorableMove >= risk * 2.0 && newTpPrice !== null) {
-          newTpPrice = null;
-        }
-        const trailDistance = favorableMove >= risk * 5.0 ? risk * 0.4
-          : favorableMove >= risk * 4.0 ? risk * 0.5
-          : favorableMove >= risk * 3.0 ? risk * 0.6
-          : favorableMove >= risk * 2.0 ? risk * 0.75
-          : risk;
-        const trailSl = updatedPeak - trailDistance;
-        if (trailSl > newSlPrice) newSlPrice = trailSl;
+      // V6: Remove TP at regime-adaptive threshold
+      if (favorableMove >= tpRemovalThreshold && newTpPrice !== null) {
+        newTpPrice = null;
       }
+
+      // V6: Trail tiers adapt to regime (tighter in volatile/ranging, wider in strong trend)
+      const trailDistance = computeTrailDistance(favorableMove, risk, config, isFVG);
+      const trailSl = updatedPeak - trailDistance;
+      if (trailSl > newSlPrice) newSlPrice = trailSl;
     }
   } else {
     const halfSpread = spread / 2;
@@ -89,30 +80,13 @@ export function updatePositionManagement(
     if (newBreakeven) {
       const favorableMove = position.entryPrice - updatedPeak;
 
-      if (isFVG) {
-        // V5.4: FVG trail — wider to let structural fills run
-        if (favorableMove >= risk * 1.5 && newTpPrice !== null) {
-          newTpPrice = null;
-        }
-        const trailDistance = favorableMove >= risk * 3.0 ? risk * 0.5
-          : favorableMove >= risk * 2.0 ? risk * 0.6
-          : favorableMove >= risk * 1.5 ? risk * 0.7
-          : risk;
-        const trailSl = updatedPeak + trailDistance;
-        if (trailSl < newSlPrice) newSlPrice = trailSl;
-      } else {
-        // TREND_PULLBACK: 5-tier aggressive trail for strong trends
-        if (favorableMove >= risk * 2.0 && newTpPrice !== null) {
-          newTpPrice = null;
-        }
-        const trailDistance = favorableMove >= risk * 5.0 ? risk * 0.4
-          : favorableMove >= risk * 4.0 ? risk * 0.5
-          : favorableMove >= risk * 3.0 ? risk * 0.6
-          : favorableMove >= risk * 2.0 ? risk * 0.75
-          : risk;
-        const trailSl = updatedPeak + trailDistance;
-        if (trailSl < newSlPrice) newSlPrice = trailSl;
+      if (favorableMove >= tpRemovalThreshold && newTpPrice !== null) {
+        newTpPrice = null;
       }
+
+      const trailDistance = computeTrailDistance(favorableMove, risk, config, isFVG);
+      const trailSl = updatedPeak + trailDistance;
+      if (trailSl < newSlPrice) newSlPrice = trailSl;
     }
   }
 
@@ -136,9 +110,39 @@ export function updatePositionManagement(
 }
 
 /**
+ * V6: Compute trail distance based on favorable move, risk, and regime config.
+ *
+ * Strong trends: wide trail (let winners run)
+ * Volatile/Ranging: tight trail (lock in profit fast)
+ */
+function computeTrailDistance(
+  favorableMove: number,
+  risk: number,
+  config: RegimeTradeParams,
+  isFVG: boolean,
+): number {
+  // Trail tightness scales with slClampMaxAtr — wider clamp = wider trail = more aggressive regime
+  // STRONG_TREND (3.0): loosest trail, VOLATILE (1.5): tightest trail
+  const tightnessFactor = Math.min(1.0, config.slClampMaxAtr / 3.0); // 0.5 to 1.0
+
+  if (isFVG) {
+    // FVG trail — structural, slightly tighter than trend
+    if (favorableMove >= risk * 3.0) return risk * (0.4 + 0.1 * tightnessFactor);
+    if (favorableMove >= risk * 2.0) return risk * (0.5 + 0.1 * tightnessFactor);
+    if (favorableMove >= risk * 1.5) return risk * (0.6 + 0.1 * tightnessFactor);
+    return risk;
+  } else {
+    // Trend trail — 5-tier with regime-adaptive tightness
+    if (favorableMove >= risk * 5.0) return risk * (0.3 + 0.1 * tightnessFactor);
+    if (favorableMove >= risk * 4.0) return risk * (0.4 + 0.1 * tightnessFactor);
+    if (favorableMove >= risk * 3.0) return risk * (0.5 + 0.1 * tightnessFactor);
+    if (favorableMove >= risk * 2.0) return risk * (0.6 + 0.15 * tightnessFactor);
+    return risk;
+  }
+}
+
+/**
  * Check if a candle triggers SL or TP on an open position.
- * Uses spread-adjusted bid/ask prices for exit checks.
- * If both SL and TP could hit on the same candle, SL always wins (conservative).
  */
 export function checkPositionExit(
   position: SimulatedPosition,
@@ -154,25 +158,21 @@ export function checkPositionExit(
   let tpHit = false;
 
   if (side === 'BUY') {
-    // BUY exits at bid: bid = price - halfSpread
     slHit = candle.low - halfSpread <= slPrice;
     tpHit = tpPrice !== null && candle.high - halfSpread >= tpPrice;
   } else {
-    // SELL exits at ask: ask = price + halfSpread
     slHit = candle.high + halfSpread >= slPrice;
     tpHit = tpPrice !== null && candle.low + halfSpread <= tpPrice;
   }
 
   if (!slHit && !tpHit) return null;
 
-  // V5.2: When breakeven active and both hit, prioritize TP (trade is already in profit)
-  // When NOT at breakeven and both hit, SL wins (conservative, unknown execution order)
   let exitReason: 'SL' | 'TP' | 'BREAKEVEN';
   if (slHit && tpHit) {
     if (position.breakevenActivated) {
-      exitReason = 'TP'; // We're in profit — TP is the intended target
+      exitReason = 'TP';
     } else {
-      exitReason = 'SL'; // Not at BE — conservatively assume SL first
+      exitReason = 'SL';
     }
   } else if (slHit) {
     exitReason = position.breakevenActivated ? 'BREAKEVEN' : 'SL';
@@ -182,6 +182,10 @@ export function checkPositionExit(
   const exitPrice = exitReason === 'TP' ? tpPrice! : slPrice;
 
   const pnl = calculatePnl(side, entryPrice, exitPrice, position.lotSize, commission, lotSizeUnits);
+
+  // V6: Calculate R-multiple
+  const riskPerUnit = Math.abs(entryPrice - position.originalSlPrice);
+  const rMultiple = riskPerUnit > 0 ? (pnl + commission) / (riskPerUnit * position.lotSize * lotSizeUnits) : 0;
 
   return {
     side: position.side,
@@ -199,6 +203,11 @@ export function checkPositionExit(
     h1Bias: position.h1Bias,
     rsiAtEntry: position.rsiAtEntry,
     atrAtEntry: position.atrAtEntry,
+    rMultiple: Math.round(rMultiple * 100) / 100,
+    regimeAtEntry: position.regimeAtEntry,
+    engineType: position.setupTags.includes('RANGE_ENGINE') ? 'RANGE_ENGINE'
+      : position.setupTags.includes('FVG_FILL') ? 'FVG_FILL'
+      : 'TREND_PULLBACK',
   };
 }
 
@@ -213,6 +222,9 @@ export function forceClosePosition(
   lotSizeUnits: number,
 ): ClosedTrade {
   const pnl = calculatePnl(position.side, position.entryPrice, closePrice, position.lotSize, commission, lotSizeUnits);
+
+  const riskPerUnit = Math.abs(position.entryPrice - position.originalSlPrice);
+  const rMultiple = riskPerUnit > 0 ? (pnl + commission) / (riskPerUnit * position.lotSize * lotSizeUnits) : 0;
 
   return {
     side: position.side,
@@ -230,6 +242,11 @@ export function forceClosePosition(
     h1Bias: position.h1Bias,
     rsiAtEntry: position.rsiAtEntry,
     atrAtEntry: position.atrAtEntry,
+    rMultiple: Math.round(rMultiple * 100) / 100,
+    regimeAtEntry: position.regimeAtEntry,
+    engineType: position.setupTags.includes('RANGE_ENGINE') ? 'RANGE_ENGINE'
+      : position.setupTags.includes('FVG_FILL') ? 'FVG_FILL'
+      : 'TREND_PULLBACK',
   };
 }
 

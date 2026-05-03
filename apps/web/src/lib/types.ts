@@ -1,3 +1,5 @@
+export type StrategyVersion = 'V5.5b' | 'V6' | 'V6-alt';
+
 export interface BacktestMetrics {
   totalTrades: number;
   winCount: number;
@@ -36,6 +38,7 @@ export interface BacktestRun {
   errorMessage: string | null;
   createdAt: string;
   completedAt: string | null;
+  strategyVersion?: StrategyVersion;
 }
 
 export interface BacktestTrade {
@@ -72,6 +75,7 @@ export interface CreateBacktestInput {
   initialBalance: number;
   riskPercent: number;
   withLlm?: boolean;
+  strategyVersion?: StrategyVersion;
 }
 
 export interface CreateBacktestResponse {
