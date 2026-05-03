@@ -78,4 +78,21 @@ export interface SmcPairConfig {
    *  bias, ADX not over-extended (<50), and price not too far from EMA50.
    *  Pair-agnostic — replaces hardcoded per-pair disable lists. Default: true. */
   autoModeFilter?: boolean;
+
+  /** When true, sweep detection only fires at HTF anchor liquidity levels —
+   *  Previous Day High/Low, Asian Range High/Low, Weekly High/Low — instead
+   *  of any recent H1 swing. Targets pairs whose retail liquidity clusters
+   *  at session anchors rather than arbitrary swings (forex pairs).
+   *  Default: false (use legacy generic-swing detection). */
+  useAnchorSweeps?: boolean;
+
+  /** When > 0, anchor sweeps require the FOLLOWING H1 bar to displace
+   *  ≥ this fraction of ATR in the trade direction. Filters chop where the
+   *  sweep wick happens but no real momentum follows. 0 = disabled.
+   *  Only applies when useAnchorSweeps is true. */
+  anchorDisplacementAtr?: number;
+
+  /** When > 0, skip new entries within ± this many minutes of HIGH-impact
+   *  news events (NFP, FOMC, CPI, ECB). 0 = disabled. */
+  newsBlackoutMinutes?: number;
 }

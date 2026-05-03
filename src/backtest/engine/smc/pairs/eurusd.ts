@@ -44,4 +44,15 @@ export const EURUSD_SMC_CONFIG: SmcPairConfig = {
 
   // Auto-detect when CONTINUATION is safe vs unsafe based on live D1 health.
   autoModeFilter: true,
+
+  // Step 4.2 — only fire sweeps at PDH/PDL anchor levels (forex retail
+  // liquidity clusters at session-derived levels, not random swings).
+  useAnchorSweeps: true,
+
+  // Step 4.4 — require post-sweep H1 bar to displace ≥0.5×ATR in the trade
+  // direction. Filters obvious chop without rejecting valid setups.
+  anchorDisplacementAtr: 0.5,
+
+  // Step 4.5 — sit out 15min windows around NFP/FOMC/CPI/ECB.
+  newsBlackoutMinutes: 15,
 };

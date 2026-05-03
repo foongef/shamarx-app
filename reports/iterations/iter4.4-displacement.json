@@ -1,0 +1,102 @@
+{
+  "label": "iter4.4-displacement",
+  "ranAt": "2026-05-03T14:01:05.234Z",
+  "cells": [
+    {
+      "pair": "XAUUSD",
+      "period": "2023",
+      "trades": 164,
+      "winRate": 58.54,
+      "returnPct": 36.09,
+      "pf": 1.64,
+      "sharpe": 2.02,
+      "maxDD": 10.95,
+      "totalPnl": 360.92,
+      "totalCommission": 44.94
+    },
+    {
+      "pair": "XAUUSD",
+      "period": "2024",
+      "trades": 190,
+      "winRate": 61.05,
+      "returnPct": 30.87,
+      "pf": 1.59,
+      "sharpe": 1.95,
+      "maxDD": 5.39,
+      "totalPnl": 308.73,
+      "totalCommission": 36.54
+    },
+    {
+      "pair": "XAUUSD",
+      "period": "2025",
+      "trades": 188,
+      "winRate": 66.49,
+      "returnPct": 69.46,
+      "pf": 2.3,
+      "sharpe": 4.01,
+      "maxDD": 4.74,
+      "totalPnl": 694.64,
+      "totalCommission": 42.49
+    },
+    {
+      "pair": "XAUUSD",
+      "period": "2026-YTD",
+      "trades": 50,
+      "winRate": 64,
+      "returnPct": 75.93,
+      "pf": 5.48,
+      "sharpe": 4,
+      "maxDD": 4.86,
+      "totalPnl": 759.25,
+      "totalCommission": 16.45
+    },
+    {
+      "pair": "EURUSD",
+      "period": "2023",
+      "trades": 54,
+      "winRate": 50,
+      "returnPct": -4.39,
+      "pf": 0.72,
+      "sharpe": -2.11,
+      "maxDD": 11.28,
+      "totalPnl": -43.92,
+      "totalCommission": 15.96
+    },
+    {
+      "pair": "EURUSD",
+      "period": "2024",
+      "trades": 54,
+      "winRate": 51.85,
+      "returnPct": -3.04,
+      "pf": 0.85,
+      "sharpe": -1.06,
+      "maxDD": 7.14,
+      "totalPnl": -30.44,
+      "totalCommission": 17.92
+    },
+    {
+      "pair": "EURUSD",
+      "period": "2025",
+      "trades": 84,
+      "winRate": 53.57,
+      "returnPct": -3.92,
+      "pf": 0.85,
+      "sharpe": -1.05,
+      "maxDD": 10.27,
+      "totalPnl": -39.18,
+      "totalCommission": 22.82
+    },
+    {
+      "pair": "EURUSD",
+      "period": "2026-YTD",
+      "trades": 2,
+      "winRate": 100,
+      "returnPct": 3.23,
+      "pf": null,
+      "sharpe": 16.15,
+      "maxDD": 0,
+      "totalPnl": 32.31,
+      "totalCommission": 0.28
+    }
+  ]
+}

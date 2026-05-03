@@ -147,6 +147,13 @@ export function runSmcBacktest(
 
     // 4. Trade gates
     if (i <= cooldownUntil) continue;
+    // News blackout — opt-in per pair. EURUSD as a macro pair benefits from
+    // sitting out NFP/FOMC/CPI/ECB windows.
+    if ((cfg.newsBlackoutMinutes ?? 0) > 0) {
+      // Lazy require to avoid circular imports
+      const { isInBlackout } = require('../news-calendar');
+      if (isInBlackout(candle.openTime, cfg.newsBlackoutMinutes)) continue;
+    }
     if (!riskManager.canTrade(currentDate, openPositions.length)) continue;
     if (!inKillzone(candle.openTime, cfg.killzones)) continue;
 
