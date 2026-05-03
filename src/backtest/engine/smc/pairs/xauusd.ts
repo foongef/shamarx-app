@@ -22,7 +22,13 @@ export const XAUUSD_SMC_CONFIG: SmcPairConfig = {
 
   // Gold trends often (~40-50% of days have D1 ADX ≥ 22)
   trendingD1Adx: 22,
-  d1AdxFloor: 10,
+  // Iter 6/7 — raise the regime floor from 10 → 18. SMC sweeps need a real HTF
+  // trend; below ADX 18 the tape is structurally chop and sweeps fail
+  // systematically. General principle (not year-specific): no edge without
+  // trend. Tested d1AdxFloor=14 in iter8 to get more trades — but 2023 went
+  // from +11.7% → -12.8% (PF 0.54). The trade count comes from chop, not
+  // edge. Keep at 18.
+  d1AdxFloor: 18,
 
   recentSwingLookbackH1: 24,
   slCooldownBars: 4,
@@ -37,8 +43,17 @@ export const XAUUSD_SMC_CONFIG: SmcPairConfig = {
   tp1R: 0.8,
   tp2R: 4.0,
 
+  // Iter 7 — scaling cap. With d1AdxFloor=18 the regime filter handles chop;
+  // this filter handles the orthogonal problem: wide-SL setups have lower
+  // win rate independent of trend. At small accounts the lot-floor naturally
+  // selects against them; at $10k+ the floor never binds so they dilute the
+  // edge. 2.0 (vs iter5's 1.5) is loose enough to keep 2023 $1k profitable
+  // while still cutting the worst-quality $10k drag.
+  maxSlAtrM15: 2.0,
+
   // Auto-detect when CONTINUATION is structurally safe (ADX rising, EMA stack
   // aligned, not over-extended). Gold trends usually pass — but during
   // exhausted moves or news spikes, the filter blocks bad CONTINUATION setups.
   autoModeFilter: true,
+
 };

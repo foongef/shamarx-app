@@ -1,0 +1,54 @@
+[
+  {
+    "period": "2023",
+    "totalTrades": 226,
+    "xauTrades": 88,
+    "eurTrades": 138,
+    "finalBalance": 2395.56,
+    "returnPct": 19.8,
+    "maxDD": 13.7,
+    "totalPnl": 395.56,
+    "winRate": 58.4,
+    "pf": 1.31,
+    "monthlyTrades": 19.4
+  },
+  {
+    "period": "2024",
+    "totalTrades": 236,
+    "xauTrades": 102,
+    "eurTrades": 134,
+    "finalBalance": 2616.77,
+    "returnPct": 30.8,
+    "maxDD": 8.3,
+    "totalPnl": 616.77,
+    "winRate": 62.3,
+    "pf": 1.4,
+    "monthlyTrades": 19.4
+  },
+  {
+    "period": "2025",
+    "totalTrades": 214,
+    "xauTrades": 64,
+    "eurTrades": 150,
+    "finalBalance": 3151.3,
+    "returnPct": 57.6,
+    "maxDD": 11.3,
+    "totalPnl": 1151.3,
+    "winRate": 59.3,
+    "pf": 1.71,
+    "monthlyTrades": 17.6
+  },
+  {
+    "period": "2026-YTD",
+    "totalTrades": 52,
+    "xauTrades": 30,
+    "eurTrades": 22,
+    "finalBalance": 2148.2,
+    "returnPct": 7.4,
+    "maxDD": 4,
+    "totalPnl": 148.2,
+    "winRate": 59.6,
+    "pf": 1.47,
+    "monthlyTrades": 13.1
+  }
+]

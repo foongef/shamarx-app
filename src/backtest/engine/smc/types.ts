@@ -95,4 +95,10 @@ export interface SmcPairConfig {
   /** When > 0, skip new entries within ± this many minutes of HIGH-impact
    *  news events (NFP, FOMC, CPI, ECB). 0 = disabled. */
   newsBlackoutMinutes?: number;
+
+  /** When > 0, reject setups where SL distance exceeds this many M15 ATRs.
+   *  Mimics the lot-floor selection effect that helps small accounts —
+   *  wide-SL setups have systematically lower win rate and dilute edge at
+   *  large account sizes (where the lot floor never binds). 0 = disabled. */
+  maxSlAtrM15?: number;
 }

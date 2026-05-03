@@ -190,6 +190,20 @@ export function runSmcBacktest(
         continue;
       }
 
+      // Iter 5: max-SL filter (scaling fix).
+      // Reject setups where SL distance exceeds the configured M15-ATR cap.
+      // Wide-SL setups statistically have lower win rate; without this filter,
+      // large accounts (where the lot floor doesn't bind) take them all and
+      // dilute edge into negative territory. Mimics the implicit selection
+      // small accounts get from the honest-risk cap.
+      if ((cfg.maxSlAtrM15 ?? 0) > 0 && !isNaN(m15Atr) && m15Atr > 0) {
+        const slAtrRatio = slPoints / m15Atr;
+        if (slAtrRatio > cfg.maxSlAtrM15!) {
+          pending.splice(s, 1);
+          continue;
+        }
+      }
+
       // Sizing — total lot from risk manager (already honest-risk-capped).
       // Required minimum depends on whether the pair uses the TP1+runner
       // ladder (needs 0.02 — 0.01 for each leg) or single-position (needs 0.01).
