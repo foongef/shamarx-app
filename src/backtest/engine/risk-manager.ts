@@ -107,6 +107,7 @@ export class RiskManager {
     qualityScore?: number,
     regime?: DetailedRegime,
     engineConfidence?: number,
+    currentPrice?: number,
   ): number {
     let effectiveRisk = this.config.riskPercent;
 
@@ -139,7 +140,13 @@ export class RiskManager {
     effectiveRisk = Math.max(0.5, Math.min(4.0, effectiveRisk));
 
     const riskAmount = this.state.balance * (effectiveRisk / 100);
-    const idealLot = riskAmount / (slPoints * this.lotSizeUnits);
+    // For JPY-quote pairs the raw (slPoints × lotSizeUnits) is denominated in
+    // JPY — divide by current USD/JPY rate to get USD risk per lot.
+    const isJpyPair = this.config.symbol.endsWith('JPY');
+    const usdPerLot = isJpyPair && currentPrice
+      ? (slPoints * this.lotSizeUnits) / currentPrice
+      : slPoints * this.lotSizeUnits;
+    const idealLot = riskAmount / usdPerLot;
 
     // Lot floor + cap: minimum tradeable lot is 0.01, max 1.0.
     const lotSize = Math.round(Math.max(0.01, Math.min(1.0, idealLot)) * 100) / 100;
@@ -147,7 +154,7 @@ export class RiskManager {
     // V6 (round 4): honest risk cap — actual risk must not exceed effective
     // risk by more than 10%. Without this, a $100 account forced to trade
     // 0.01 lot on a 5-point SL ends up risking 5% instead of the intended 1.5%.
-    const actualRiskAmount = lotSize * slPoints * this.lotSizeUnits;
+    const actualRiskAmount = lotSize * usdPerLot;
     const actualRiskPct = (actualRiskAmount / this.state.balance) * 100;
     if (actualRiskPct > effectiveRisk * 1.10) {
       return 0; // skip the trade — lot floor would over-risk this account

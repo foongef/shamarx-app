@@ -1,37 +1,43 @@
 /**
- * SMC config for GBPUSD — SCAFFOLD, not yet tuned.
+ * SMC config for GBPUSD — v1, EURUSD-style anchor-sweep template.
  *
- * GBPUSD is the closest forex analog to gold: high volatility, news-driven
- * swings, frequent liquidity sweeps around the London open. Should transfer
- * well from XAUUSD with mild adjustments.
- *
- * TODO: backtest 2023-2026, sweep these parameters, document results.
+ * GBPUSD is forex, not gold-like — it respects PDH/PDL/Asian-range anchors
+ * cleanly (cable's classic stop-hunt behavior). Cloning EURUSD's iter4
+ * config (anchor sweeps + displacement + news blackout + auto-mode filter)
+ * is the right starting point. Tuned values reflect cable's slightly higher
+ * volatility vs EURUSD: 8-12 pip M15 ATR (vs EUR's 4-8) → marginally wider
+ * buffers and shorter expiry to avoid stale setups around London volatility
+ * spikes.
  */
 import { SmcPairConfig } from '../types';
 
 export const GBPUSD_SMC_CONFIG: SmcPairConfig = {
   symbol: 'GBPUSD',
 
-  // Volatile like gold, but cleaner sweeps — slightly tighter buffer works
-  sweepBufferAtr: 0.12,
-  slBufferAtrM15: 0.22,
+  sweepBufferAtr: 0.25,
+  slBufferAtrM15: 0.30,
 
-  setupExpiryH1Bars: 8,
-  atrSpikeLimit: 2.5,
+  setupExpiryH1Bars: 10,
+  atrSpikeLimit: 2.2,
 
-  trendingD1Adx: 21,
+  trendingD1Adx: 22,
   d1AdxFloor: 10,
 
-  recentSwingLookbackH1: 24,
-  slCooldownBars: 4,
+  recentSwingLookbackH1: 28,
+  slCooldownBars: 6,
 
-  // London open (6-10 UTC), London-NY overlap (12-17 UTC, includes London fix)
+  // London (7-11 UTC) + London-NY overlap (13-17 UTC).
   killzones: [
-    [6, 10],
-    [12, 17],
+    [7, 11],
+    [13, 17],
   ],
 
   tp1PartialFraction: 0.30,
   tp1R: 0.8,
   tp2R: 3.5,
+
+  autoModeFilter: true,
+  useAnchorSweeps: true,
+  anchorDisplacementAtr: 0.5,
+  newsBlackoutMinutes: 15,
 };

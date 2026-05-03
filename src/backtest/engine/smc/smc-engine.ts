@@ -105,7 +105,7 @@ export function runSmcBacktest(
     for (let j = openPositions.length - 1; j >= 0; j--) {
       const pos = openPositions[j];
       const commission = pos.lotSize * commissionPerLot;
-      const result = checkPositionExit(pos, candle, spread, commission, lotSizeUnits);
+      const result = checkPositionExit(pos, candle, spread, commission, lotSizeUnits, config.symbol);
       if (result) {
         riskManager.recordTrade(result.pnl, candle.openTime, result.exitReason);
         tracker.recordTrade(result);
@@ -209,7 +209,7 @@ export function runSmcBacktest(
       // ladder (needs 0.02 — 0.01 for each leg) or single-position (needs 0.01).
       // Note: quality-tiered risk (iter3) was tested and rejected — no
       // reliable improvement, so stays flat at neutral quality=60.
-      const totalLot = riskManager.calculateLotSize(slPoints, 60, 'WEAK_TREND', 50);
+      const totalLot = riskManager.calculateLotSize(slPoints, 60, 'WEAK_TREND', 50, entryPrice);
       const usesLadder = cfg.tp1PartialFraction > 0;
       if (usesLadder) {
         if (totalLot < 0.02) continue;  // need both legs at 0.01 minimum
@@ -283,7 +283,7 @@ export function runSmcBacktest(
     const lastCandle = m15Candles[m15Candles.length - 1];
     for (const pos of openPositions) {
       const commission = pos.lotSize * commissionPerLot;
-      const result = forceClosePosition(pos, lastCandle.close, lastCandle.openTime, commission, lotSizeUnits);
+      const result = forceClosePosition(pos, lastCandle.close, lastCandle.openTime, commission, lotSizeUnits, config.symbol);
       riskManager.recordTrade(result.pnl, lastCandle.openTime, result.exitReason);
       tracker.recordTrade(result);
       closed.push(result);

@@ -151,7 +151,7 @@ export class BacktestEngine {
           const pos = openPositions[j];
           if (i - pos.entryIndex >= V6_MAX_BARS && !pos.breakevenActivated) {
             const commission = pos.lotSize * commissionPerLot;
-            const result = forceClosePosition(pos, candle.close, candle.openTime, commission, lotSizeUnits);
+            const result = forceClosePosition(pos, candle.close, candle.openTime, commission, lotSizeUnits, config.symbol);
             result.setupTags = [...result.setupTags, 'MAX_BARS'];
             riskManager.recordTrade(result.pnl, candle.openTime, result.exitReason);
             performanceTracker.recordTrade(result);
@@ -166,7 +166,7 @@ export class BacktestEngine {
       for (let j = openPositions.length - 1; j >= 0; j--) {
         const pos = openPositions[j];
         const commission = pos.lotSize * commissionPerLot;
-        const result = checkPositionExit(pos, candle, spread, commission, lotSizeUnits);
+        const result = checkPositionExit(pos, candle, spread, commission, lotSizeUnits, config.symbol);
         if (result) {
           riskManager.recordTrade(result.pnl, candle.openTime, result.exitReason);
           performanceTracker.recordTrade(result);
@@ -322,6 +322,7 @@ export class BacktestEngine {
         signal.qualityScore,
         regimeState?.regime,
         engineConfidence,
+        signal.entryPrice,
       );
 
       // V6 round 4: lot=0 means RiskManager rejected the trade (over-risk).
@@ -423,6 +424,7 @@ export class BacktestEngine {
           lastCandle.openTime,
           commission,
           lotSizeUnits,
+          config.symbol,
         );
         riskManager.recordTrade(result.pnl, lastCandle.openTime, result.exitReason);
         performanceTracker.recordTrade(result);

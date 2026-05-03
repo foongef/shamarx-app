@@ -150,6 +150,7 @@ export function checkPositionExit(
   spread: number,
   commission: number,
   lotSizeUnits: number,
+  symbol?: string,
 ): ClosedTrade | null {
   const { side, entryPrice, slPrice, tpPrice } = position;
   const halfSpread = spread / 2;
@@ -181,11 +182,16 @@ export function checkPositionExit(
   }
   const exitPrice = exitReason === 'TP' ? tpPrice! : slPrice;
 
-  const pnl = calculatePnl(side, entryPrice, exitPrice, position.lotSize, commission, lotSizeUnits);
+  const pnl = calculatePnl(side, entryPrice, exitPrice, position.lotSize, commission, lotSizeUnits, symbol);
 
-  // V6: Calculate R-multiple
+  // V6: Calculate R-multiple — riskPerUnit × lotSizeUnits is in quote currency;
+  // for JPY pairs convert to USD via the entry price.
   const riskPerUnit = Math.abs(entryPrice - position.originalSlPrice);
-  const rMultiple = riskPerUnit > 0 ? (pnl + commission) / (riskPerUnit * position.lotSize * lotSizeUnits) : 0;
+  const isJpyPair = symbol ? symbol.endsWith('JPY') : false;
+  const usdRiskPerLot = isJpyPair && entryPrice > 0
+    ? (riskPerUnit * lotSizeUnits) / entryPrice
+    : riskPerUnit * lotSizeUnits;
+  const rMultiple = usdRiskPerLot > 0 ? (pnl + commission) / (usdRiskPerLot * position.lotSize) : 0;
 
   return {
     side: position.side,
@@ -220,11 +226,16 @@ export function forceClosePosition(
   closeTime: string,
   commission: number,
   lotSizeUnits: number,
+  symbol?: string,
 ): ClosedTrade {
-  const pnl = calculatePnl(position.side, position.entryPrice, closePrice, position.lotSize, commission, lotSizeUnits);
+  const pnl = calculatePnl(position.side, position.entryPrice, closePrice, position.lotSize, commission, lotSizeUnits, symbol);
 
   const riskPerUnit = Math.abs(position.entryPrice - position.originalSlPrice);
-  const rMultiple = riskPerUnit > 0 ? (pnl + commission) / (riskPerUnit * position.lotSize * lotSizeUnits) : 0;
+  const isJpyPair = symbol ? symbol.endsWith('JPY') : false;
+  const usdRiskPerLot = isJpyPair && position.entryPrice > 0
+    ? (riskPerUnit * lotSizeUnits) / position.entryPrice
+    : riskPerUnit * lotSizeUnits;
+  const rMultiple = usdRiskPerLot > 0 ? (pnl + commission) / (usdRiskPerLot * position.lotSize) : 0;
 
   return {
     side: position.side,
@@ -257,10 +268,16 @@ function calculatePnl(
   lotSize: number,
   commission: number,
   lotSizeUnits: number,
+  symbol?: string,
 ): number {
   const direction = side === 'BUY' ? 1 : -1;
   const priceDiff = (exitPrice - entryPrice) * direction;
-  const rawPnl = priceDiff * lotSize * lotSizeUnits;
+  let rawPnl = priceDiff * lotSize * lotSizeUnits;
+  // For JPY-quote pairs (USDJPY, EURJPY, GBPJPY, etc.) the raw P&L is denominated
+  // in JPY, not USD. Divide by the quote (USD/JPY rate ≈ exitPrice) to convert.
+  if (symbol && symbol.endsWith('JPY')) {
+    rawPnl /= exitPrice;
+  }
   const pnl = rawPnl - commission;
   return Math.round(pnl * 100) / 100;
 }

@@ -23,7 +23,7 @@ const PERIODS = [
   { label: '2025', start: '2025-01-01', end: '2025-12-31' },
   { label: '2026-YTD', start: '2026-01-01', end: '2026-04-30' },
 ];
-const PAIRS = ['XAUUSD', 'EURUSD'];
+const PAIRS = ['XAUUSD', 'EURUSD', 'GBPUSD', 'USDJPY'];
 const ACCOUNT = 2000;
 const RISK = 1.5;
 
@@ -48,8 +48,7 @@ function htfStart(start: string, days = 90): string {
 interface PortfolioStats {
   period: string;
   totalTrades: number;
-  xauTrades: number;
-  eurTrades: number;
+  perPairTrades: Record<string, number>;
   finalBalance: number;
   returnPct: number;
   maxDD: number;
@@ -59,11 +58,14 @@ interface PortfolioStats {
   monthlyTrades: number;
 }
 
-function simulateShared(xauTrades: ClosedTrade[], eurTrades: ClosedTrade[], months: number): PortfolioStats {
-  const all = [
-    ...xauTrades.map((t) => ({ ...t, pair: 'XAUUSD' })),
-    ...eurTrades.map((t) => ({ ...t, pair: 'EURUSD' })),
-  ].sort((a, b) => Date.parse(a.exitTime) - Date.parse(b.exitTime));
+function simulateShared(tradesByPair: Record<string, ClosedTrade[]>, months: number): PortfolioStats {
+  const all: (ClosedTrade & { pair: string })[] = [];
+  const perPairTrades: Record<string, number> = {};
+  for (const [pair, trades] of Object.entries(tradesByPair)) {
+    perPairTrades[pair] = trades.length;
+    for (const t of trades) all.push({ ...t, pair });
+  }
+  all.sort((a, b) => Date.parse(a.exitTime) - Date.parse(b.exitTime));
 
   let balance = ACCOUNT;
   let peak = ACCOUNT;
@@ -89,8 +91,7 @@ function simulateShared(xauTrades: ClosedTrade[], eurTrades: ClosedTrade[], mont
   return {
     period: '',
     totalTrades: all.length,
-    xauTrades: xauTrades.length,
-    eurTrades: eurTrades.length,
+    perPairTrades,
     finalBalance: Math.round(balance * 100) / 100,
     returnPct: Math.round((balance / ACCOUNT - 1) * 1000) / 10,
     maxDD: Math.round(maxDD * 1000) / 10,
@@ -129,13 +130,14 @@ async function main() {
       console.log(`  ${pair} solo: ${r.trades.length} trades, ${r.metrics.returnPercent}% return`);
     }
 
-    const stats = simulateShared(trades['XAUUSD'], trades['EURUSD'], months);
+    const stats = simulateShared(trades, months);
     stats.period = period.label;
     out.push(stats);
 
+    const perPairStr = Object.entries(stats.perPairTrades).map(([k, v]) => `${k.slice(0,3)}=${v}`).join(' ');
     console.log(
       `  COMBINED $${ACCOUNT}: ${stats.totalTrades} trades (${stats.monthlyTrades}/mo) ` +
-      `[XAU=${stats.xauTrades} EUR=${stats.eurTrades}]  ` +
+      `[${perPairStr}]  ` +
       `ret=${stats.returnPct >= 0 ? '+' : ''}${stats.returnPct}%  ` +
       `PF=${stats.pf}  win=${stats.winRate}%  DD=${stats.maxDD}%  bal=$${stats.finalBalance}`
     );

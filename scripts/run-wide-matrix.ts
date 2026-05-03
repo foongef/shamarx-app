@@ -16,7 +16,7 @@ const PERIODS = [
   { label: '2025', start: '2025-01-01', end: '2025-12-31' },
   { label: '2026-YTD', start: '2026-01-01', end: '2026-04-30' },
 ];
-const PAIRS = ['XAUUSD', 'EURUSD'];
+const PAIRS = ['XAUUSD', 'EURUSD', 'GBPUSD', 'USDJPY'];
 const ACCOUNTS = [100, 500, 1000, 2000, 10000];
 const RISK = 1.5;
 
