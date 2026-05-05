@@ -7,8 +7,8 @@ export default function NewBacktestPage() {
         <span className="label-eyebrow">
           <span className="text-signal">◆</span>&nbsp;Submit Run
         </span>
-        <h1 className="display-serif text-[40px] leading-[0.95] tracking-tight">
-          Compose a <span className="italic">new</span> backtest.
+        <h1 className="display-serif text-[32px] leading-[0.95] tracking-[0.04em] sm:text-[40px]">
+          Compose a <span className="text-signal">new</span> backtest.
         </h1>
         <p className="max-w-2xl text-[13px] text-muted-foreground">
           Select strategy, instrument and account profile. The engine will

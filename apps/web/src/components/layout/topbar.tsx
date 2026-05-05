@@ -1,10 +1,11 @@
 'use client';
 
 import Link from 'next/link';
-import { LogOut, Menu, CandlestickChart } from 'lucide-react';
+import { LogOut, Menu } from 'lucide-react';
 import { ThemeToggle } from './theme-toggle';
 import { TimeStamp } from './timestamp';
 import { useAuth } from '@/contexts/AuthContext';
+import { ShamarxLogo } from '@/components/brand/shamarx-logo';
 
 export function Topbar({ onOpenMobile }: { onOpenMobile: () => void }) {
   const { user, logout } = useAuth();
@@ -19,17 +20,14 @@ export function Topbar({ onOpenMobile }: { onOpenMobile: () => void }) {
         >
           <Menu className="h-4 w-4" strokeWidth={1.75} />
         </button>
-        <Link href="/" className="flex items-center gap-2 lg:hidden">
-          <CandlestickChart className="h-4 w-4 text-signal" strokeWidth={1.75} />
-          <span className="display-serif text-[18px] leading-none tracking-tight">
-            Tape
-          </span>
+        <Link href="/dashboard" className="flex items-center gap-2 lg:hidden">
+          <ShamarxLogo variant="horizontal" height={24} priority />
         </Link>
-        <div className="hidden items-center gap-2 lg:flex">
-          <span className="label-eyebrow">Terminal</span>
+        <div className="hidden items-center gap-2.5 lg:flex">
+          <span className="shamarx-chip">Terminal</span>
           <span className="text-subtle">/</span>
           <span className="font-mono text-[12px] tracking-wide text-muted-foreground">
-            backtest.workspace
+            quant.workspace
           </span>
         </div>
       </div>

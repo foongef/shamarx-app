@@ -3,9 +3,9 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { CandlestickChart } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { ApiError } from '@/lib/api-client';
+import { ShamarxLogo } from '@/components/brand/shamarx-logo';
 
 export default function LoginPage() {
   const { user, login } = useAuth();
@@ -16,7 +16,7 @@ export default function LoginPage() {
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    if (user) router.replace('/');
+    if (user) router.replace('/dashboard');
   }, [user, router]);
 
   async function onSubmit(e: React.FormEvent) {
@@ -38,18 +38,16 @@ export default function LoginPage() {
 
   return (
     <div className="relative flex min-h-screen items-center justify-center px-6">
-      {/* Atmospheric backdrop */}
-      <div className="absolute inset-0 grid-pattern opacity-25" />
-      <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-signal/30 to-transparent" />
+      {/* Atmospheric backdrop — gold bloom + grid pattern */}
+      <div className="absolute inset-0 grid-pattern opacity-15" />
+      <div className="pointer-events-none absolute left-1/2 top-1/3 -z-0 h-[480px] w-[480px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-signal/[0.07] blur-[120px]" />
+      <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-signal/40 to-transparent" />
 
       <div className="relative w-full max-w-[400px]">
-        {/* Brand mark */}
-        <div className="mb-10 flex flex-col items-center gap-2">
-          <CandlestickChart className="h-5 w-5 text-signal" strokeWidth={1.75} />
-          <span className="display-serif text-[42px] leading-none tracking-tight">
-            Tape
-          </span>
-          <span className="font-mono text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
+        {/* Brand mark — Shamarx vertical lockup */}
+        <div className="mb-10 flex flex-col items-center gap-1">
+          <ShamarxLogo variant="vertical" height={140} priority />
+          <span className="mt-2 font-mono text-[10px] uppercase tracking-[0.32em] text-muted-foreground">
             v0.6 · invite-only terminal
           </span>
         </div>
@@ -101,9 +99,12 @@ export default function LoginPage() {
           <button
             type="submit"
             disabled={submitting}
-            className="group relative w-full overflow-hidden rounded-md bg-signal py-2.5 font-mono text-[12px] font-medium uppercase tracking-[0.18em] text-signal-foreground transition disabled:opacity-60"
+            className="group relative w-full overflow-hidden rounded-md bg-signal py-2.5 font-mono text-[12px] font-semibold uppercase tracking-[0.22em] text-signal-foreground transition hover:brightness-110 disabled:opacity-60"
           >
-            {submitting ? 'Authorising…' : 'Sign in →'}
+            <span className="relative z-10">
+              {submitting ? 'Authorising…' : 'Enter Terminal →'}
+            </span>
+            <span className="absolute inset-0 bg-gradient-to-r from-signal via-signal to-signal/85 opacity-0 transition-opacity group-hover:opacity-100" />
           </button>
 
           <div className="pt-1 text-center">

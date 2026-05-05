@@ -7,6 +7,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 
 const PUBLIC_ROUTES = ['/login', '/forgot-password', '/reset-password'];
+const MARKETING_ROUTES = ['/']; // landing page is fully public + has its own chrome
 
 function isPublicRoute(pathname: string): boolean {
   return PUBLIC_ROUTES.some(
@@ -14,18 +15,23 @@ function isPublicRoute(pathname: string): boolean {
   );
 }
 
+function isMarketingRoute(pathname: string): boolean {
+  return MARKETING_ROUTES.includes(pathname);
+}
+
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const { user, isLoading } = useAuth();
   const isPublic = isPublicRoute(pathname);
+  const isMarketing = isMarketingRoute(pathname);
   const [mobileOpen, setMobileOpen] = useState(false);
 
   useEffect(() => {
-    if (!isLoading && !user && !isPublic) {
+    if (!isLoading && !user && !isPublic && !isMarketing) {
       router.replace('/login');
     }
-  }, [isLoading, user, isPublic, router]);
+  }, [isLoading, user, isPublic, isMarketing, router]);
 
   // Close drawer on route change
   useEffect(() => {
@@ -41,6 +47,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       document.body.style.overflow = original;
     };
   }, [mobileOpen]);
+
+  // Marketing landing — page handles its own chrome (navbar + footer)
+  if (isMarketing) {
+    return (
+      <div className="min-h-screen overflow-x-hidden bg-background text-foreground">
+        {children}
+      </div>
+    );
+  }
 
   if (isPublic) {
     return (

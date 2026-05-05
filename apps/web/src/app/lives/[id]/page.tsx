@@ -117,7 +117,7 @@ export default function LiveDetailPage({ params }: { params: Promise<{ id: strin
           <span className="font-mono uppercase tracking-[0.18em]">All sessions</span>
         </Link>
         <div className="rounded-md border border-border bg-card p-12 text-center">
-          <div className="display-serif text-[40px] italic text-muted-foreground">—</div>
+          <div className="font-mono text-[40px] text-muted-foreground">—</div>
           <p className="mt-3 text-sm text-muted-foreground">Session not found</p>
         </div>
       </div>
@@ -155,8 +155,8 @@ export default function LiveDetailPage({ params }: { params: Promise<{ id: strin
         </div>
 
         {/* Headline */}
-        <h1 className="mt-4 display-serif text-[36px] leading-[0.95] tracking-tight sm:text-[48px] lg:text-[60px]">
-          <span className={cn('italic', isRunning ? 'text-signal' : 'text-muted-foreground')}>
+        <h1 className="mt-4 display-serif text-[32px] leading-[0.95] tracking-[0.04em] sm:text-[40px] lg:text-[52px]">
+          <span className={cn(isRunning ? 'text-signal' : 'text-muted-foreground')}>
             {isRunning ? 'Live' : s.status === 'CRASHED' ? 'Crashed' : 'Closed'}
           </span>{' '}
           session
@@ -383,7 +383,7 @@ function SessionTradesTable({ trades }: { trades: LiveTrade[] }) {
   if (trades.length === 0) {
     return (
       <div className="py-12 text-center">
-        <div className="display-serif text-[28px] italic text-muted-foreground">—</div>
+        <div className="font-mono text-[28px] text-muted-foreground">—</div>
         <p className="mt-2 text-sm text-muted-foreground">No trades fired during this session</p>
       </div>
     );

@@ -4,12 +4,13 @@
 
 @custom-variant dark (&:is(.dark *));
 
-/* ─── Editorial Trading Terminal — design tokens ───────────────────────────
+/* ─── SHAMARX — design tokens ───────────────────────────────────────────────
  *
- * Aesthetic: Bloomberg's information density × Financial Times' editorial
- * gravitas × Linear's modern restraint. Tabular figures everywhere.
- * Single restrained accent: electric chartreuse #d4ff3a for live signal /
- * filled state. Profit/loss treated as semantic colors, not decoration.
+ * Brand: Shamarx — quant trading terminal.
+ * Aesthetic: precision-machined fintech. Geometric Orbitron display × Geist
+ * Mono for data. Off-black canvas with the Shamarx gold signal lifted from
+ * the logo (#F2C31C). Single accent — used like a circuit trace, not paint.
+ * Profit/loss are semantic colors, never decoration.
  * ─────────────────────────────────────────────────────────────────────── */
 
 @theme inline {
@@ -79,133 +80,137 @@
   /* Type stack */
   --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-geist-mono), ui-monospace, monospace;
-  --font-display: var(--font-fraunces), 'Times New Roman', Georgia, serif;
+  --font-display: var(--font-orbitron), 'Eurostile', 'Bank Gothic', ui-sans-serif, sans-serif;
 
-  /* Radii — sharp by default, this is a terminal */
+  /* Radii — sharp, machined */
   --radius: 0.25rem;
   --radius-sm: 0.125rem;
   --radius-md: 0.25rem;
   --radius-lg: 0.375rem;
   --radius-xl: 0.5rem;
+
+  /* Brand */
+  --color-shamarx-gold: var(--signal);
 }
 
-/* ─── DARK (primary) ─── */
+/* ─── DARK (primary) — Shamarx canvas ─── */
 :root {
   color-scheme: dark;
 
-  --background:        oklch(0.145 0.005 285);   /* near-black with cool tint */
-  --foreground:        oklch(0.93  0.005 285);
-  --card:              oklch(0.18  0.005 285);
-  --card-foreground:   oklch(0.93  0.005 285);
-  --surface:           oklch(0.165 0.005 285);
-  --surface-2:         oklch(0.205 0.005 285);
-  --popover:           oklch(0.18  0.005 285);
-  --popover-foreground:oklch(0.93  0.005 285);
+  --background:        oklch(0.135 0.006 65);    /* warm near-black, biased to gold */
+  --foreground:        oklch(0.94  0.005 80);
+  --card:              oklch(0.175 0.006 65);
+  --card-foreground:   oklch(0.94  0.005 80);
+  --surface:           oklch(0.16  0.006 65);
+  --surface-2:         oklch(0.205 0.006 65);
+  --popover:           oklch(0.18  0.006 65);
+  --popover-foreground:oklch(0.94  0.005 80);
 
-  --border:            oklch(0.265 0.005 285);
-  --border-strong:     oklch(0.36  0.005 285);
-  --input:             oklch(0.225 0.005 285);
-  --ring:              oklch(0.55  0.005 285);
+  --border:            oklch(0.27  0.008 75);
+  --border-strong:     oklch(0.38  0.012 80);
+  --input:             oklch(0.225 0.008 75);
+  --ring:              oklch(0.83  0.18 88);     /* gold ring */
 
-  --muted:             oklch(0.225 0.005 285);
-  --muted-foreground:  oklch(0.62  0.005 285);
-  --subtle:            oklch(0.42  0.005 285);
+  --muted:             oklch(0.225 0.008 75);
+  --muted-foreground:  oklch(0.63  0.008 80);
+  --subtle:            oklch(0.44  0.008 75);
 
-  --primary:           oklch(0.93  0.005 285);
-  --primary-foreground:oklch(0.145 0.005 285);
-  --secondary:         oklch(0.225 0.005 285);
-  --secondary-foreground: oklch(0.93 0.005 285);
+  --primary:           oklch(0.94  0.005 80);
+  --primary-foreground:oklch(0.135 0.006 65);
+  --secondary:         oklch(0.225 0.008 75);
+  --secondary-foreground: oklch(0.94 0.005 80);
 
-  --accent:            oklch(0.205 0.005 285);
-  --accent-foreground: oklch(0.93  0.005 285);
+  --accent:            oklch(0.21  0.012 80);
+  --accent-foreground: oklch(0.94  0.005 80);
 
-  /* Electric chartreuse — the signature accent */
-  --signal:            oklch(0.93  0.22 110);
-  --signal-foreground: oklch(0.13  0.005 285);
+  /* SHAMARX GOLD — the signature accent (lifted from the logo, ~#F2C31C) */
+  --signal:            oklch(0.83  0.18 88);
+  --signal-foreground: oklch(0.13  0.006 65);
 
-  /* Profit / loss — restrained but legible on dark */
-  --profit:            oklch(0.78  0.18 152);   /* mint-emerald */
-  --profit-foreground: oklch(0.13  0.005 285);
-  --loss:              oklch(0.68  0.21 25);    /* warm coral-red */
-  --loss-foreground:   oklch(0.985 0.005 285);
-  --neutral:           oklch(0.62  0.005 285);
-  --warning:           oklch(0.82  0.15 75);    /* amber */
+  /* Profit / loss — calibrated for the warm dark canvas */
+  --profit:            oklch(0.79  0.17 150);    /* mint-emerald */
+  --profit-foreground: oklch(0.13  0.006 65);
+  --loss:              oklch(0.68  0.21 25);     /* warm coral-red */
+  --loss-foreground:   oklch(0.985 0.005 80);
+  --neutral:           oklch(0.63  0.008 80);
+  --warning:           oklch(0.83  0.18 88);     /* aligned to signal */
   --destructive:       oklch(0.68  0.21 25);
 
-  /* Strategy hue tags — distinct but not gaudy */
-  --strat-v5:          oklch(0.72  0.10 240);   /* steel-blue */
-  --strat-v6:          oklch(0.82  0.16 75);    /* amber */
-  --strat-v6alt:       oklch(0.93  0.22 110);   /* signal */
+  /* Strategy hue tags — gold-leaning palette */
+  --strat-v5:          oklch(0.72  0.10 240);    /* steel-blue */
+  --strat-v6:          oklch(0.78  0.14 50);     /* warm copper */
+  --strat-v6alt:       oklch(0.83  0.18 88);     /* signal gold */
 
-  --chart-grid:        oklch(0.235 0.005 285);
-  --chart-text:        oklch(0.62  0.005 285);
+  --chart-grid:        oklch(0.24  0.008 75);
+  --chart-text:        oklch(0.63  0.008 80);
 
-  --sidebar:                   oklch(0.135 0.005 285);
-  --sidebar-foreground:        oklch(0.93  0.005 285);
-  --sidebar-border:            oklch(0.235 0.005 285);
-  --sidebar-accent:            oklch(0.18  0.005 285);
-  --sidebar-accent-foreground: oklch(0.93  0.005 285);
-  --sidebar-primary:           oklch(0.93  0.22 110);
-  --sidebar-primary-foreground:oklch(0.13  0.005 285);
-  --sidebar-ring:              oklch(0.55  0.005 285);
+  --sidebar:                   oklch(0.115 0.006 65);
+  --sidebar-foreground:        oklch(0.94  0.005 80);
+  --sidebar-border:            oklch(0.235 0.008 75);
+  --sidebar-accent:            oklch(0.185 0.008 75);
+  --sidebar-accent-foreground: oklch(0.94  0.005 80);
+  --sidebar-primary:           oklch(0.83  0.18 88);
+  --sidebar-primary-foreground:oklch(0.13  0.006 65);
+  --sidebar-ring:              oklch(0.83  0.18 88);
 }
 
-/* ─── LIGHT (warm cream) ─── */
+/* ─── LIGHT (paper-gold) — secondary surface ─── */
 .light {
   color-scheme: light;
 
-  --background:        oklch(0.985 0.008 90);   /* warm cream */
-  --foreground:        oklch(0.18  0.005 285);
-  --card:              oklch(1     0    90);
-  --card-foreground:   oklch(0.18  0.005 285);
-  --surface:           oklch(0.975 0.008 90);
-  --surface-2:         oklch(0.96  0.008 90);
-  --popover:           oklch(1     0    90);
-  --popover-foreground:oklch(0.18  0.005 285);
+  --background:        oklch(0.985 0.012 88);    /* faint paper-gold cream */
+  --foreground:        oklch(0.17  0.006 65);
+  --card:              oklch(1     0    88);
+  --card-foreground:   oklch(0.17  0.006 65);
+  --surface:           oklch(0.975 0.012 88);
+  --surface-2:         oklch(0.955 0.014 88);
+  --popover:           oklch(1     0    88);
+  --popover-foreground:oklch(0.17  0.006 65);
 
-  --border:            oklch(0.91  0.005 90);
-  --border-strong:     oklch(0.82  0.005 90);
-  --input:             oklch(0.92  0.005 90);
-  --ring:              oklch(0.55  0.005 285);
+  --border:            oklch(0.905 0.010 88);
+  --border-strong:     oklch(0.80  0.012 80);
+  --input:             oklch(0.92  0.010 88);
+  --ring:              oklch(0.68  0.18 88);
 
-  --muted:             oklch(0.94  0.005 90);
-  --muted-foreground:  oklch(0.45  0.005 285);
-  --subtle:            oklch(0.65  0.005 285);
+  --muted:             oklch(0.94  0.010 88);
+  --muted-foreground:  oklch(0.44  0.008 75);
+  --subtle:            oklch(0.65  0.008 75);
 
-  --primary:           oklch(0.18  0.005 285);
-  --primary-foreground:oklch(1     0    90);
-  --secondary:         oklch(0.94  0.005 90);
-  --secondary-foreground: oklch(0.18 0.005 285);
+  --primary:           oklch(0.17  0.006 65);
+  --primary-foreground:oklch(1     0    88);
+  --secondary:         oklch(0.94  0.010 88);
+  --secondary-foreground: oklch(0.17 0.006 65);
 
-  --accent:            oklch(0.94  0.005 90);
-  --accent-foreground: oklch(0.18  0.005 285);
+  --accent:            oklch(0.94  0.010 88);
+  --accent-foreground: oklch(0.17  0.006 65);
 
-  --signal:            oklch(0.78  0.20 110);
-  --signal-foreground: oklch(0.18  0.005 285);
+  /* Slightly darker gold for contrast on light surfaces */
+  --signal:            oklch(0.72  0.18 85);
+  --signal-foreground: oklch(0.17  0.006 65);
 
-  --profit:            oklch(0.55  0.15 152);
-  --profit-foreground: oklch(1     0    90);
+  --profit:            oklch(0.55  0.15 150);
+  --profit-foreground: oklch(1     0    88);
   --loss:              oklch(0.55  0.20 25);
-  --loss-foreground:   oklch(1     0    90);
-  --neutral:           oklch(0.45  0.005 285);
-  --warning:           oklch(0.65  0.15 75);
+  --loss-foreground:   oklch(1     0    88);
+  --neutral:           oklch(0.44  0.008 75);
+  --warning:           oklch(0.66  0.16 78);
   --destructive:       oklch(0.55  0.20 25);
 
   --strat-v5:          oklch(0.45  0.13 240);
-  --strat-v6:          oklch(0.62  0.16 75);
-  --strat-v6alt:       oklch(0.55  0.18 152);
+  --strat-v6:          oklch(0.55  0.15 50);
+  --strat-v6alt:       oklch(0.66  0.18 85);
 
-  --chart-grid:        oklch(0.92  0.005 90);
-  --chart-text:        oklch(0.45  0.005 285);
+  --chart-grid:        oklch(0.92  0.010 88);
+  --chart-text:        oklch(0.44  0.008 75);
 
-  --sidebar:                   oklch(0.97  0.008 90);
-  --sidebar-foreground:        oklch(0.18  0.005 285);
-  --sidebar-border:            oklch(0.91  0.005 90);
-  --sidebar-accent:            oklch(0.94  0.005 90);
-  --sidebar-accent-foreground: oklch(0.18  0.005 285);
-  --sidebar-primary:           oklch(0.18  0.005 285);
-  --sidebar-primary-foreground:oklch(1     0    90);
-  --sidebar-ring:              oklch(0.55  0.005 285);
+  --sidebar:                   oklch(0.965 0.012 88);
+  --sidebar-foreground:        oklch(0.17  0.006 65);
+  --sidebar-border:            oklch(0.905 0.010 88);
+  --sidebar-accent:            oklch(0.93  0.012 88);
+  --sidebar-accent-foreground: oklch(0.17  0.006 65);
+  --sidebar-primary:           oklch(0.17  0.006 65);
+  --sidebar-primary-foreground:oklch(1     0    88);
+  --sidebar-ring:              oklch(0.68  0.18 85);
 }
 
 @layer base {
@@ -265,12 +270,32 @@
     color: var(--muted-foreground);
   }
 
-  /* Display headline — Fraunces, italic optical-size, generous tracking */
-  .display-serif {
+  /* Display headline — Orbitron, uppercase, wide-tracked (matches the
+     Shamarx wordmark). Kept under .display-serif so legacy callsites
+     inherit the new treatment without per-file edits. */
+  .display-serif,
+  .display-geo {
     font-family: var(--font-display);
-    font-feature-settings: "ss01" 1, "ss02" 1;
-    font-variation-settings: "opsz" 144, "SOFT" 30;
-    letter-spacing: -0.02em;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  /* Hairline outline variant — mirrors the SHAMARX wordmark exactly */
+  .display-outline {
+    font-family: var(--font-display);
+    font-weight: 400;
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    color: transparent;
+    -webkit-text-stroke: 1px var(--foreground);
+  }
+  .display-outline-signal {
+    font-family: var(--font-display);
+    font-weight: 400;
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    color: transparent;
+    -webkit-text-stroke: 1px var(--signal);
   }
 
   /* Tabular numerics with feature settings */
@@ -370,13 +395,13 @@
     outline-offset: 2px;
   }
 
-  /* ─── Editorial display number — Fraunces, big, optical-size 144 ─── */
+  /* ─── Display numeric — Orbitron, geometric, tabular ─── */
   .display-num {
     font-family: var(--font-display);
-    font-feature-settings: "tnum" 1, "ss01" 1;
-    font-variation-settings: "opsz" 144, "SOFT" 30;
+    font-feature-settings: "tnum" 1;
     font-variant-numeric: tabular-nums;
-    letter-spacing: -0.035em;
+    font-weight: 600;
+    letter-spacing: -0.02em;
     line-height: 0.95;
   }
 
@@ -421,5 +446,74 @@
   /* ─── Editorial dropcap pseudo for hero numbers ─── */
   .dropcap-signal::first-letter {
     color: var(--signal);
+  }
+
+  /* ─── SHAMARX brand utilities ──────────────────────────────────────── */
+
+  /* Hexagonal scan-grid — echoes the logo's hex container, decorative only */
+  .hex-grid {
+    background-image:
+      radial-gradient(
+        circle at 20% 0%,
+        color-mix(in oklab, var(--signal) 10%, transparent) 0%,
+        transparent 35%
+      ),
+      radial-gradient(
+        circle at 80% 100%,
+        color-mix(in oklab, var(--signal) 6%, transparent) 0%,
+        transparent 40%
+      );
+  }
+
+  /* Gold trace — a hairline gold rule used as a brand anchor */
+  .gold-trace {
+    background: linear-gradient(
+      to right,
+      transparent 0%,
+      var(--signal) 25%,
+      var(--signal) 75%,
+      transparent 100%
+    );
+    height: 1px;
+    opacity: 0.7;
+  }
+
+  /* Hero glow — gold radial light bloom for marquee headlines */
+  .gold-bloom {
+    position: relative;
+  }
+  .gold-bloom::before {
+    content: "";
+    position: absolute;
+    inset: -20% -10% -20% -10%;
+    background: radial-gradient(
+      ellipse at center,
+      color-mix(in oklab, var(--signal) 18%, transparent) 0%,
+      transparent 55%
+    );
+    pointer-events: none;
+    z-index: -1;
+    filter: blur(40px);
+  }
+
+  /* Brand chip — small inline marker mimicking the logo S */
+  .shamarx-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-family: var(--font-display);
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.22em;
+    color: var(--signal);
+  }
+  .shamarx-chip::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    background: var(--signal);
+    transform: rotate(45deg);
+    box-shadow: 0 0 0 1px color-mix(in oklab, var(--signal) 40%, transparent);
   }
 }

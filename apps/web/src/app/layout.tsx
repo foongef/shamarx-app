@@ -1,5 +1,5 @@
 import type { Metadata } from 'next';
-import { Geist, Geist_Mono, Fraunces } from 'next/font/google';
+import { Geist, Geist_Mono, Orbitron } from 'next/font/google';
 import './globals.css';
 import { Providers } from '@/components/providers';
 import { AppShell } from '@/components/layout/app-shell';
@@ -14,17 +14,19 @@ const geistMono = Geist_Mono({
   subsets: ['latin'],
 });
 
-const fraunces = Fraunces({
-  variable: '--font-fraunces',
+const orbitron = Orbitron({
+  variable: '--font-orbitron',
   subsets: ['latin'],
-  axes: ['SOFT', 'opsz'],
-  style: ['normal', 'italic'],
+  weight: ['400', '500', '600', '700', '800'],
 });
 
 export const metadata: Metadata = {
-  title: 'Tape — Backtest Terminal',
+  title: {
+    default: 'ShamarX — Trade with discipline. Not emotion.',
+    template: '%s · ShamarX',
+  },
   description:
-    'Quantitative backtest analytics for XAUUSD intraday & SMC strategies.',
+    'ShamarX — disciplined algorithmic trading system for XAUUSD, EURUSD, GBPUSD, and USDJPY. Guarded by Design.',
 };
 
 export default function RootLayout({
@@ -33,7 +35,7 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <body
-        className={`${geistSans.variable} ${geistMono.variable} ${fraunces.variable} antialiased`}
+        className={`${geistSans.variable} ${geistMono.variable} ${orbitron.variable} antialiased`}
       >
         <Providers>
           <AppShell>{children}</AppShell>

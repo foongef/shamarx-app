@@ -92,8 +92,8 @@ export default function LivesOverviewPage() {
         <div className="grid gap-6 pt-4 lg:grid-cols-12 lg:gap-8">
           {/* Headline + CTA */}
           <div className="lg:col-span-5">
-            <h1 className="display-serif text-[44px] leading-[0.95] tracking-tight sm:text-[56px] lg:text-[68px]">
-              Live <span className="italic text-signal">trading</span>
+            <h1 className="display-serif text-[36px] leading-[0.95] tracking-[0.04em] sm:text-[44px] lg:text-[56px]">
+              Live <span className="text-signal">trading</span>
               <br />
               sessions
             </h1>
@@ -249,7 +249,7 @@ function SectionHeader({
   return (
     <div className="space-y-1.5">
       <span className="label-eyebrow">{eyebrow}</span>
-      <h2 className="display-serif text-[28px] leading-tight tracking-tight sm:text-[32px]">
+      <h2 className="display-serif text-[24px] leading-tight tracking-[0.04em] sm:text-[28px]">
         {title}
       </h2>
       {subtitle && (
@@ -476,7 +476,7 @@ function EmptyState({
     <div className="relative mt-4 overflow-hidden rounded-md border border-border bg-card">
       <div className="absolute inset-0 grid-pattern opacity-30" />
       <div className="relative flex flex-col items-center justify-center px-6 py-16 text-center">
-        <div className="display-serif text-[36px] italic leading-none tracking-tight text-muted-foreground">
+        <div className="font-mono text-[36px] leading-none tracking-tight text-muted-foreground">
           —
         </div>
         <p className="mt-4 max-w-sm text-[14px] text-muted-foreground">

@@ -59,8 +59,8 @@ export default function BacktestListPage() {
           <span className="label-eyebrow">
             <span className="text-signal">◆</span>&nbsp;Run Library
           </span>
-          <h1 className="display-serif text-[40px] leading-[0.95] tracking-tight">
-            All <span className="italic">backtests</span>.
+          <h1 className="display-serif text-[32px] leading-[0.95] tracking-[0.04em] sm:text-[40px]">
+            All <span className="text-signal">backtests</span>.
           </h1>
           <p className="text-[13px] text-muted-foreground">
             {runs.length} run{runs.length === 1 ? '' : 's'} across{' '}

@@ -6,7 +6,6 @@ import {
   LayoutDashboard,
   Activity,
   PlusSquare,
-  CandlestickChart,
   Radio,
   X,
   LogOut,
@@ -15,9 +14,10 @@ import { cn } from '@/lib/utils';
 import { useBacktests } from '@/hooks/use-backtests';
 import { useAuth } from '@/contexts/AuthContext';
 import { StatusDot } from '@/components/backtest/status-dot';
+import { ShamarxLogo } from '@/components/brand/shamarx-logo';
 
 const NAV = [
-  { href: '/', label: 'Overview', icon: LayoutDashboard },
+  { href: '/dashboard', label: 'Overview', icon: LayoutDashboard },
   { href: '/lives', label: 'Live', icon: Radio },
   { href: '/backtest', label: 'Runs', icon: Activity },
   { href: '/backtest/new', label: 'New Run', icon: PlusSquare },
@@ -54,17 +54,16 @@ export function Sidebar({
         aria-label="Primary navigation"
       >
         {/* Brand */}
-        <div className="flex h-14 items-center justify-between border-b border-sidebar-border pl-5 pr-3">
+        <div className="flex h-16 items-center justify-between border-b border-sidebar-border pl-4 pr-3">
           <Link
-            href="/"
+            href="/dashboard"
             onClick={onCloseMobile}
-            className="flex items-center gap-2 transition-opacity hover:opacity-80"
+            className="group flex items-center gap-2 transition-opacity hover:opacity-90"
           >
-            <CandlestickChart className="h-4 w-4 text-signal" strokeWidth={1.75} />
-            <span className="display-serif text-[20px] leading-none tracking-tight">
-              Tape
+            <ShamarxLogo variant="horizontal" height={28} priority />
+            <span className="ml-0.5 font-mono text-[9px] text-muted-foreground/80 tracking-widest">
+              v0.6
             </span>
-            <span className="ml-1 font-mono text-[9px] text-muted-foreground">·v0.6</span>
           </Link>
           <button
             className="rounded-md p-1.5 text-muted-foreground transition hover:bg-muted hover:text-foreground lg:hidden"
@@ -81,7 +80,7 @@ export function Sidebar({
           {NAV.map((item) => {
             const active =
               pathname === item.href ||
-              (item.href !== '/' && pathname.startsWith(item.href));
+              (item.href !== '/dashboard' && pathname.startsWith(item.href));
             const Icon = item.icon;
             return (
               <Link

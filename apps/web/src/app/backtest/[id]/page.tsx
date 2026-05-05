@@ -109,7 +109,7 @@ export default function BacktestResultPage({
                 {backtest.riskPercent}% risk
               </span>
             </div>
-            <h1 className="display-serif text-[44px] leading-[0.95] tracking-tight">
+            <h1 className="display-serif text-[28px] leading-[0.95] tracking-[0.04em] sm:text-[36px] lg:text-[40px]">
               {backtest.startDate.slice(0, 10)}{' '}
               <span className="text-subtle">→</span>{' '}
               {backtest.endDate.slice(0, 10)}
@@ -194,7 +194,7 @@ export default function BacktestResultPage({
           <div className="flex items-center gap-px border-b border-border">
             {TABS.map((t) => {
               const labels = {
-                chart: 'Tape',
+                chart: 'Price',
                 analytics: 'Analytics',
                 trades: `Trades (${trades?.length ?? 0})`,
               };
@@ -224,7 +224,7 @@ export default function BacktestResultPage({
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
               <div className="lg:col-span-3">
                 <Panel
-                  title="Price Tape — M15"
+                  title="Price — M15"
                   count={candles?.length ?? 0}
                   subtitle={
                     <span className="font-mono text-[11px]">
