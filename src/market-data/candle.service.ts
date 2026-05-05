@@ -1,4 +1,5 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { HttpService } from '@nestjs/axios';
 import { PrismaService } from '@app/prisma';
@@ -7,31 +8,52 @@ import { SYMBOL, SERVICE_URLS } from '@app/common';
 import { Timeframe, CandleDto } from '@app/common';
 import { firstValueFrom } from 'rxjs';
 
+/** Milliseconds per bar — used to filter out the currently-forming bar. */
+const TIMEFRAME_MS: Record<string, number> = {
+  M1: 60_000,
+  M5: 5 * 60_000,
+  M15: 15 * 60_000,
+  H1: 60 * 60_000,
+  H4: 4 * 60 * 60_000,
+  D1: 24 * 60 * 60_000,
+};
+
 @Injectable()
 export class CandleService implements OnModuleInit {
   private readonly logger = new Logger(CandleService.name);
+  private readonly pairs: string[];
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly redis: RedisService,
     private readonly httpService: HttpService,
-  ) {}
+    private readonly config: ConfigService,
+  ) {
+    const pairsCsv = this.config.get<string>('STRATEGY_PAIRS') || SYMBOL;
+    this.pairs = pairsCsv
+      .split(',')
+      .map((s) => s.trim().toUpperCase())
+      .filter(Boolean);
+  }
 
   async onModuleInit() {
-    this.logger.log('Candle service initialized');
+    this.logger.log(`Candle service initialized for pairs: ${this.pairs.join(', ')}`);
   }
 
   @Cron(CronExpression.EVERY_MINUTE)
   async pollCandles() {
-    try {
-      await this.fetchAndStoreCandles(Timeframe.M15, 5);
-      await this.fetchAndStoreCandles(Timeframe.H1, 3);
-    } catch (error) {
-      this.logger.error(`Failed to poll candles: ${error.message}`);
-    }
+    // Poll all configured pairs in parallel. Each pair × timeframe runs
+    // independently so a single failure doesn't stop the others.
+    await Promise.all(
+      this.pairs.flatMap((symbol) => [
+        this.fetchAndStoreCandles(symbol, Timeframe.M15, 5),
+        this.fetchAndStoreCandles(symbol, Timeframe.H1, 3),
+      ]),
+    );
   }
 
   async fetchAndStoreCandles(
+    symbol: string,
     timeframe: string,
     count: number,
   ): Promise<void> {
@@ -39,53 +61,61 @@ export class CandleService implements OnModuleInit {
       const response = await firstValueFrom(
         this.httpService.get<CandleDto[]>(
           `${SERVICE_URLS.EXECUTION}/candles`,
-          { params: { symbol: SYMBOL, timeframe, count } },
+          { params: { symbol, timeframe, count } },
         ),
       );
 
       const candles = response.data;
-      let newCandleStored = false;
 
-      for (const candle of candles) {
-        const result = await this.prisma.candle.upsert({
-          where: {
-            symbol_timeframe_openTime: {
-              symbol: candle.symbol,
-              timeframe: candle.timeframe,
-              openTime: new Date(candle.openTime),
-            },
-          },
-          update: {
-            open: candle.open,
-            high: candle.high,
-            low: candle.low,
-            close: candle.close,
-            volume: candle.volume,
-          },
-          create: {
-            symbol: candle.symbol,
-            timeframe: candle.timeframe,
-            openTime: new Date(candle.openTime),
-            open: candle.open,
-            high: candle.high,
-            low: candle.low,
-            close: candle.close,
-            volume: candle.volume,
-          },
+      // Drop the in-progress (open) bar. Broker returns the currently-forming
+      // bar as the last element; storing it would mutate-on-each-poll, breaking
+      // the "Candle = immutable historical event" invariant.
+      const tfMs = TIMEFRAME_MS[timeframe] ?? 0;
+      const closedCandles = tfMs > 0
+        ? candles.filter(
+            (c) => Date.now() >= new Date(c.openTime).getTime() + tfMs,
+          )
+        : candles;
+
+      // Append-only: skipDuplicates ensures we never overwrite a row, so
+      // closed candles stay immutable even if the broker re-emits them.
+      let newCandleStored = false;
+      if (closedCandles.length > 0) {
+        const result = await this.prisma.candle.createMany({
+          data: closedCandles.map((c) => ({
+            symbol: c.symbol,
+            timeframe: c.timeframe,
+            openTime: new Date(c.openTime),
+            open: c.open,
+            high: c.high,
+            low: c.low,
+            close: c.close,
+            volume: c.volume,
+          })),
+          skipDuplicates: true,
         });
-        newCandleStored = true;
+        newCandleStored = result.count > 0;
       }
 
       if (newCandleStored && timeframe === Timeframe.M15) {
         await this.redis.publish(REDIS_CHANNELS.CANDLE_STORED, {
-          symbol: SYMBOL,
+          symbol,
           timeframe,
           timestamp: new Date().toISOString(),
         });
       }
+      // Heartbeat — write cron's last successful poll time. The loop-health
+      // pill reads this to confirm the cron is alive even when no NEW candle
+      // arrived (M15 bar still in progress). 5min TTL so a dead cron quickly
+      // reflects in health.
+      await this.redis.set(
+        `live:cron:last-poll:${symbol}:${timeframe}`,
+        new Date().toISOString(),
+        300,
+      );
     } catch (error) {
       this.logger.error(
-        `Failed to fetch candles for ${timeframe}: ${error.message}`,
+        `Failed to fetch candles for ${symbol} ${timeframe}: ${(error as Error).message}`,
       );
     }
   }

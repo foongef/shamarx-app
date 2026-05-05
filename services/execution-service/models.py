@@ -74,3 +74,29 @@ class CandleData(BaseModel):
     volume: float
 
     model_config = {"populate_by_name": True, "serialize_by_alias": True}
+
+
+class ClosePositionRequest(BaseModel):
+    """Body for POST /positions/{ticket}/close — currently no body fields,
+    but kept as a model for future flexibility (partial close lots, etc.)."""
+
+    lot_size: Optional[float] = Field(alias="lotSize", default=None)
+
+    model_config = {"populate_by_name": True}
+
+
+class ModifyPositionRequest(BaseModel):
+    sl_price: Optional[float] = Field(alias="slPrice", default=None)
+    tp_price: Optional[float] = Field(alias="tpPrice", default=None)
+
+    model_config = {"populate_by_name": True}
+
+
+class ClosePositionResponse(BaseModel):
+    ticket: int
+    status: str
+    message: str
+    close_price: Optional[float] = Field(alias="closePrice", default=None)
+    pnl: Optional[float] = None
+
+    model_config = {"populate_by_name": True, "serialize_by_alias": True}

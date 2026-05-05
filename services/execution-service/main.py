@@ -18,8 +18,9 @@ app.include_router(historical_router, prefix="/historical-candles", tags=["histo
 
 @app.get("/health")
 async def health():
-    mode = os.getenv("MT5_MODE", "mock")
-    return {"status": "ok", "service": "execution-service", "mode": mode}
+    # Use the same mode-resolution as routes — Redis runtime override > env
+    from routes import get_mode
+    return {"status": "ok", "service": "execution-service", "mode": get_mode()}
 
 
 if __name__ == "__main__":

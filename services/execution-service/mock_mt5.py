@@ -14,6 +14,7 @@ from models import (
     Position,
     AccountInfo,
     CandleData,
+    ClosePositionResponse,
     Side,
 )
 
@@ -26,6 +27,18 @@ class MockMT5:
         self._next_ticket = 100001
         self._base_price = 2650.00  # Base XAUUSD price
         self._orders: dict[str, dict] = {}
+
+    def reset(self, balance: float = 10000.0) -> dict:
+        self._balance = float(balance)
+        self._equity = float(balance)
+        self._positions.clear()
+        self._orders.clear()
+        self._closed_history: dict[int, dict] = {}
+        return {"balance": self._balance, "equity": self._equity, "positions": 0}
+
+    def get_position_close_info(self, ticket: int):
+        """Return close info from mock history (set on close_position)."""
+        return getattr(self, "_closed_history", {}).get(ticket)
 
     def _current_price(self) -> float:
         """Simulate small price movements."""
@@ -97,6 +110,65 @@ class MockMT5:
                 )
             )
         return positions
+
+    def _calculate_pnl(self, pos: dict) -> float:
+        current_price = self._current_price()
+        if pos["side"] == Side.BUY.value:
+            return (current_price - pos["entry_price"]) * pos["lot_size"] * 100
+        return (pos["entry_price"] - current_price) * pos["lot_size"] * 100
+
+    def close_position(self, ticket: int, lot_size: Optional[float] = None) -> ClosePositionResponse:
+        if ticket not in self._positions:
+            return ClosePositionResponse(
+                ticket=ticket,
+                status="REJECTED",
+                message=f"Position {ticket} not found",
+            )
+        pos = self._positions[ticket]
+        bid, ask = self._bid_ask()
+        close_price = bid if pos["side"] == Side.BUY.value else ask
+        pnl = self._calculate_pnl(pos)
+        # Record into mock history before deleting so reconcile can find it
+        if not hasattr(self, "_closed_history"):
+            self._closed_history = {}
+        self._closed_history[ticket] = {
+            "closePrice": round(close_price, 2),
+            "realizedPnl": round(pnl, 2),
+            "closeTime": datetime.now(timezone.utc).isoformat(),
+            "exitReason": "MANUAL",
+        }
+        # Mock: full close only (lot_size param is ignored for now)
+        del self._positions[ticket]
+        self._balance += pnl
+        return ClosePositionResponse(
+            ticket=ticket,
+            status="CLOSED",
+            message=f"Closed at {close_price}",
+            closePrice=round(close_price, 2),
+            pnl=round(pnl, 2),
+        )
+
+    def modify_position(
+        self,
+        ticket: int,
+        sl_price: Optional[float] = None,
+        tp_price: Optional[float] = None,
+    ) -> ClosePositionResponse:
+        if ticket not in self._positions:
+            return ClosePositionResponse(
+                ticket=ticket,
+                status="REJECTED",
+                message=f"Position {ticket} not found",
+            )
+        if sl_price is not None:
+            self._positions[ticket]["sl"] = sl_price
+        if tp_price is not None:
+            self._positions[ticket]["tp"] = tp_price
+        return ClosePositionResponse(
+            ticket=ticket,
+            status="MODIFIED",
+            message=f"sl={sl_price} tp={tp_price}",
+        )
 
     def get_account_info(self) -> AccountInfo:
         total_pnl = sum(

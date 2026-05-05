@@ -7,10 +7,32 @@ import { StrategyController } from './strategy.controller';
 import { StrategyService } from './strategy.service';
 import { PatternDetector } from './pattern-detector';
 import { StructureAnalyzer } from './structure-analyzer';
+import { LiveStrategyService } from './live/live-strategy.service';
+import { PositionMonitorService } from './live/position-monitor.service';
+import { SmcLiveEvaluator } from './live/smc-live-evaluator';
+import { LiveControlService } from './live/live-control.service';
+import { EquitySnapshotService } from './live/equity-snapshot.service';
+import { LiveAnalyticsService } from './live/live-analytics.service';
 
 @Module({
   imports: [HttpModule, MarketDataModule, RiskModule, LlmFilterModule],
   controllers: [StrategyController],
-  providers: [StrategyService, PatternDetector, StructureAnalyzer],
+  providers: [
+    StrategyService,
+    PatternDetector,
+    StructureAnalyzer,
+    SmcLiveEvaluator,
+    LiveControlService,
+    LiveStrategyService,
+    PositionMonitorService,
+    EquitySnapshotService,
+    LiveAnalyticsService,
+  ],
+  exports: [
+    LiveStrategyService,
+    PositionMonitorService,
+    LiveControlService,
+    LiveAnalyticsService,
+  ],
 })
 export class StrategyModule {}

@@ -10,6 +10,8 @@ import { RiskModule } from './risk/risk.module';
 import { LlmFilterModule } from './llm-filter/llm-filter.module';
 import { JournalModule } from './journal/journal.module';
 import { BacktestModule } from './backtest/backtest.module';
+import { AuthModule } from './auth/auth.module';
+import { UsersModule } from './users/users.module';
 
 @Module({
   imports: [
@@ -18,6 +20,8 @@ import { BacktestModule } from './backtest/backtest.module';
     CoreModule,
     PrismaModule,
     RedisModule,
+    UsersModule,
+    AuthModule,
     MarketDataModule,
     StrategyModule,
     RiskModule,

@@ -2,15 +2,17 @@
 
 Source priority (per request):
   1. Postgres `Candle` table (populated by `pnpm data:import` from Dukascopy)
-  2. MetaAPI (when MT5_MODE=metaapi)
-  3. CSV fallback (`data/{symbol}_{tf}.csv`)
+  2. MetaAPI gap-fill — if DB doesn't cover the full requested range
+     (i.e. the latest DB candle is older than the requested end), pull
+     the missing tail from MetaApi and merge.
+  3. CSV fallback (`data/{symbol}_{tf}.csv`) for offline development.
 """
 
 import os
 import csv
 import logging
 import traceback
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -101,6 +103,40 @@ def _normalize_dt(s: Optional[str], default_dt: datetime, end_of_day: bool = Fal
     return dt
 
 
+_TIMEFRAME_MS = {
+    "M1": 60_000,
+    "M5": 5 * 60_000,
+    "M15": 15 * 60_000,
+    "H1": 60 * 60_000,
+    "H4": 4 * 60 * 60_000,
+    "D1": 24 * 60 * 60_000,
+}
+
+
+def _resolve_mode() -> str:
+    """Read mode from Redis runtime override → env var → default 'mock'.
+    Mirrors routes.get_mode() so historical-candles honors the same toggle."""
+    try:
+        from routes import _get_redis  # type: ignore
+        r = _get_redis()
+        if r:
+            override = r.get("live:engine:mode")
+            if override and override in ("mock", "metaapi"):
+                return override
+    except Exception:
+        pass
+    return os.getenv("MT5_MODE", "mock")
+
+
+def _to_naive_iso(s) -> Optional[str]:
+    """Coerce DB datetime / ISO string to a naive ISO for comparison."""
+    if isinstance(s, datetime):
+        return s.replace(tzinfo=None).isoformat()
+    if isinstance(s, str):
+        return s
+    return None
+
+
 @historical_router.get("", response_model=list[CandleData])
 async def get_historical_candles(
     symbol: str = Query(default="XAUUSD"),
@@ -108,41 +144,104 @@ async def get_historical_candles(
     start: Optional[str] = Query(default=None, description="Start date ISO format (e.g. 2025-01-01)"),
     end: Optional[str] = Query(default=None, description="End date ISO format (e.g. 2025-01-31)"),
 ):
-    """Return historical candles. Priority: Postgres → MetaAPI → CSV."""
+    """Return historical candles. DB first, then MetaApi gap-fill if incomplete."""
     start_dt = _normalize_dt(start, datetime(2023, 1, 1))
     end_dt = _normalize_dt(end, datetime.now(timezone.utc).replace(tzinfo=None), end_of_day=True)
 
-    # 1) Postgres (preferred — Dukascopy-imported data)
+    tf_upper = timeframe.upper()
+    sym_upper = symbol.upper()
+    tf_ms = _TIMEFRAME_MS.get(tf_upper, 0)
+
+    # 1) Postgres
+    db_rows: list = []
     try:
-        db_rows = await fetch_candles_db(symbol.upper(), timeframe.upper(), start_dt, end_dt)
-        if db_rows:
-            logger.info(f"DB hit: {symbol} {timeframe} {len(db_rows)} rows")
-            return db_rows
+        db_rows = await fetch_candles_db(sym_upper, tf_upper, start_dt, end_dt) or []
     except Exception as e:
         logger.warning(f"DB read failed (will fall back): {e}")
 
-    # 2) MetaAPI (if explicitly configured)
-    mode = os.getenv("MT5_MODE", "mock")
-    if mode == "metaapi":
+    def _get_open_time(row):
+        """Robust openTime extractor — works for dicts and Pydantic objects.
+        Pydantic CandleData uses `open_time` as the Python attr (alias `openTime`)."""
+        if isinstance(row, dict):
+            return row.get("openTime") or row.get("open_time")
+        # Pydantic v2 attribute name (snake_case)
+        if hasattr(row, "open_time"):
+            return getattr(row, "open_time")
+        # Fallback to alias-based attribute
+        if hasattr(row, "openTime"):
+            return getattr(row, "openTime")
         try:
-            return await _fetch_metaapi_candles(symbol, timeframe, start, end)
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.error(f"MetaAPI error for {symbol} {timeframe}: {e}\n{traceback.format_exc()}")
-            # Fall through to CSV instead of erroring out
+            d = row.model_dump(by_alias=True)
+            return d.get("openTime") or d.get("open_time")
+        except Exception:
+            return None
 
-    # 3) CSV fallback
-    rows = _load_csv(symbol, timeframe)
-    if not rows:
-        raise HTTPException(
-            status_code=404,
-            detail=f"No historical data for {symbol} {timeframe} in DB / MetaAPI / CSV",
+    # 2) Decide if DB coverage is sufficient. We approximate the expected
+    # candle count for the range and check if DB has at least 80% of it.
+    # If not (or DB is empty), refetch the FULL range from MetaApi — handles
+    # both "head gap" (cron started mid-range) and "tail gap" (request extends
+    # past last cron poll) in one shot.
+    expected_count = 0
+    if tf_ms > 0:
+        range_ms = (end_dt - start_dt).total_seconds() * 1000
+        # Forex weekends: roughly 5/7 of bars present
+        expected_count = int((range_ms / tf_ms) * (5 / 7))
+
+    coverage = (len(db_rows) / expected_count) if expected_count > 0 else 1.0
+    sufficient = coverage >= 0.80
+
+    mode = _resolve_mode()
+
+    if not sufficient and mode == "metaapi":
+        logger.info(
+            f"DB coverage {len(db_rows)}/{expected_count} ({coverage:.0%}) — fetching full range from MetaApi"
         )
+        try:
+            metaapi_rows = await _fetch_metaapi_candles(
+                symbol,
+                timeframe,
+                start_dt.isoformat(),
+                end_dt.isoformat(),
+            )
+            # Merge with DB — DB takes precedence for overlapping openTimes
+            seen_keys = set()
+            merged: list = []
+            for r in db_rows:
+                key = _to_naive_iso(_get_open_time(r))
+                if key and key not in seen_keys:
+                    merged.append(r)
+                    seen_keys.add(key)
+            for r in metaapi_rows:
+                key = _to_naive_iso(_get_open_time(r))
+                if key and key not in seen_keys:
+                    merged.append(r)
+                    seen_keys.add(key)
+            # Sort chronologically by openTime
+            merged.sort(key=lambda r: _to_naive_iso(_get_open_time(r)) or "")
+            logger.info(
+                f"Merged DB + MetaApi: {len(merged)} total rows for {symbol} {timeframe} "
+                f"({len(db_rows)} from DB + {len(metaapi_rows)} from MetaApi, deduped)"
+            )
+            db_rows = merged
+        except Exception as e:
+            logger.error(f"MetaApi gap-fill failed for {symbol} {timeframe}: {e}\n{traceback.format_exc()}")
 
-    filtered = [
-        r for r in rows
-        if datetime.fromisoformat(r["openTime"]) >= start_dt
-        and datetime.fromisoformat(r["openTime"]) <= end_dt
-    ]
-    return filtered
+    if db_rows:
+        return db_rows
+
+    # 3) CSV fallback (offline dev mode)
+    rows = _load_csv(symbol, timeframe)
+    if rows:
+        filtered = [
+            r for r in rows
+            if datetime.fromisoformat(r["openTime"]) >= start_dt
+            and datetime.fromisoformat(r["openTime"]) <= end_dt
+        ]
+        if filtered:
+            return filtered
+
+    raise HTTPException(
+        status_code=404,
+        detail=f"No historical data for {symbol} {timeframe} in DB / MetaAPI / CSV "
+               f"for range {start_dt.date()} → {end_dt.date()}",
+    )

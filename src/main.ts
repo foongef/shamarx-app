@@ -1,6 +1,7 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import * as cookieParser from 'cookie-parser';
 import { AppModule } from './app.module';
 import { EnvAwareLoggerService } from './core/env-aware-logger.service';
 
@@ -12,8 +13,10 @@ async function bootstrap() {
 
   app.enableCors({
     origin: process.env.CORS_ORIGIN || 'http://localhost:3000',
+    credentials: true,
   });
-  app.useGlobalPipes(new ValidationPipe({ transform: true }));
+  app.use(cookieParser());
+  app.useGlobalPipes(new ValidationPipe({ transform: true, whitelist: true }));
 
   const config = new DocumentBuilder()
     .setTitle('Trading Bot API')

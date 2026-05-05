@@ -7,6 +7,55 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum UserRole {
+  SUPERADMIN
+  ADMIN
+  USER
+}
+
+model User {
+  id           String    @id @default(uuid())
+  email        String    @unique
+  passwordHash String
+  role         UserRole  @default(USER)
+  isActive     Boolean   @default(true)
+  lastLoginAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  passwordResetTokens PasswordResetToken[]
+
+  @@index([email])
+}
+
+model PasswordResetToken {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token     String   @unique
+  isUsed    Boolean  @default(false)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([token])
+  @@index([userId])
+}
+
+model EquitySnapshot {
+  id              String   @id @default(uuid())
+  takenAt         DateTime @default(now())
+  source          String   @default("live")  // "live" | "backtest"
+  mode            String                     // "mock" | "metaapi"
+  balance         Float
+  equity          Float
+  unrealizedPnl   Float    @default(0)
+  margin          Float    @default(0)
+  freeMargin      Float    @default(0)
+  openPositions  Int      @default(0)
+
+  @@index([source, takenAt])
+}
+
 model Candle {
   id        String   @id @default(uuid())
   symbol    String
@@ -113,28 +162,57 @@ model LlmDecision {
 }
 
 model Trade {
-  id            String   @id @default(uuid())
-  candidateId   String   @unique
-  candidate     CandidateTrade @relation(fields: [candidateId], references: [id])
-  mt5Ticket     Int?
-  symbol        String
-  side          String
-  lotSize       Float
-  entryPrice    Float
-  closePrice    Float?
-  slPrice       Float
-  tpPrice       Float
-  status        String   @default("PENDING") // PENDING, OPEN, CLOSED, CANCELLED
-  pnl           Float?
-  closedAt      DateTime?
-  statusHistory Json     @default("[]")
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id             String   @id @default(uuid())
+  candidateId    String   @unique
+  candidate      CandidateTrade @relation(fields: [candidateId], references: [id])
+  clientOrderId  String?  @unique
+  mt5Ticket      Int?
+  sessionId      String?
+  session        LiveSession? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  symbol         String
+  side           String
+  lotSize        Float
+  entryPrice     Float
+  closePrice     Float?
+  slPrice        Float
+  tpPrice        Float
+  status         String   @default("PENDING") // PENDING, OPEN, CLOSED, CANCELLED
+  exitReason     String?  // SL, TP, BREAKEVEN, FORCED_CLOSE
+  pnl            Float?
+  closedAt       DateTime?
+  statusHistory  Json     @default("[]")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
-  journalEntry  JournalEntry?
+  journalEntry   JournalEntry?
 
   @@index([status])
   @@index([symbol, createdAt])
+  @@index([sessionId])
+}
+
+model LiveSession {
+  id               String    @id @default(uuid())
+  startedAt        DateTime  @default(now())
+  endedAt          DateTime?
+  strategyVersion  String
+  riskPercent      Float
+  mode             String    // "mock" | "metaapi"
+  mockBalance      Float?
+  startEquity      Float
+  endEquity        Float?
+  realizedPnl      Float     @default(0)
+  tradesCount      Int       @default(0)
+  winsCount        Int       @default(0)
+  lossesCount      Int       @default(0)
+  status           String    @default("RUNNING") // RUNNING, ENDED, CRASHED
+  pairs            String[]
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  trades           Trade[]
+
+  @@index([status, startedAt])
 }
 
 model RiskState {

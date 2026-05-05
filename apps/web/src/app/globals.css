@@ -369,4 +369,57 @@
     outline: 1px solid var(--signal);
     outline-offset: 2px;
   }
+
+  /* ─── Editorial display number — Fraunces, big, optical-size 144 ─── */
+  .display-num {
+    font-family: var(--font-display);
+    font-feature-settings: "tnum" 1, "ss01" 1;
+    font-variation-settings: "opsz" 144, "SOFT" 30;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.035em;
+    line-height: 0.95;
+  }
+
+  /* ─── Newsprint grain texture overlay ─── */
+  .grain-overlay {
+    position: relative;
+  }
+  .grain-overlay::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 1;
+    opacity: 0.025;
+    background-image:
+      url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)' opacity='0.6'/></svg>");
+    mix-blend-mode: overlay;
+  }
+
+  /* ─── Numeric ticker color helpers ─── */
+  .num-up { color: var(--profit); }
+  .num-down { color: var(--loss); }
+  .num-neutral { color: var(--muted-foreground); }
+
+  /* ─── Hairline divider — for editorial sections ─── */
+  .hairline {
+    height: 1px;
+    background: linear-gradient(
+      to right,
+      transparent 0%,
+      var(--border) 12%,
+      var(--border) 88%,
+      transparent 100%
+    );
+  }
+
+  /* ─── Safe area helper for any fixed-bottom UI ─── */
+  .pb-safe {
+    padding-bottom: max(env(safe-area-inset-bottom), 0.5rem);
+  }
+
+  /* ─── Editorial dropcap pseudo for hero numbers ─── */
+  .dropcap-signal::first-letter {
+    color: var(--signal);
+  }
 }

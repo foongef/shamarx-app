@@ -42,6 +42,24 @@ export class RedisService implements OnModuleDestroy {
     this.logger.log(`Subscribed to ${channel}`);
   }
 
+  /** Simple key-value get (uses publisher connection — not for hot paths). */
+  async get(key: string): Promise<string | null> {
+    return this.publisher.get(key);
+  }
+
+  /** Simple key-value set with optional TTL in seconds. */
+  async set(key: string, value: string, ttlSec?: number): Promise<void> {
+    if (ttlSec && ttlSec > 0) {
+      await this.publisher.set(key, value, 'EX', ttlSec);
+    } else {
+      await this.publisher.set(key, value);
+    }
+  }
+
+  async del(key: string): Promise<void> {
+    await this.publisher.del(key);
+  }
+
   async onModuleDestroy() {
     await this.publisher.quit();
     await this.subscriber.quit();
