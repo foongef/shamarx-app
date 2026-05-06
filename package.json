@@ -4,6 +4,7 @@
   "description": "Bot Trading System",
   "private": true,
   "license": "UNLICENSED",
+  "packageManager": "pnpm@10.14.0",
   "scripts": {
     "build": "nest build",
     "build:backend": "nest build",
