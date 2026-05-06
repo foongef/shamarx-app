@@ -2,16 +2,27 @@ services:
   postgres:
     image: postgres:16-alpine
     container_name: trading-bot-postgres
+    # wal_level=logical + slots/senders enable future zero-downtime migration
+    # to RDS via AWS DMS or native logical replication. No runtime cost when
+    # no replication clients are connected.
+    command:
+      - postgres
+      - -c
+      - wal_level=logical
+      - -c
+      - max_wal_senders=10
+      - -c
+      - max_replication_slots=10
     environment:
-      POSTGRES_USER: trading
-      POSTGRES_PASSWORD: trading
-      POSTGRES_DB: trading_bot
+      POSTGRES_USER: ${POSTGRES_USER:-trading}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-trading}
+      POSTGRES_DB: ${POSTGRES_DB:-trading_bot}
     ports:
       - '5432:5432'
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U trading -d trading_bot']
+      test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER:-trading} -d $${POSTGRES_DB:-trading_bot}']
       interval: 5s
       timeout: 5s
       retries: 5
@@ -40,7 +51,7 @@ services:
       # Override .env's localhost-flavored DATABASE_URL with the docker-network
       # hostname so the DB-first historical_data path actually reaches postgres.
       # Without this, the service falls back to the synthetic CSV.
-      DATABASE_URL: postgresql://trading:trading@postgres:5432/trading_bot?schema=public
+      DATABASE_URL: postgresql://${POSTGRES_USER:-trading}:${POSTGRES_PASSWORD:-trading}@postgres:5432/${POSTGRES_DB:-trading_bot}?schema=public
       REDIS_HOST: redis
       REDIS_PORT: '6379'
     depends_on:
@@ -65,18 +76,20 @@ services:
       - ../.env
     environment:
       PORT: '9000'
-      DATABASE_URL: postgresql://trading:trading@postgres:5432/trading_bot?schema=public
+      # DATABASE_URL comes from .env (SSM-sourced in prod); fall back to a
+      # docker-network-resolvable default for local dev.
+      DATABASE_URL: ${DATABASE_URL:-postgresql://${POSTGRES_USER:-trading}:${POSTGRES_PASSWORD:-trading}@postgres:5432/${POSTGRES_DB:-trading_bot}?schema=public}
       REDIS_HOST: redis
       REDIS_PORT: '6379'
       EXECUTION_SERVICE_URL: http://execution-service:8000
       MINIMAX_API_KEY: ${MINIMAX_API_KEY}
       LLM_MODEL: ${LLM_MODEL:-MiniMax-M2.5}
-      MAX_DAILY_LOSS_PERCENT: '3.0'
-      MAX_OPEN_POSITIONS: '3'
-      MAX_CONSECUTIVE_LOSSES: '3'
-      RISK_PER_TRADE_PERCENT: '1.0'
-      MAX_SPREAD_POINTS: '50'
-      CORS_ORIGIN: http://localhost:3000
+      MAX_DAILY_LOSS_PERCENT: ${MAX_DAILY_LOSS_PERCENT:-3.0}
+      MAX_OPEN_POSITIONS: ${MAX_OPEN_POSITIONS:-3}
+      MAX_CONSECUTIVE_LOSSES: ${MAX_CONSECUTIVE_LOSSES:-3}
+      RISK_PER_TRADE_PERCENT: ${RISK_PER_TRADE_PERCENT:-1.0}
+      MAX_SPREAD_POINTS: ${MAX_SPREAD_POINTS:-50}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:3000}
     depends_on:
       postgres:
         condition: service_healthy
@@ -85,7 +98,12 @@ services:
       execution-service:
         condition: service_healthy
 
+  # Frontend container — only used for local dev. In prod the Next.js app is
+  # served by AWS Amplify (built directly from the repo's apps/web/), not
+  # from this container. Activate locally with:
+  #   docker compose --profile local up
   web:
+    profiles: ['local']
     build:
       context: ..
       dockerfile: docker/Dockerfile.web

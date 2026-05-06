@@ -1,0 +1,132 @@
+name: Deploy backend
+
+# Triggers a backend deploy when code that affects the EC2-hosted services
+# changes. Frontend (apps/web) deploys are handled by Amplify directly via
+# its own webhook — see deploy-frontend.yml comments.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'libs/**'
+      - 'services/**'
+      - 'docker/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - '.github/workflows/deploy-backend.yml'
+  workflow_dispatch: {}
+
+permissions:
+  id-token: write   # for AWS OIDC
+  contents: read
+
+concurrency:
+  group: deploy-backend-${{ github.ref }}
+  cancel-in-progress: false # don't cancel mid-deploy; finish what we started
+
+jobs:
+  deploy:
+    name: SSM deploy to EC2
+    runs-on: ubuntu-latest
+
+    env:
+      AWS_REGION: ap-southeast-1
+
+    steps:
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.SHAMARX_PROD_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: gha-deploy-${{ github.run_id }}
+
+      - name: Trigger SSM Run Command
+        id: run_cmd
+        run: |
+          set -euo pipefail
+
+          CMD_ID=$(aws ssm send-command \
+            --instance-ids "${{ vars.EC2_INSTANCE_ID }}" \
+            --document-name "AWS-RunShellScript" \
+            --comment "GHA deploy ${{ github.sha }}" \
+            --parameters '{
+              "workingDirectory": ["/opt/trading-bot/repo"],
+              "executionTimeout": ["1800"],
+              "commands": [
+                "set -euxo pipefail",
+                "cd /opt/trading-bot/repo",
+                "git fetch --all --prune",
+                "git checkout main",
+                "git reset --hard origin/main",
+                "docker compose -f docker/docker-compose.yml pull --ignore-pull-failures",
+                "docker compose -f docker/docker-compose.yml up -d --build",
+                "sleep 20",
+                "docker compose -f docker/docker-compose.yml exec -T trading-bot pnpm prisma migrate deploy --schema=libs/prisma/schema.prisma || echo migrate-skipped",
+                "docker compose -f docker/docker-compose.yml ps"
+              ]
+            }' \
+            --query Command.CommandId \
+            --output text)
+
+          echo "command_id=$CMD_ID" >> "$GITHUB_OUTPUT"
+          echo "::notice::SSM command $CMD_ID started"
+
+      - name: Wait for command + stream output
+        run: |
+          set -euo pipefail
+          CMD_ID="${{ steps.run_cmd.outputs.command_id }}"
+          INSTANCE_ID="${{ vars.EC2_INSTANCE_ID }}"
+
+          # Poll every 10s for up to 25 minutes.
+          for i in $(seq 1 150); do
+            STATUS=$(aws ssm get-command-invocation \
+              --command-id "$CMD_ID" \
+              --instance-id "$INSTANCE_ID" \
+              --query Status --output text 2>/dev/null || echo "Pending")
+
+            echo "[$i] Status: $STATUS"
+
+            case "$STATUS" in
+              Success)
+                echo "::notice::Deploy succeeded"
+                aws ssm get-command-invocation \
+                  --command-id "$CMD_ID" \
+                  --instance-id "$INSTANCE_ID" \
+                  --query StandardOutputContent --output text | tail -120
+                exit 0
+                ;;
+              Failed|Cancelled|TimedOut)
+                echo "::error::Deploy failed with status $STATUS"
+                aws ssm get-command-invocation \
+                  --command-id "$CMD_ID" \
+                  --instance-id "$INSTANCE_ID" \
+                  --query StandardErrorContent --output text | tail -120
+                exit 1
+                ;;
+              Pending|InProgress|Delayed)
+                sleep 10
+                ;;
+              *)
+                echo "Unknown status: $STATUS"
+                sleep 10
+                ;;
+            esac
+          done
+
+          echo "::error::Timed out waiting for deploy after 25 minutes"
+          exit 1
+
+      - name: Health check
+        run: |
+          set -e
+          for i in $(seq 1 30); do
+            if curl -fsS --max-time 10 https://api.shamarx.com/api/strategy/health > /dev/null; then
+              echo "::notice::api.shamarx.com is healthy"
+              exit 0
+            fi
+            echo "Waiting for API... ($i/30)"
+            sleep 10
+          done
+          echo "::warning::API health check did not respond. The deploy may still have succeeded — check container logs."
+          exit 1
