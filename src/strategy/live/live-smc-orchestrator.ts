@@ -342,7 +342,7 @@ export class LiveSmcOrchestrator {
         maxDailyLossPercent: 4.0,
         maxConsecutiveLosses: 5,
         maxOpenPositions: ctx.maxOpenPositions ?? 4,
-        strategyVersion: 'V6-alt',
+        strategyVersion: 'SMC-V2',
       };
       const riskManager = new RiskManager(riskCfg);
       const totalLot = riskManager.calculateLotSize(
@@ -492,7 +492,7 @@ export class LiveSmcOrchestrator {
       maxDailyLossPercent: 4.0,
       maxConsecutiveLosses: 5,
       maxOpenPositions: this.defaultRiskCfg.maxOpenPositions,
-      strategyVersion: 'V6-alt',
+      strategyVersion: 'SMC-V2',
     });
   }
 

@@ -169,7 +169,7 @@ export class SmcLiveEvaluator {
       maxDailyLossPercent: 4.0,
       maxConsecutiveLosses: 5,
       maxOpenPositions: 4,
-      strategyVersion: 'V6-alt',
+      strategyVersion: 'SMC-V2',
     };
     const riskManager = new RiskManager(riskCfg);
     const totalLot = riskManager.calculateLotSize(slPoints, 60, 'WEAK_TREND', 50, entryPrice);

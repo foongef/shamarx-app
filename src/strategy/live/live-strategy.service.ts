@@ -62,7 +62,7 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
       this.logger.log('LIVE_MODE=false — live strategy is DORMANT (legacy BOS service still bound)');
       return;
     }
-    this.logger.log(`LIVE_MODE=true — V6-alt SMC live trading enabled for ${this.pairs.join(', ')}`);
+    this.logger.log(`LIVE_MODE=true — SMC-V2 live trading enabled for ${this.pairs.join(', ')}`);
     for (const pair of this.pairs) this.actionedSweeps.set(pair, new Set());
 
     // Restore orchestrator state from Redis so a container restart mid-day

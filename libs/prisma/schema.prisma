@@ -236,7 +236,7 @@ model LiveReplaySession {
   initialBalance  Float
   riskPercent     Float
   pairs           String[]  // ["XAUUSD","EURUSD","GBPUSD","USDJPY"]
-  strategyVersion String    @default("V6-alt")
+  strategyVersion String    @default("SMC-V2")
   startEquity     Float
   endEquity       Float?
   realizedPnl     Float     @default(0)
@@ -340,7 +340,7 @@ model BacktestRun {
   initialBalance Float
   riskPercent    Float
   withLlm        Boolean   @default(false)
-  strategyVersion String?  // V5.5b | V6 | V6-alt — null for legacy runs
+  strategyVersion String?  // V5.5b | V6 | SMC-V2 (legacy: V6-alt) — null for legacy runs
   status         String    @default("PENDING") // PENDING, RUNNING, COMPLETED, FAILED
   metrics        Json?
   errorMessage   String?

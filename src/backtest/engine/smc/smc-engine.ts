@@ -292,7 +292,7 @@ export function runSmcBacktest(
 
   const metrics = calculateMetrics(closed, config.initialBalance);
   logger.log(
-    `[V6-alt SMC ${config.symbol}] complete: ${metrics.totalTrades} trades, winRate=${metrics.winRate}%, PnL=$${metrics.totalPnl}, maxDD=${metrics.maxDrawdownPercent}%`,
+    `[SMC-V2 ${config.symbol}] complete: ${metrics.totalTrades} trades, winRate=${metrics.winRate}%, PnL=$${metrics.totalPnl}, maxDD=${metrics.maxDrawdownPercent}%`,
   );
   return { trades: closed, metrics };
 }

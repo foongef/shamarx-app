@@ -3,7 +3,8 @@ import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 const SUPPORTED_SYMBOLS = ['XAUUSD', 'GBPUSD', 'EURUSD', 'USDJPY', 'US30', 'NAS100'] as const;
-const SUPPORTED_STRATEGIES = ['V5.5b', 'V6', 'V6-alt'] as const;
+// 'SMC-V2' is canonical; 'V6-alt' kept as legacy alias for back-compat.
+const SUPPORTED_STRATEGIES = ['V5.5b', 'V6', 'V6-alt', 'SMC-V2'] as const;
 
 export class CreateBacktestDto {
   @ApiPropertyOptional({ example: 'XAUUSD', default: 'XAUUSD', enum: SUPPORTED_SYMBOLS })
@@ -40,13 +41,13 @@ export class CreateBacktestDto {
   withLlm?: boolean = false;
 
   @ApiPropertyOptional({
-    example: 'V6',
-    default: 'V6',
+    example: 'SMC-V2',
+    default: 'SMC-V2',
     enum: SUPPORTED_STRATEGIES,
-    description: 'Strategy version: V5.5b = legacy baseline, V6 = evolved, V6-alt = SMC/order-flow',
+    description: 'Strategy version: V5.5b = legacy baseline, V6 = evolved, SMC-V2 = SMC/order-flow (formerly V6-alt)',
   })
   @IsOptional()
   @IsString()
   @IsIn(SUPPORTED_STRATEGIES)
-  strategyVersion?: 'V5.5b' | 'V6' | 'V6-alt' = 'V6';
+  strategyVersion?: 'V5.5b' | 'V6' | 'V6-alt' | 'SMC-V2' = 'SMC-V2';
 }
