@@ -85,6 +85,31 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  /** Public-facing minimal pulse for the marketing landing page. Does NOT
+   *  expose entry hints, event detail, or position data — safe for
+   *  unauthenticated readers. Only enough to drive the visible "engine is
+   *  alive" animations: per-pair lastEvalAt + lastDecision + UTC counters. */
+  getPublicPulse() {
+    const pairs: Record<string, { lastEvalAt: string | null; lastDecision: string }> = {};
+    for (const sym of this.pairs) {
+      const e = this.lastEval.get(sym);
+      pairs[sym] = {
+        lastEvalAt: e?.ts ?? null,
+        lastDecision: e?.decision ?? 'unknown',
+      };
+    }
+    return {
+      serverNowIso: new Date().toISOString(),
+      pairs,
+      counters: {
+        evalsToday: this.counters.evals,
+        sweepsToday: this.counters.sweeps,
+        signalsToday: this.counters.signals,
+      },
+      isRunning: this.liveControl.isRunning(),
+    };
+  }
+
   /** Read-only snapshot for the dashboard Engine Worker view. Combines
    *  in-memory ring buffer + per-pair last-eval + orchestrator pending state.
    *  Live trading not affected — pure read. */
