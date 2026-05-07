@@ -240,6 +240,11 @@ async def get_historical_candles(
                     continue
                 ot = d.get("openTime") or d.get("open_time")
                 ot_dt = ot if isinstance(ot, datetime) else datetime.fromisoformat(_to_naive_iso(ot))
+                # Postgres "Candle"."openTime" is `timestamp` (no tz). Strip
+                # the offset before insert; MetaAPI uses UTC throughout so
+                # this is a lossless conversion.
+                if ot_dt.tzinfo is not None:
+                    ot_dt = ot_dt.astimezone(timezone.utc).replace(tzinfo=None)
                 new_rows.append((
                     sym_upper, tf_upper, ot_dt,
                     float(d["open"]), float(d["high"]), float(d["low"]),
