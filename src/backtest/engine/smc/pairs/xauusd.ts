@@ -56,4 +56,16 @@ export const XAUUSD_SMC_CONFIG: SmcPairConfig = {
   // exhausted moves or news spikes, the filter blocks bad CONTINUATION setups.
   autoModeFilter: true,
 
+  // Step 4.x — anchor-sweep filter. Use Previous Day High/Low + Asian Range
+  // as the only valid sweep targets, instead of any recent H1 swing. Gold's
+  // intra-day chop produces lots of generic swings that aren't real liquidity
+  // grabs; anchor levels are where the actual stops cluster. Live-replay
+  // showed 7 TP exits / 123 SL exits without this filter — the SL bias was
+  // from low-quality sweeps. Mirrors what the other 3 pairs already do.
+  useAnchorSweeps: true,
+
+  // Require the H1 bar AFTER the sweep to displace ≥ 0.5 × ATR in the trade
+  // direction. Filters chop where the wick happens but no real momentum
+  // follows. 0.5 matches EURUSD/GBPUSD/USDJPY tuning.
+  anchorDisplacementAtr: 0.5,
 };
