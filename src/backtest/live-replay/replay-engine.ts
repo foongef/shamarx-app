@@ -15,8 +15,9 @@
  */
 
 import { Logger } from '@nestjs/common';
-import { LiveSmcOrchestrator } from '../../strategy/live/live-smc-orchestrator';
+import { LiveSmcOrchestrator, PrecomputedIndicators } from '../../strategy/live/live-smc-orchestrator';
 import { BacktestCandle } from '../engine/types';
+import { computeIndicators } from '../engine/indicator-calculator';
 import { SimulatedBroker, ClosedPosition, SimulatedPosition } from './simulated-broker';
 
 export interface ReplayConfig {
@@ -78,6 +79,26 @@ export class ReplayEngine {
     const endMs = new Date(cfg.endDate).getTime();
     const maxOpenPositions = cfg.maxOpenPositions ?? 4;
 
+    // Precompute indicators ONCE per pair over the full window. The
+    // orchestrator then reads `arr[cursor-1]` without recomputing — drops
+    // total replay work from O(n²) to O(n). Same numerical result as
+    // recomputing per-call because indicator values are deterministic
+    // given the candle prefix.
+    const t0 = Date.now();
+    const indicators: Record<string, PrecomputedIndicators> = {};
+    for (const sym of cfg.pairs) {
+      const b = candles[sym];
+      if (!b) continue;
+      indicators[sym] = {
+        m15: computeIndicators(b.m15),
+        h1: computeIndicators(b.h1),
+        d1: b.d1.length > 30 ? computeIndicators(b.d1) : null,
+      };
+    }
+    this.logger.log(
+      `Precomputed indicators for ${cfg.pairs.length} pairs in ${((Date.now() - t0) / 1000).toFixed(1)}s`,
+    );
+
     const timeline = this.buildTimeline(candles, startMs, endMs);
     this.logger.log(
       `Replay timeline: ${timeline.length} M15 events across ${cfg.pairs.length} pairs`,
@@ -132,23 +153,28 @@ export class ReplayEngine {
         );
       }
 
-      const m15Slice = bundle.m15.slice(0, cur.m15);
-      const h1Slice = bundle.h1.slice(0, cur.h1);
-      const d1Slice = bundle.d1.slice(0, cur.d1);
-
       // Need at least 30 M15 + 30 H1 for the orchestrator to do anything.
-      if (m15Slice.length < 30 || h1Slice.length < 30) continue;
+      if (cur.m15 < 30 || cur.h1 < 30) continue;
 
-      // 3. Call the orchestrator. It maintains per-pair pending/cooldown
-      //    state internally — same code path live will use.
-      const signal = this.orchestrator.evaluate(symbol, m15Slice, h1Slice, d1Slice, {
-        accountEquity: broker.getEquity(),
-        openDirections: broker.getOpenDirections(symbol),
-        totalOpenPositions: broker.totalOpenCount(),
-        riskPercent: cfg.riskPercent,
-        nowIso: candle.openTime,
-        maxOpenPositions,
-      });
+      // 3. Call the orchestrator with FULL candle arrays + cursor — no
+      //    array slicing per call (was O(n²)). Same numerical result as
+      //    passing slices because all downstream logic is index-based.
+      const signal = this.orchestrator.evaluate(
+        symbol,
+        bundle.m15,
+        bundle.h1,
+        bundle.d1,
+        {
+          accountEquity: broker.getEquity(),
+          openDirections: broker.getOpenDirections(symbol),
+          totalOpenPositions: broker.totalOpenCount(),
+          riskPercent: cfg.riskPercent,
+          nowIso: candle.openTime,
+          maxOpenPositions,
+        },
+        indicators[symbol],
+        cur,
+      );
       if (!signal) continue;
 
       // 4. Place order via simulated broker — opens 1 position per leg.

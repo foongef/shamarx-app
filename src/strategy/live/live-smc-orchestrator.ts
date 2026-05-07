@@ -23,9 +23,21 @@ import { RiskManager } from '../../backtest/engine/risk-manager';
 import { getSmcPairConfig } from '../../backtest/engine/smc/pairs';
 import { detectSweep } from '../../backtest/engine/smc/sweep-detector';
 import { getD1Bias } from '../../backtest/engine/strategy-evaluator';
-import { BacktestCandle, D1Bias, EngineConfig } from '../../backtest/engine/types';
+import { BacktestCandle, D1Bias, EngineConfig, IndicatorState } from '../../backtest/engine/types';
 import { PendingSetup, SmcMode } from '../../backtest/engine/smc/types';
 import { SmcLiveSignal } from './smc-live-evaluator';
+
+/**
+ * Optional precomputed indicators — replay passes these so we don't
+ * recompute O(n) indicator arrays on every M15 close (drops the replay
+ * from O(n²) to O(n)). Live leaves these unset and computeIndicators is
+ * called fresh each call (still <50ms on the live buffers).
+ */
+export interface PrecomputedIndicators {
+  m15: IndicatorState;
+  h1: IndicatorState;
+  d1: IndicatorState | null;
+}
 
 /** Per-pair runtime state. Lifetime: until session end / process restart. */
 export interface OrchestratorState {
@@ -133,8 +145,27 @@ export class LiveSmcOrchestrator {
     h1Candles: BacktestCandle[],
     d1Candles: BacktestCandle[],
     ctx: LiveContext,
+    /**
+     * Optional precomputed indicators. Replay passes these (parallel to
+     * full-window candle arrays) to avoid recomputing on every M15 close.
+     * Live leaves them undefined and we recompute fresh — cheap on the
+     * small live buffers (M15=100, H1=500, D1=400 typical).
+     */
+    precomputed?: PrecomputedIndicators,
+    /**
+     * Optional "as-of" cursor. When passed, the candle arrays are treated
+     * as full historical arrays and we use cursor.{m15,h1,d1} as the
+     * effective length (slicing is implicit). Avoids O(n²) array.slice()
+     * in replay loops. Live doesn't pass cursor — uses arr.length as-is.
+     */
+    cursor?: { m15: number; h1: number; d1: number },
   ): SmcLiveSignal | null {
-    if (m15Candles.length < 30 || h1Candles.length < 30) return null;
+    // Effective lengths — cursor lets replay pass full arrays + index.
+    const m15Len = cursor ? cursor.m15 : m15Candles.length;
+    const h1Len = cursor ? cursor.h1 : h1Candles.length;
+    const d1Len = cursor ? cursor.d1 : d1Candles.length;
+
+    if (m15Len < 30 || h1Len < 30) return null;
 
     const cfg = getSmcPairConfig(symbol);
     const instrumentConfig = getInstrumentConfig(symbol);
@@ -142,20 +173,27 @@ export class LiveSmcOrchestrator {
     const factor = Math.pow(10, pricePrecision);
 
     const state = this.getOrCreateState(symbol);
-    const lastM15 = m15Candles[m15Candles.length - 1];
-    const lastClosedH1Idx = h1Candles.length - 1;
+    const lastM15 = m15Candles[m15Len - 1];
+    const lastClosedH1Idx = h1Len - 1;
     const lastClosedH1 = h1Candles[lastClosedH1Idx];
 
-    const m15Indicators = computeIndicators(m15Candles);
-    const h1Indicators = computeIndicators(h1Candles);
-    const d1Indicators = d1Candles.length > 30 ? computeIndicators(d1Candles) : null;
+    // Indicator state — precomputed for replay (parallel to FULL arrays),
+    // recomputed for live (small buffer). Either way `m15Len-1` is the
+    // correct index for "now" because slices start at 0.
+    const m15Indicators = precomputed?.m15 ?? computeIndicators(m15Candles);
+    const h1Indicators = precomputed?.h1 ?? computeIndicators(h1Candles);
+    const d1Indicators = precomputed
+      ? precomputed.d1
+      : d1Candles.length > 30
+        ? computeIndicators(d1Candles)
+        : null;
     // D1 bias / ADX at the current evaluation moment — computed once and
     // reused for both the sweep detection and the formatted reason string.
     const liveD1Bias: D1Bias = d1Indicators
       ? getD1Bias(d1Candles, d1Indicators, lastM15.openTime)
       : 'NEUTRAL';
     const liveD1Adx = d1Indicators
-      ? d1Indicators.adx14[d1Candles.length - 1] || 0
+      ? d1Indicators.adx14[d1Len - 1] || 0
       : 0;
 
     // ─── 1. Sweep detection on each newly-closed H1 ────────────────────────
@@ -248,7 +286,7 @@ export class LiveSmcOrchestrator {
         continue;
       }
 
-      const m15Atr = m15Indicators.atr14[m15Candles.length - 1];
+      const m15Atr = m15Indicators.atr14[m15Len - 1];
       const slBuffer =
         !isNaN(m15Atr) && m15Atr > 0
           ? m15Atr * cfg.slBufferAtrM15
