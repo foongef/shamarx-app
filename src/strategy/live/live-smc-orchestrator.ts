@@ -33,8 +33,11 @@ export interface OrchestratorState {
   pending: PendingSetup[];
   /** openTime of the last H1 bar we ran sweep detection on (avoids reprocessing). */
   lastProcessedH1Time: string | null;
-  /** M15 openTime when cooldown lifts; null = no cooldown. */
-  cooldownUntil: string | null;
+  /** Number of M15 bars to skip before we can fire a new entry.
+   *  Decrements once per evaluate() call (= once per M15 close). Mirrors
+   *  V6-alt's `cooldownUntil = i + N` bar-index logic exactly: weekend gaps
+   *  are skipped because we only count actual evaluator invocations. */
+  cooldownBarsRemaining: number;
   /** H1-sweep openTimes already entered this session (legacy dedup). */
   actionedSweeps: Set<string>;
   /** V6-alt RiskManager — gates trades on daily loss, consecutive losses,
@@ -93,7 +96,7 @@ export class LiveSmcOrchestrator {
       out[sym] = {
         pending: s.pending,
         lastProcessedH1Time: s.lastProcessedH1Time,
-        cooldownUntil: s.cooldownUntil,
+        cooldownBarsRemaining: s.cooldownBarsRemaining,
         actionedSweeps: Array.from(s.actionedSweeps),
       };
     }
@@ -106,7 +109,9 @@ export class LiveSmcOrchestrator {
       this.states.set(sym, {
         pending: raw.pending ?? [],
         lastProcessedH1Time: raw.lastProcessedH1Time ?? null,
-        cooldownUntil: raw.cooldownUntil ?? null,
+        // Migrate legacy snapshots: if we see the old wall-clock field,
+        // reset the bar counter (better than incorrectly translating times).
+        cooldownBarsRemaining: typeof raw.cooldownBarsRemaining === 'number' ? raw.cooldownBarsRemaining : 0,
         actionedSweeps: new Set(raw.actionedSweeps ?? []),
         riskManager: this.buildRiskManager(sym),
       });
@@ -194,7 +199,13 @@ export class LiveSmcOrchestrator {
     );
 
     // ─── 3. Trade gates ────────────────────────────────────────────────────
-    if (state.cooldownUntil && lastM15.openTime < state.cooldownUntil) return null;
+    // Bar-count cooldown: decrement once per evaluator call (= once per M15
+    // close). Mirrors V6-alt's `i + N` exactly, so weekend gaps don't erase
+    // the cooldown the way wall-clock arithmetic would.
+    if (state.cooldownBarsRemaining > 0) {
+      state.cooldownBarsRemaining--;
+      return null;
+    }
 
     if ((cfg.newsBlackoutMinutes ?? 0) > 0) {
       const { isInBlackout } = require('../../backtest/engine/news-calendar');
@@ -359,10 +370,11 @@ export class LiveSmcOrchestrator {
         };
       }
 
-      // Mark consumed → remove from queue, dedup, set cooldown.
+      // Mark consumed → remove from queue, dedup, set 1-bar cooldown
+      // (matches V6-alt's `cooldownUntil = i + 1; break;` after entry).
       state.pending.splice(s, 1);
       state.actionedSweeps.add(sweepTime);
-      state.cooldownUntil = this.advanceM15(lastM15.openTime, 1);
+      state.cooldownBarsRemaining = 1;
 
       return signal;
     }
@@ -404,12 +416,10 @@ export class LiveSmcOrchestrator {
     if (exitReason === 'TP') bars = 2;
     else if (exitReason === 'SL') bars = cfg.slCooldownBars;
     else bars = 1;
-    state.cooldownUntil = this.advanceM15(exitTimeIso, bars);
+    state.cooldownBarsRemaining = Math.max(state.cooldownBarsRemaining, bars);
 
     // Tell RiskManager — populates dailyPnl, consecutiveLosses, etc. so
-    // canTrade() can pause on slumps. PnL is required to drive these
-    // counters; if caller didn't provide, we treat as a -1R loss to be
-    // conservative (better to over-pause than over-trade).
+    // canTrade() can pause on slumps.
     if (typeof pnl === 'number') {
       const reasonForRm =
         exitReason === 'SL' ? 'SL'
@@ -427,7 +437,7 @@ export class LiveSmcOrchestrator {
       s = {
         pending: [],
         lastProcessedH1Time: null,
-        cooldownUntil: null,
+        cooldownBarsRemaining: 0,
         actionedSweeps: new Set(),
         riskManager: this.buildRiskManager(symbol),
       };
@@ -446,12 +456,6 @@ export class LiveSmcOrchestrator {
       maxOpenPositions: this.defaultRiskCfg.maxOpenPositions,
       strategyVersion: 'V6-alt',
     });
-  }
-
-  private advanceM15(fromIso: string, bars: number): string {
-    // 15 min × bars
-    const t = new Date(fromIso).getTime() + bars * 15 * 60 * 1000;
-    return new Date(t).toISOString();
   }
 
   private formatReason(
