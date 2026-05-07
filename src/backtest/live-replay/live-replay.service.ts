@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '@app/prisma';
-import { SmcLiveEvaluator } from '../../strategy/live/smc-live-evaluator';
+import { LiveSmcOrchestrator } from '../../strategy/live/live-smc-orchestrator';
 import { ReplayEngine, CandleBundle } from './replay-engine';
 import { StartReplayDto, REPLAY_DEFAULT_PAIRS } from './dto/start-replay.dto';
 import { BacktestCandle } from '../engine/types';
@@ -13,7 +13,7 @@ export class LiveReplayService {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly evaluator: SmcLiveEvaluator,
+    private readonly orchestrator: LiveSmcOrchestrator,
   ) {}
 
   async createAndRun(dto: StartReplayDto): Promise<{ id: string; status: string }> {
@@ -54,7 +54,7 @@ export class LiveReplayService {
         }
       }
 
-      const engine = new ReplayEngine(this.evaluator);
+      const engine = new ReplayEngine(this.orchestrator);
       const result = engine.run(
         {
           startDate: dto.startDate,

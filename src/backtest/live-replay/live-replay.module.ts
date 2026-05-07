@@ -1,10 +1,10 @@
 import { Module } from '@nestjs/common';
 import { LiveReplayController } from './live-replay.controller';
 import { LiveReplayService } from './live-replay.service';
-import { SmcLiveEvaluator } from '../../strategy/live/smc-live-evaluator';
+import { LiveSmcOrchestrator } from '../../strategy/live/live-smc-orchestrator';
 
 @Module({
   controllers: [LiveReplayController],
-  providers: [LiveReplayService, SmcLiveEvaluator],
+  providers: [LiveReplayService, LiveSmcOrchestrator],
 })
 export class LiveReplayModule {}

@@ -23,12 +23,14 @@ import {
   SmcLiveSignal,
   LiveEvaluationContext,
 } from './smc-live-evaluator';
+import { LiveSmcOrchestrator } from './live-smc-orchestrator';
 import { LiveControlService } from './live-control.service';
 import { BacktestCandle } from '../../backtest/engine/types';
 
 const M15_BUFFER = 100;
 const H1_BUFFER = 500;
 const D1_BUFFER = 400;
+const ORCHESTRATOR_STATE_KEY = 'live:orchestrator:state';
 
 @Injectable()
 export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
@@ -47,6 +49,7 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
     private readonly httpService: HttpService,
     private readonly config: ConfigService,
     private readonly liveControl: LiveControlService,
+    private readonly orchestrator: LiveSmcOrchestrator,
   ) {
     this.liveMode = (this.config.get<string>('LIVE_MODE') || 'false').toLowerCase() === 'true';
     const pairsCsv = this.config.get<string>('STRATEGY_PAIRS') || 'XAUUSD,EURUSD,GBPUSD,USDJPY';
@@ -61,6 +64,19 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
     }
     this.logger.log(`LIVE_MODE=true — V6-alt SMC live trading enabled for ${this.pairs.join(', ')}`);
     for (const pair of this.pairs) this.actionedSweeps.set(pair, new Set());
+
+    // Restore orchestrator state from Redis so a container restart mid-day
+    // doesn't drop the pending-sweeps queue or cooldown timers.
+    try {
+      const raw = await this.redis.get(ORCHESTRATOR_STATE_KEY);
+      if (raw) {
+        this.orchestrator.restore(JSON.parse(raw));
+        this.logger.log('Restored orchestrator state from Redis');
+      }
+    } catch (err) {
+      this.logger.warn(`Could not restore orchestrator state: ${(err as Error).message}`);
+    }
+
     await this.redis.subscribe(REDIS_CHANNELS.CANDLE_STORED, (message) => {
       try {
         const data = JSON.parse(message);
@@ -85,30 +101,33 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
     this.subscribed = false;
   }
 
-  /** Public entrypoint for manual / scheduled triggers (e.g. from controllers) */
+  /**
+   * Public entrypoint for manual / scheduled triggers (e.g. from controllers).
+   *
+   * Routes through `LiveSmcOrchestrator` which mirrors V6-alt's per-pair
+   * backtest logic: a sweep stays in a pending queue across multiple M15
+   * bars (so we can take it on bar 14:15, 14:30, 14:45 if 14:00 fails some
+   * gate), with post-trade cooldowns. The legacy stateless `SmcLiveEvaluator`
+   * is kept as a primitive — used by the orchestrator's internals.
+   */
   async evaluatePair(symbol: string): Promise<SmcLiveSignal | null> {
-    const [m15, h1, d1, openPositions, account] = await Promise.all([
+    const [m15, h1, d1, openPositions, allOpenPositions, account] = await Promise.all([
       this.fetchCandles(symbol, Timeframe.M15, M15_BUFFER),
       this.fetchCandles(symbol, Timeframe.H1, H1_BUFFER),
       this.fetchCandles(symbol, Timeframe.D1, D1_BUFFER),
       this.fetchOpenPositions(symbol),
+      this.fetchAllOpenPositions(),
       this.fetchAccount(),
     ]);
 
-    const ctx: LiveEvaluationContext = {
+    const signal = this.orchestrator.evaluate(symbol, m15, h1, d1, {
       accountEquity: account.equity,
       openDirections: new Set(openPositions.map((p) => p.side as 'BUY' | 'SELL')),
-      recentlyEnteredSweepTimes: this.actionedSweeps.get(symbol) ?? new Set(),
-    };
-
-    const signal = this.evaluator.evaluate(
-      symbol,
-      m15,
-      h1,
-      d1,
-      ctx,
-      this.liveControl.getRiskPercent(),
-    );
+      totalOpenPositions: allOpenPositions.length,
+      riskPercent: this.liveControl.getRiskPercent(),
+      nowIso: m15[m15.length - 1]?.openTime ?? new Date().toISOString(),
+      maxOpenPositions: 4,
+    });
     if (!signal) {
       this.logger.debug(`[${symbol}] no signal`);
       return null;
@@ -116,8 +135,17 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
 
     this.logger.log(`[${symbol}] signal → ${signal.reason}`);
     await this.placeOrder(signal);
-    this.actionedSweeps.get(symbol)?.add(signal.h1SweepTime);
+    this.orchestrator.recordEntry(symbol, signal);
+    // Persist state so a restart mid-cooldown doesn't lose the timer.
+    this.persistOrchestratorState().catch((err) =>
+      this.logger.warn(`Could not persist orchestrator state: ${(err as Error).message}`),
+    );
     return signal;
+  }
+
+  private async persistOrchestratorState(): Promise<void> {
+    const snapshot = this.orchestrator.serialize();
+    await this.redis.set(ORCHESTRATOR_STATE_KEY, JSON.stringify(snapshot));
   }
 
   /**
@@ -235,6 +263,46 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
     return res.data || [];
   }
 
+  /**
+   * All open positions across the account — used by the orchestrator to
+   * enforce a portfolio-wide `maxOpenPositions` cap (matches V6-alt's
+   * RiskManager.canTrade which we don't yet wire into live).
+   */
+  private async fetchAllOpenPositions(): Promise<Array<{ ticket: number; symbol: string; side: string }>> {
+    const url = `${SERVICE_URLS.EXECUTION}/positions`;
+    const res = await firstValueFrom(this.httpService.get(url));
+    return res.data || [];
+  }
+
+  /**
+   * Retry wrapper for broker order placement — MetaAPI occasionally
+   * returns transient 5xx or websocket-disconnected errors. We retry up
+   * to 2 times with linear backoff before giving up; permanent errors
+   * (4xx like insufficient margin) bubble up immediately.
+   */
+  private async postOrderWithRetry(body: Record<string, unknown>): Promise<{ data: any }> {
+    const MAX_ATTEMPTS = 3;
+    let lastErr: unknown = null;
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      try {
+        return await firstValueFrom(
+          this.httpService.post(`${SERVICE_URLS.EXECUTION}/orders`, body),
+        );
+      } catch (err) {
+        lastErr = err;
+        const status = (err as any)?.response?.status as number | undefined;
+        // Don't retry permanent failures — bad request, insufficient margin, etc.
+        if (status && status >= 400 && status < 500) throw err;
+        if (attempt < MAX_ATTEMPTS) {
+          const delay = attempt * 500;
+          this.logger.warn(`order placement attempt ${attempt} failed (${(err as Error).message}); retrying in ${delay}ms`);
+          await new Promise((r) => setTimeout(r, delay));
+        }
+      }
+    }
+    throw lastErr;
+  }
+
   private async fetchAccount(): Promise<{ balance: number; equity: number }> {
     const url = `${SERVICE_URLS.EXECUTION}/account`;
     const res = await firstValueFrom(this.httpService.get(url));
@@ -242,6 +310,15 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async placeOrder(signal: SmcLiveSignal): Promise<void> {
+    const slPoints = Math.abs(signal.entryPrice - signal.slPrice);
+    // Slippage guardrail: live broker fills can drift from the intended
+    // entry. If the actual fill price differs from `signal.entryPrice` by
+    // more than 30% of the SL distance, the trade's risk-reward is
+    // distorted enough that the backtest signal no longer applies — we
+    // immediately close that leg. 30% mirrors V6-alt's tolerance for
+    // out-of-band executions implicit in its commission model.
+    const MAX_SLIPPAGE_FRACTION = 0.30;
+
     // Each leg becomes a separate broker order.
     for (const leg of signal.legs) {
       const clientOrderId = randomUUID();
@@ -251,18 +328,37 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
       if (dupe) continue;
 
       try {
-        const res = await firstValueFrom(
-          this.httpService.post(`${SERVICE_URLS.EXECUTION}/orders`, {
-            symbol: signal.symbol,
-            side: signal.side,
-            lotSize: leg.lotSize,
-            entryPrice: signal.entryPrice,
-            slPrice: signal.slPrice,
-            tpPrice: leg.tpPrice,
-            comment: `SMC:${clientOrderId.slice(0, 8)}`,
-          }),
-        );
+        const res = await this.postOrderWithRetry({
+          symbol: signal.symbol,
+          side: signal.side,
+          lotSize: leg.lotSize,
+          entryPrice: signal.entryPrice,
+          slPrice: signal.slPrice,
+          tpPrice: leg.tpPrice,
+          comment: `SMC:${clientOrderId.slice(0, 8)}`,
+        });
         const order = res.data;
+
+        const fillPrice = typeof order.entryPrice === 'number' && order.entryPrice > 0
+          ? order.entryPrice
+          : signal.entryPrice;
+        const slippage = Math.abs(fillPrice - signal.entryPrice);
+        const slippageFrac = slPoints > 0 ? slippage / slPoints : 0;
+        if (slippageFrac > MAX_SLIPPAGE_FRACTION) {
+          this.logger.warn(
+            `[${signal.symbol}] excessive slippage ${(slippageFrac * 100).toFixed(1)}% — closing ticket=${order.mt5Ticket} immediately`,
+          );
+          if (order.mt5Ticket) {
+            try {
+              await firstValueFrom(
+                this.httpService.post(`${SERVICE_URLS.EXECUTION}/positions/${order.mt5Ticket}/close`, {}),
+              );
+            } catch (closeErr) {
+              this.logger.error(`emergency close failed ticket=${order.mt5Ticket}: ${(closeErr as Error).message}`);
+            }
+          }
+          continue;
+        }
 
         // Persist a CandidateTrade + Trade so dashboard + journal pick it up.
         const candidate = await this.prisma.candidateTrade.create({
@@ -284,6 +380,7 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
           },
         });
 
+        const trailKey: 'TP1' | 'RUNNER' = leg.setupTags.includes('TP1') ? 'TP1' : 'RUNNER';
         await this.prisma.trade.create({
           data: {
             candidateId: candidate.id,
@@ -301,6 +398,15 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
               { status: 'PENDING', timestamp: new Date().toISOString() },
               { status: 'OPEN', timestamp: new Date().toISOString(), ticket: order.mt5Ticket },
             ],
+            // Seed trade-management state so LivePositionManagerService has
+            // what it needs on the next M15 close (BE flag, original SL,
+            // peak price, trail-config selector).
+            managementState: {
+              breakevenActivated: false,
+              peakFavorablePrice: signal.entryPrice,
+              originalSlPrice: signal.slPrice,
+              trailKey,
+            } as any,
           },
         });
 

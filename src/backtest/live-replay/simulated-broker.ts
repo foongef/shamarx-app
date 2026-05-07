@@ -8,10 +8,10 @@
  * Fill model:
  *   - Position opens at signal.entryPrice the moment the signal fires
  *     (idealized; live has slippage we don't model).
- *   - Each subsequent M15 candle is checked: if low <= SL (BUY) or high >=
- *     TP (BUY), position closes at SL/TP price respectively. SELL is the
- *     mirror. If both touched in the same bar, we close at SL (worst-case
- *     for the trader — same convention as the legacy backtest).
+ *   - Each subsequent M15 candle: V6-alt's `updatePositionManagement`
+ *     runs first (BE move + trail), THEN SL/TP hit checks.
+ *   - SL takes priority on ambiguous bars (worst-case fill convention,
+ *     matches V6-alt).
  *
  * PnL formula matches src/backtest/engine/position-simulator.ts:264:
  *   priceDiff = (exitPrice - entryPrice) * (BUY:+1, SELL:-1)
@@ -20,20 +20,25 @@
  */
 
 import { SmcLiveSignal } from '../../strategy/live/smc-live-evaluator';
-import { BacktestCandle } from '../engine/types';
+import {
+  BacktestCandle,
+  SimulatedPosition as V6SimulatedPosition,
+} from '../engine/types';
 import { getInstrumentConfig } from '../engine/instrument-config';
+import { getSpread } from '../engine/spread-model';
+import { updatePositionManagement } from '../engine/position-simulator';
+import { SMC_TP1_TRAIL, SMC_RUNNER_TRAIL } from '../engine/smc/trail-config';
 import { randomUUID } from 'crypto';
 
-export interface SimulatedPosition {
+/**
+ * Live-replay extends V6-alt's SimulatedPosition with id/symbol/mode/reason
+ * fields needed to persist DB rows. Inheritance lets us pass instances
+ * straight to V6-alt's `updatePositionManagement` without conversion.
+ */
+export interface SimulatedPosition extends V6SimulatedPosition {
   id: string;
   symbol: string;
-  side: 'BUY' | 'SELL';
-  lotSize: number;
-  entryPrice: number;
-  slPrice: number;
-  tpPrice: number;
-  openedAt: string;
-  setupTags: string[];
+  openedAt: string;     // duplicates entryTime for clarity in DB rows
   mode: 'REVERSAL' | 'CONTINUATION';
   reason: string;
 }
@@ -56,30 +61,50 @@ export class SimulatedBroker {
   }
 
   /**
-   * Check open positions for `symbol` against the candle. Closes any that
-   * hit SL/TP, updates balance, returns the list of closed positions.
+   * Check open positions for `symbol` against the candle.
+   * Order matches V6-alt's smc-engine.ts:101-118:
+   *   1. Update trade management (BE move + trail) using candle high/low.
+   *   2. Check SL/TP hit against the (possibly updated) SL/TP.
+   *   3. Close on hit; SL takes priority on ambiguous bars.
    */
   processCandle(symbol: string, candle: BacktestCandle): ClosedPosition[] {
     const open = this.positions.get(symbol) ?? [];
     if (open.length === 0) return [];
 
+    const spread = getSpread(symbol, candle.openTime);
+
+    // Step 1: BE + trail. Each call returns either the same position
+    // (no change) or a new one with updated SL/peak/breakevenActivated/tpPrice.
+    const managed = open.map((p) => {
+      const updated = updatePositionManagement(p, candle, spread);
+      // updatePositionManagement returns V6SimulatedPosition; we need to
+      // re-attach our extension fields when it returns a NEW object.
+      return updated === p
+        ? p
+        : ({ ...updated, id: p.id, symbol: p.symbol, openedAt: p.openedAt, mode: p.mode, reason: p.reason } as SimulatedPosition);
+    });
+    this.positions.set(symbol, managed);
+
     const stillOpen: SimulatedPosition[] = [];
     const justClosed: ClosedPosition[] = [];
 
-    for (const pos of open) {
+    for (const pos of managed) {
       const slHit = pos.side === 'BUY'
         ? candle.low <= pos.slPrice
         : candle.high >= pos.slPrice;
-      const tpHit = pos.side === 'BUY'
-        ? candle.high >= pos.tpPrice
-        : candle.low <= pos.tpPrice;
+      // tpPrice is nullable — V6-alt removes it once price travels far
+      // enough (tpRemovalR), letting the runner go on trail only.
+      const tpHit = pos.tpPrice !== null && (
+        pos.side === 'BUY'
+          ? candle.high >= pos.tpPrice
+          : candle.low <= pos.tpPrice
+      );
 
       if (slHit) {
-        // SL takes priority on ambiguous bars (worst-case fill convention).
         const closed = this.close(pos, pos.slPrice, candle.openTime, 'SL');
         justClosed.push(closed);
       } else if (tpHit) {
-        const closed = this.close(pos, pos.tpPrice, candle.openTime, 'TP');
+        const closed = this.close(pos, pos.tpPrice as number, candle.openTime, 'TP');
         justClosed.push(closed);
       } else {
         stillOpen.push(pos);
@@ -96,11 +121,17 @@ export class SimulatedBroker {
 
   /**
    * Open a position per leg. Returns the new positions (caller persists to DB).
+   * Each leg gets its own trailConfig — TP1 leg uses SMC_TP1_TRAIL, runner
+   * uses SMC_RUNNER_TRAIL — same per-leg config V6-alt assigns.
    */
   placeOrder(signal: SmcLiveSignal, openTime: string): SimulatedPosition[] {
     const opened: SimulatedPosition[] = [];
     const list = this.positions.get(signal.symbol) ?? [];
+
     for (const leg of signal.legs) {
+      const isTp1Leg = leg.setupTags.includes('TP1');
+      const trail = isTp1Leg ? SMC_TP1_TRAIL : SMC_RUNNER_TRAIL;
+
       const pos: SimulatedPosition = {
         id: randomUUID(),
         symbol: signal.symbol,
@@ -108,9 +139,19 @@ export class SimulatedBroker {
         lotSize: leg.lotSize,
         entryPrice: signal.entryPrice,
         slPrice: signal.slPrice,
+        originalSlPrice: signal.slPrice,
         tpPrice: leg.tpPrice,
         openedAt: openTime,
+        entryTime: openTime,
+        entryIndex: 0, // not used by trade management
         setupTags: leg.setupTags,
+        h1Bias: signal.side === 'BUY' ? 'BULLISH' : 'BEARISH',
+        rsiAtEntry: 50,
+        atrAtEntry: 0,
+        breakevenActivated: false,
+        peakFavorablePrice: signal.entryPrice,
+        trailConfig: trail,
+        regimeAtEntry: 'WEAK_TREND',
         mode: signal.mode,
         reason: signal.reason,
       };
@@ -136,7 +177,7 @@ export class SimulatedBroker {
     return result;
   }
 
-  /** Open BUY/SELL directions for the given symbol — feeds LiveEvaluationContext. */
+  /** Open BUY/SELL directions for the given symbol. */
   getOpenDirections(symbol: string): Set<'BUY' | 'SELL'> {
     const set = new Set<'BUY' | 'SELL'>();
     for (const p of this.positions.get(symbol) ?? []) set.add(p.side);

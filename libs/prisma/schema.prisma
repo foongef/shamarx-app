@@ -181,6 +181,12 @@ model Trade {
   pnl            Float?
   closedAt       DateTime?
   statusHistory  Json     @default("[]")
+  // Trade-management state — read/written by the live position manager on
+  // every M15 close. Mirrors V6-alt's SimulatedPosition fields used by
+  // updatePositionManagement (breakevenActivated, peakFavorablePrice,
+  // originalSlPrice, trailConfig key — TP1 vs RUNNER). Stored as JSON so
+  // adding new tuning knobs doesn't require a schema migration.
+  managementState Json    @default("{}")
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
@@ -259,7 +265,7 @@ model LiveReplayTrade {
   entryPrice    Float
   closePrice    Float?
   slPrice       Float
-  tpPrice       Float
+  tpPrice       Float?   // nullable — trade management can remove TP and rely on trail
   status        String   @default("OPEN") // OPEN, CLOSED
   exitReason    String?  // SL, TP, FORCED_CLOSE
   pnl           Float?

@@ -15,6 +15,7 @@ import { PrismaService } from '@app/prisma';
 import { RedisService, REDIS_CHANNELS } from '@app/redis';
 import { Timeframe, SERVICE_URLS } from '@app/common';
 import { LiveControlService } from './live-control.service';
+import { LiveSmcOrchestrator } from './live-smc-orchestrator';
 
 interface BrokerPosition {
   ticket: number;
@@ -42,6 +43,7 @@ export class PositionMonitorService implements OnModuleInit {
     private readonly config: ConfigService,
     @Inject(forwardRef(() => LiveControlService))
     private readonly liveControl: LiveControlService,
+    private readonly orchestrator: LiveSmcOrchestrator,
   ) {
     this.liveMode = (this.config.get<string>('LIVE_MODE') || 'false').toLowerCase() === 'true';
     const pairsCsv = this.config.get<string>('STRATEGY_PAIRS') || 'XAUUSD,EURUSD,GBPUSD,USDJPY';
@@ -177,6 +179,14 @@ export class PositionMonitorService implements OnModuleInit {
         exitReason,
         pnl,
       });
+
+      // Tell the orchestrator about the exit so per-pair cooldown gates apply
+      // for the next M15 evaluation. Mirrors V6-alt's smc-engine.ts:114-116.
+      const normalized: 'SL' | 'TP' | 'OTHER' =
+        exitReason.startsWith('SL') ? 'SL'
+        : exitReason.startsWith('TP') ? 'TP'
+        : 'OTHER';
+      this.orchestrator.recordExit(symbol, normalized, closedAt.toISOString());
 
       this.logger.log(`[${symbol}] CLOSED ticket=${ticket} reason=${exitReason} pnl=$${pnl} closePrice=${closePrice}`);
     } catch (err) {

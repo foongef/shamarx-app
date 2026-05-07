@@ -11,7 +11,7 @@
  */
 import 'reflect-metadata';
 import { PrismaClient } from '@prisma/client';
-import { SmcLiveEvaluator } from '../src/strategy/live/smc-live-evaluator';
+import { LiveSmcOrchestrator } from '../src/strategy/live/live-smc-orchestrator';
 import { ReplayEngine, CandleBundle } from '../src/backtest/live-replay/replay-engine';
 import { BacktestCandle } from '../src/backtest/engine/types';
 import { REPLAY_DEFAULT_PAIRS } from '../src/backtest/live-replay/dto/start-replay.dto';
@@ -96,8 +96,8 @@ async function main() {
       }
     }
 
-    const evaluator = new SmcLiveEvaluator();
-    const engine = new ReplayEngine(evaluator);
+    const orchestrator = new LiveSmcOrchestrator();
+    const engine = new ReplayEngine(orchestrator);
     const t0 = Date.now();
     const result = engine.run(
       {

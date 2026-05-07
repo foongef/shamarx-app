@@ -9,7 +9,9 @@ import { PatternDetector } from './pattern-detector';
 import { StructureAnalyzer } from './structure-analyzer';
 import { LiveStrategyService } from './live/live-strategy.service';
 import { PositionMonitorService } from './live/position-monitor.service';
+import { LivePositionManagerService } from './live/live-position-manager.service';
 import { SmcLiveEvaluator } from './live/smc-live-evaluator';
+import { LiveSmcOrchestrator } from './live/live-smc-orchestrator';
 import { LiveControlService } from './live/live-control.service';
 import { EquitySnapshotService } from './live/equity-snapshot.service';
 import { LiveAnalyticsService } from './live/live-analytics.service';
@@ -22,15 +24,19 @@ import { LiveAnalyticsService } from './live/live-analytics.service';
     PatternDetector,
     StructureAnalyzer,
     SmcLiveEvaluator,
+    LiveSmcOrchestrator,
     LiveControlService,
     LiveStrategyService,
     PositionMonitorService,
+    LivePositionManagerService,
     EquitySnapshotService,
     LiveAnalyticsService,
   ],
   exports: [
     LiveStrategyService,
+    LiveSmcOrchestrator,
     PositionMonitorService,
+    LivePositionManagerService,
     LiveControlService,
     LiveAnalyticsService,
   ],
