@@ -57,7 +57,7 @@ jobs:
               "workingDirectory": ["/opt/trading-bot/repo"],
               "executionTimeout": ["1800"],
               "commands": [
-                "set -euxo pipefail",
+                "set -eux",
                 "cd /opt/trading-bot/repo",
                 "git fetch --all --prune",
                 "git checkout main",
