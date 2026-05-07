@@ -10,6 +10,7 @@ import { RiskModule } from './risk/risk.module';
 import { LlmFilterModule } from './llm-filter/llm-filter.module';
 import { JournalModule } from './journal/journal.module';
 import { BacktestModule } from './backtest/backtest.module';
+import { LiveReplayModule } from './backtest/live-replay/live-replay.module';
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
 
@@ -28,6 +29,7 @@ import { UsersModule } from './users/users.module';
     LlmFilterModule,
     JournalModule,
     BacktestModule,
+    LiveReplayModule,
   ],
 })
 export class AppModule {}

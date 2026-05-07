@@ -215,6 +215,65 @@ model LiveSession {
   @@index([status, startedAt])
 }
 
+// Live-replay backtest: drives the SAME live SMC evaluator across all 4 pairs
+// on one shared simulated account, mirroring live's portfolio dynamics
+// (cross-pair openDirections ctx, equity-driven lot sizing, max-open-positions
+// cap). Intentionally separate from BacktestRun/BacktestTrade so portfolio
+// metrics (max concurrent positions, capital exposure across pairs) are
+// recoverable without polluting the legacy single-pair backtest history.
+model LiveReplaySession {
+  id              String    @id @default(uuid())
+  startedAt       DateTime  @default(now())
+  endedAt         DateTime?
+  startDate       DateTime  // start of the replay window
+  endDate         DateTime  // end of the replay window
+  initialBalance  Float
+  riskPercent     Float
+  pairs           String[]  // ["XAUUSD","EURUSD","GBPUSD","USDJPY"]
+  strategyVersion String    @default("V6-alt")
+  startEquity     Float
+  endEquity       Float?
+  realizedPnl     Float     @default(0)
+  tradesCount     Int       @default(0)
+  winsCount       Int       @default(0)
+  lossesCount     Int       @default(0)
+  maxOpenConcurrent Int     @default(0)
+  status          String    @default("RUNNING") // RUNNING, COMPLETED, FAILED
+  errorMessage    String?
+  metrics         Json?     // free-form aggregate (Sharpe, profit factor, etc.)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  trades          LiveReplayTrade[]
+
+  @@index([status, startedAt])
+}
+
+model LiveReplayTrade {
+  id            String   @id @default(uuid())
+  sessionId     String
+  session       LiveReplaySession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  symbol        String
+  side          String   // BUY or SELL
+  lotSize       Float
+  entryPrice    Float
+  closePrice    Float?
+  slPrice       Float
+  tpPrice       Float
+  status        String   @default("OPEN") // OPEN, CLOSED
+  exitReason    String?  // SL, TP, FORCED_CLOSE
+  pnl           Float?
+  openedAt      DateTime // candle openTime when entry fired
+  closedAt      DateTime? // candle openTime when exit fired
+  mode          String   // REVERSAL or CONTINUATION (from SmcLiveSignal.mode)
+  setupTags     String[]
+  reason        String   // human-readable from SmcLiveSignal.reason
+  createdAt     DateTime @default(now())
+
+  @@index([sessionId])
+  @@index([symbol, openedAt])
+}
+
 model RiskState {
   id                  String   @id @default(uuid())
   date                DateTime @unique @db.Date

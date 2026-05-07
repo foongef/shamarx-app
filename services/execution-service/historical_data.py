@@ -18,7 +18,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Query, HTTPException
 from models import CandleData
-from db import fetch_candles_db
+from db import fetch_candles_db, bulk_upsert_candles
 
 logger = logging.getLogger(__name__)
 
@@ -222,6 +222,40 @@ async def get_historical_candles(
                 f"Merged DB + MetaApi: {len(merged)} total rows for {symbol} {timeframe} "
                 f"({len(db_rows)} from DB + {len(metaapi_rows)} from MetaApi, deduped)"
             )
+            # Write-through cache: persist NEW MetaApi rows back to the
+            # Candle table so subsequent requests for overlapping ranges
+            # hit the DB fast path. Idempotent via the unique constraint.
+            db_keys = {_to_naive_iso(_get_open_time(r)) for r in db_rows}
+            new_rows: list[tuple] = []
+            for r in metaapi_rows:
+                key = _to_naive_iso(_get_open_time(r))
+                if key is None or key in db_keys:
+                    continue
+                # Coerce to (symbol, timeframe, openTime_dt, open, high, low, close, volume)
+                if hasattr(r, "model_dump"):
+                    d = r.model_dump(by_alias=True)
+                elif isinstance(r, dict):
+                    d = r
+                else:
+                    continue
+                ot = d.get("openTime") or d.get("open_time")
+                ot_dt = ot if isinstance(ot, datetime) else datetime.fromisoformat(_to_naive_iso(ot))
+                new_rows.append((
+                    sym_upper, tf_upper, ot_dt,
+                    float(d["open"]), float(d["high"]), float(d["low"]),
+                    float(d["close"]), float(d.get("volume", 0)),
+                ))
+            if new_rows:
+                try:
+                    inserted = await bulk_upsert_candles(new_rows)
+                    logger.info(
+                        f"Cached {inserted} new {symbol} {timeframe} candles to DB "
+                        f"(of {len(new_rows)} attempted)"
+                    )
+                except Exception as e:
+                    # Non-fatal — caller still gets the merged result, we just
+                    # don't accelerate future requests this time.
+                    logger.warning(f"Cache write-through failed (non-fatal): {e}")
             db_rows = merged
         except Exception as e:
             logger.error(f"MetaApi gap-fill failed for {symbol} {timeframe}: {e}\n{traceback.format_exc()}")
