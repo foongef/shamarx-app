@@ -41,6 +41,15 @@ export class StrategyController {
     return this.live.getTelemetry();
   }
 
+  @Public()
+  @Get('public/pulse')
+  @ApiOperation({
+    summary: 'Public pulse for the marketing landing page — per-pair lastEval + UTC counters only. No sensitive data.',
+  })
+  publicPulse() {
+    return this.live.getPublicPulse();
+  }
+
   @Get('live/status')
   @ApiOperation({ summary: 'Live engine on/off + active config' })
   async status() {
