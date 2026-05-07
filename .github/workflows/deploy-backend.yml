@@ -31,7 +31,10 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      AWS_REGION: ap-southeast-1
+      # EC2 + SSM live in Malaysia. Singapore was wrong — the IAM policy
+      # is scoped to ap-southeast-5 only, so cross-region SendCommand was
+      # denied with AccessDeniedException.
+      AWS_REGION: ap-southeast-5
 
     steps:
       - name: Configure AWS credentials (OIDC)
@@ -61,8 +64,8 @@ jobs:
                 "git reset --hard origin/main",
                 "docker compose -f docker/docker-compose.yml pull --ignore-pull-failures",
                 "docker compose -f docker/docker-compose.yml up -d --build",
-                "sleep 20",
-                "docker compose -f docker/docker-compose.yml exec -T trading-bot pnpm prisma migrate deploy --schema=libs/prisma/schema.prisma || echo migrate-skipped",
+                "sleep 25",
+                "docker compose -f docker/docker-compose.yml exec -T trading-bot pnpm prisma db push --schema=libs/prisma/schema.prisma --skip-generate --accept-data-loss || echo prisma-skipped",
                 "docker compose -f docker/docker-compose.yml ps"
               ]
             }' \

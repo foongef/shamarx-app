@@ -5,6 +5,7 @@ import { firstValueFrom } from 'rxjs';
 import { PrismaService } from '@app/prisma';
 import { RedisService } from '@app/redis';
 import { SERVICE_URLS } from '@app/common';
+import { Public } from '../auth/guards/jwt-auth.guard';
 import { Roles } from '../auth/guards/roles.guard';
 import { LiveStrategyService } from './live/live-strategy.service';
 import { PositionMonitorService } from './live/position-monitor.service';
@@ -26,6 +27,7 @@ export class StrategyController {
     private readonly redis: RedisService,
   ) {}
 
+  @Public()
   @Get('health')
   health() {
     return { status: 'ok', service: 'strategy' };
