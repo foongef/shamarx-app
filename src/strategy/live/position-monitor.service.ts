@@ -180,13 +180,15 @@ export class PositionMonitorService implements OnModuleInit {
         pnl,
       });
 
-      // Tell the orchestrator about the exit so per-pair cooldown gates apply
-      // for the next M15 evaluation. Mirrors V6-alt's smc-engine.ts:114-116.
+      // Tell the orchestrator about the exit so per-pair cooldown + RiskManager
+      // gates apply for the next M15 evaluation. PnL drives the consecutive-
+      // losses / daily-loss counters that pause trading during slumps.
+      // Mirrors V6-alt's smc-engine.ts:114-116.
       const normalized: 'SL' | 'TP' | 'OTHER' =
         exitReason.startsWith('SL') ? 'SL'
         : exitReason.startsWith('TP') ? 'TP'
         : 'OTHER';
-      this.orchestrator.recordExit(symbol, normalized, closedAt.toISOString());
+      this.orchestrator.recordExit(symbol, normalized, closedAt.toISOString(), pnl ?? undefined);
 
       this.logger.log(`[${symbol}] CLOSED ticket=${ticket} reason=${exitReason} pnl=$${pnl} closePrice=${closePrice}`);
     } catch (err) {

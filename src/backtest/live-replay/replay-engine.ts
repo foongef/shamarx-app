@@ -65,6 +65,13 @@ export class ReplayEngine {
   run(cfg: ReplayConfig, candles: CandleBundle): ReplayResult {
     // Always start with a clean orchestrator state.
     this.orchestrator.resetAll();
+    // Seed the per-pair RiskManager constructors with our test parameters
+    // so canTrade() uses the correct daily-loss / consecutive-loss thresholds.
+    this.orchestrator.setDefaultRiskCfg({
+      initialBalance: cfg.initialBalance,
+      riskPercent: cfg.riskPercent,
+      maxOpenPositions: cfg.maxOpenPositions ?? 4,
+    });
 
     const broker = new SimulatedBroker(cfg.initialBalance);
     const startMs = new Date(cfg.startDate).getTime();
@@ -114,11 +121,14 @@ export class ReplayEngine {
       const exits = broker.processCandle(symbol, candle);
       for (const exit of exits) {
         closed.push(exit);
-        // Tell the orchestrator about the exit so it can apply cooldowns.
+        // Tell the orchestrator about the exit so it can apply cooldowns
+        // AND record the PnL with its RiskManager (drives consecutive-loss
+        // pauses, daily-loss caps, drawdown brakes).
         this.orchestrator.recordExit(
           symbol,
           exit.exitReason === 'SL' ? 'SL' : exit.exitReason === 'TP' ? 'TP' : 'OTHER',
           exit.closedAt,
+          exit.pnl,
         );
       }
 

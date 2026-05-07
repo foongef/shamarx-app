@@ -37,6 +37,10 @@ export interface OrchestratorState {
   cooldownUntil: string | null;
   /** H1-sweep openTimes already entered this session (legacy dedup). */
   actionedSweeps: Set<string>;
+  /** V6-alt RiskManager — gates trades on daily loss, consecutive losses,
+   *  rolling 7-day losses, drawdown pauses. Without this we take low-quality
+   *  setups V6-alt would skip during slumps. Per-pair to match V6-alt. */
+  riskManager: RiskManager;
 }
 
 export interface LiveContext {
@@ -67,7 +71,22 @@ export class LiveSmcOrchestrator {
     this.states.clear();
   }
 
-  /** Snapshot — for Redis persistence. */
+  /** Override the initial balance/risk used to seed new RiskManager states.
+   *  Replay calls this once before run; live uses defaults from env. */
+  defaultRiskCfg: { initialBalance: number; riskPercent: number; maxOpenPositions: number } = {
+    initialBalance: 10000,
+    riskPercent: 1.5,
+    maxOpenPositions: 4,
+  };
+
+  setDefaultRiskCfg(cfg: { initialBalance: number; riskPercent: number; maxOpenPositions: number }): void {
+    this.defaultRiskCfg = cfg;
+  }
+
+  /** Snapshot — for Redis persistence. RiskManager state is reconstructed
+   *  on restore by replaying recent closed trades; we don't try to serialize
+   *  its internals (consecutiveLosses, paused-until-date, etc.) since the
+   *  position-monitor recordExit will re-establish them on the next M15. */
   serialize(): Record<string, unknown> {
     const out: Record<string, unknown> = {};
     for (const [sym, s] of this.states.entries()) {
@@ -89,6 +108,7 @@ export class LiveSmcOrchestrator {
         lastProcessedH1Time: raw.lastProcessedH1Time ?? null,
         cooldownUntil: raw.cooldownUntil ?? null,
         actionedSweeps: new Set(raw.actionedSweeps ?? []),
+        riskManager: this.buildRiskManager(sym),
       });
     }
   }
@@ -186,12 +206,11 @@ export class LiveSmcOrchestrator {
     const inZone = cfg.killzones.some(([s, e]) => utcHour >= s && utcHour < e);
     if (!inZone) return null;
 
-    // Portfolio-wide cap: don't take a 5th position if 4 are already open
-    // (only enforced when caller passes maxOpenPositions).
-    if (
-      ctx.maxOpenPositions !== undefined &&
-      ctx.totalOpenPositions >= ctx.maxOpenPositions
-    ) {
+    // V6-alt RiskManager gate — daily loss, consecutive losses, rolling
+    // 7-day losses, equity drawdown pauses. This is the FILTER that V6-alt
+    // uses to skip low-quality periods after a slump; without it, the
+    // orchestrator over-trades during drawdowns.
+    if (!state.riskManager.canTrade(lastM15.openTime, ctx.totalOpenPositions)) {
       return null;
     }
 
@@ -367,11 +386,18 @@ export class LiveSmcOrchestrator {
 
   /**
    * Apply SL/TP cooldown after a position closes. Caller is the position
-   * monitor service which knows the exit reason.
+   * monitor service which knows the exit reason. ALSO records the trade
+   * with the RiskManager so consecutive-losses and daily-PnL counters
+   * track properly — this is what gates over-trading during slumps.
    *
    * `slCooldownBars` from cfg is in M15 bars; we convert to wall-clock minutes.
    */
-  recordExit(symbol: string, exitReason: 'SL' | 'TP' | 'OTHER', exitTimeIso: string): void {
+  recordExit(
+    symbol: string,
+    exitReason: 'SL' | 'TP' | 'OTHER',
+    exitTimeIso: string,
+    pnl?: number,
+  ): void {
     const state = this.getOrCreateState(symbol);
     const cfg = getSmcPairConfig(symbol);
     let bars: number;
@@ -379,6 +405,18 @@ export class LiveSmcOrchestrator {
     else if (exitReason === 'SL') bars = cfg.slCooldownBars;
     else bars = 1;
     state.cooldownUntil = this.advanceM15(exitTimeIso, bars);
+
+    // Tell RiskManager — populates dailyPnl, consecutiveLosses, etc. so
+    // canTrade() can pause on slumps. PnL is required to drive these
+    // counters; if caller didn't provide, we treat as a -1R loss to be
+    // conservative (better to over-pause than over-trade).
+    if (typeof pnl === 'number') {
+      const reasonForRm =
+        exitReason === 'SL' ? 'SL'
+        : exitReason === 'TP' ? 'TP'
+        : 'FORCED_CLOSE';
+      state.riskManager.recordTrade(pnl, exitTimeIso, reasonForRm);
+    }
   }
 
   // ─── internals ────────────────────────────────────────────────────────
@@ -391,10 +429,23 @@ export class LiveSmcOrchestrator {
         lastProcessedH1Time: null,
         cooldownUntil: null,
         actionedSweeps: new Set(),
+        riskManager: this.buildRiskManager(symbol),
       };
       this.states.set(symbol, s);
     }
     return s;
+  }
+
+  private buildRiskManager(symbol: string): RiskManager {
+    return new RiskManager({
+      symbol,
+      initialBalance: this.defaultRiskCfg.initialBalance,
+      riskPercent: this.defaultRiskCfg.riskPercent,
+      maxDailyLossPercent: 4.0,
+      maxConsecutiveLosses: 5,
+      maxOpenPositions: this.defaultRiskCfg.maxOpenPositions,
+      strategyVersion: 'V6-alt',
+    });
   }
 
   private advanceM15(fromIso: string, bars: number): string {
