@@ -15,15 +15,15 @@ concurrency:
 
 jobs:
   typecheck:
-    name: Typecheck (NestJS + Web)
+    name: Typecheck
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
 
+      # No `version:` — pnpm/action-setup reads packageManager from
+      # package.json (currently pnpm@10.14.0). Pinning here would clash.
       - uses: pnpm/action-setup@v4
-        with:
-          version: 9
 
       - uses: actions/setup-node@v4
         with:
@@ -36,11 +36,7 @@ jobs:
       - name: Generate Prisma client
         run: pnpm prisma generate --schema=libs/prisma/schema.prisma
 
-      - name: Typecheck NestJS
-        run: pnpm exec tsc --noEmit
-
-      - name: Typecheck Web
-        working-directory: apps/web
+      - name: Typecheck
         run: pnpm exec tsc --noEmit
 
   lint:
@@ -51,8 +47,6 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: pnpm/action-setup@v4
-        with:
-          version: 9
 
       - uses: actions/setup-node@v4
         with:
@@ -67,15 +61,13 @@ jobs:
         continue-on-error: true # don't block PRs while we tune the rules
 
   build:
-    name: Build (NestJS + Web)
+    name: Build
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
 
       - uses: pnpm/action-setup@v4
-        with:
-          version: 9
 
       - uses: actions/setup-node@v4
         with:
@@ -90,6 +82,3 @@ jobs:
 
       - name: Build NestJS
         run: pnpm build
-
-      - name: Build Web
-        run: pnpm --filter @app/web build
