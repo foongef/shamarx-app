@@ -1,11 +1,21 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '@app/prisma';
+import { Worker } from 'node:worker_threads';
+import * as path from 'node:path';
 import { LiveSmcOrchestrator } from '../../strategy/live/live-smc-orchestrator';
-import { ReplayEngine, CandleBundle } from './replay-engine';
+import { ReplayEngine, CandleBundle, ReplayResult } from './replay-engine';
 import { StartReplayDto, REPLAY_DEFAULT_PAIRS } from './dto/start-replay.dto';
 import { BacktestCandle } from '../engine/types';
+import type { ParentMessage, WorkerMessage } from './worker-protocol';
 
 const HTF_WARMUP_DAYS = 90;
+
+// Worker safety net — if the replay hangs (shouldn't, but defense in depth)
+// we kill the thread after 30 min and mark the session FAILED.
+const WORKER_TIMEOUT_MS = 30 * 60 * 1000;
+
+// Set REPLAY_USE_WORKER=0 to fall back to in-thread execution (debug aid).
+const USE_WORKER = process.env.REPLAY_USE_WORKER !== '0';
 
 @Injectable()
 export class LiveReplayService {
@@ -54,17 +64,20 @@ export class LiveReplayService {
         }
       }
 
-      const engine = new ReplayEngine(this.orchestrator);
-      const result = await engine.run(
-        {
-          startDate: dto.startDate,
-          endDate: dto.endDate,
-          initialBalance: dto.initialBalance,
-          riskPercent: dto.riskPercent,
-          pairs,
-        },
-        candles,
-      );
+      const cfg = {
+        startDate: dto.startDate,
+        endDate: dto.endDate,
+        initialBalance: dto.initialBalance,
+        riskPercent: dto.riskPercent,
+        pairs,
+      };
+
+      // Run on a worker thread so the live-trading thread (NestJS event loop)
+      // stays responsive. Falls back to in-thread if REPLAY_USE_WORKER=0
+      // (debugging aid — easier to inspect when running locally).
+      const result = USE_WORKER
+        ? await this.runOnWorker(sessionId, cfg, candles)
+        : await new ReplayEngine(this.orchestrator).run(cfg, candles);
 
       // Persist trades. We write CLOSED rows (entries that closed during the
       // run) — the broker emits a closed-position event that already has both
@@ -124,6 +137,79 @@ export class LiveReplayService {
         },
       });
     }
+  }
+
+  /**
+   * Spawn replay-worker.js on a worker thread, ship the candle bundle in,
+   * stream progress back, and resolve with the ReplayResult. The worker is
+   * always terminated in finally so we never leak threads — even on errors,
+   * timeouts, or unexpected exits.
+   *
+   * Path resolution: __dirname at runtime is dist/backtest/live-replay/, and
+   * tsc emits replay-worker.js as a sibling there. In the dev TS build we
+   * still resolve the .js path, which works because nest build emits both.
+   */
+  private runOnWorker(
+    sessionId: string,
+    cfg: Parameters<ReplayEngine['run']>[0],
+    candles: CandleBundle,
+  ): Promise<ReplayResult> {
+    const workerPath = path.resolve(__dirname, 'replay-worker.js');
+    const worker = new Worker(workerPath);
+
+    return new Promise<ReplayResult>((resolve, reject) => {
+      let timeout: NodeJS.Timeout | null = setTimeout(() => {
+        timeout = null;
+        worker.terminate().catch(() => {});
+        reject(new Error(`Replay worker timed out after ${WORKER_TIMEOUT_MS / 60000} min`));
+      }, WORKER_TIMEOUT_MS);
+
+      const cleanup = () => {
+        if (timeout) {
+          clearTimeout(timeout);
+          timeout = null;
+        }
+        worker.terminate().catch(() => {});
+      };
+
+      worker.on('message', (msg: WorkerMessage) => {
+        switch (msg.type) {
+          case 'progress':
+            // Best-effort progress write; never blocks the worker.
+            this.prisma.liveReplaySession
+              .update({
+                where: { id: sessionId },
+                data: { progress: Math.round((msg.processed / msg.total) * 100) },
+              })
+              .catch(() => {/* progress writes are non-critical */});
+            break;
+          case 'done':
+            cleanup();
+            resolve(msg.result);
+            break;
+          case 'error':
+            cleanup();
+            reject(new Error(msg.message + (msg.stack ? `\n${msg.stack}` : '')));
+            break;
+        }
+      });
+
+      worker.on('error', (err) => {
+        cleanup();
+        reject(err);
+      });
+
+      worker.on('exit', (code) => {
+        if (code !== 0 && timeout !== null) {
+          // Exited without sending 'done' or 'error' — likely OOM-killed.
+          cleanup();
+          reject(new Error(`Replay worker exited with code ${code}`));
+        }
+      });
+
+      const startMsg: ParentMessage = { type: 'run', cfg, candles };
+      worker.postMessage(startMsg);
+    });
   }
 
   /**
