@@ -32,6 +32,17 @@ const H1_BUFFER = 500;
 const D1_BUFFER = 400;
 const ORCHESTRATOR_STATE_KEY = 'live:orchestrator:state';
 
+const TELEMETRY_RING_SIZE = 200;
+
+/** Telemetry event captured for the dashboard's Engine Worker view.
+ *  Stored in an in-memory ring buffer — not persisted, lost on restart.
+ *  Persistence isn't worth the write traffic; the dashboard is fine
+ *  with "since last restart" history. */
+export type TelemetryEvent =
+  | { ts: string; symbol: string; type: 'eval'; decision: 'no-sweep' | 'pending-only' | 'cooldown' }
+  | { ts: string; symbol: string; type: 'sweep-detected'; direction: 'BUY' | 'SELL'; mode: string; entryHint: number }
+  | { ts: string; symbol: string; type: 'signal-fired'; side: 'BUY' | 'SELL'; mode: string; entryPrice: number };
+
 @Injectable()
 export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(LiveStrategyService.name);
@@ -42,6 +53,88 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
 
   /** Sweep timestamps already actioned this session per symbol — prevents double-entry */
   private actionedSweeps = new Map<string, Set<string>>();
+
+  /** Ring buffer of recent telemetry events for the dashboard Engine Worker view.
+   *  Capped at TELEMETRY_RING_SIZE to keep memory bounded; oldest events drop. */
+  private events: TelemetryEvent[] = [];
+
+  /** Per-pair last-evaluation snapshot — small map, dashboard reads this for
+   *  the pair scanner strip's "X seconds ago" badges. */
+  private lastEval = new Map<string, { ts: string; decision: 'no-sweep' | 'pending-only' | 'cooldown' }>();
+
+  /** UTC-day-keyed counters. Reset lazily on the first event of a new day. */
+  private counters = { date: '', evals: 0, sweeps: 0, signals: 0 };
+
+  private pushEvent(ev: TelemetryEvent) {
+    // Roll counters at UTC midnight — not exact but close enough for a UI badge.
+    const today = ev.ts.slice(0, 10);
+    if (this.counters.date !== today) {
+      this.counters = { date: today, evals: 0, sweeps: 0, signals: 0 };
+    }
+    if (ev.type === 'eval') {
+      this.counters.evals++;
+      this.lastEval.set(ev.symbol, { ts: ev.ts, decision: ev.decision });
+    } else if (ev.type === 'sweep-detected') {
+      this.counters.sweeps++;
+    } else if (ev.type === 'signal-fired') {
+      this.counters.signals++;
+    }
+    this.events.push(ev);
+    if (this.events.length > TELEMETRY_RING_SIZE) {
+      this.events.splice(0, this.events.length - TELEMETRY_RING_SIZE);
+    }
+  }
+
+  /** Read-only snapshot for the dashboard Engine Worker view. Combines
+   *  in-memory ring buffer + per-pair last-eval + orchestrator pending state.
+   *  Live trading not affected — pure read. */
+  getTelemetry() {
+    const now = new Date().toISOString();
+    const orchestratorState = this.orchestrator.getTelemetry();
+
+    const pairs: Record<string, {
+      lastEvalAt: string | null;
+      lastDecision: string;
+      cooldownBarsRemaining: number;
+      pendingCount: number;
+      pending: Array<{
+        direction: 'BUY' | 'SELL';
+        mode: string;
+        entryHint: number;
+        detectedAtH1Idx: number;
+        expiresAtH1Idx: number;
+      }>;
+    }> = {};
+
+    for (const sym of this.pairs) {
+      const e = this.lastEval.get(sym);
+      const o = orchestratorState[sym];
+      pairs[sym] = {
+        lastEvalAt: e?.ts ?? null,
+        lastDecision: e?.decision ?? 'unknown',
+        cooldownBarsRemaining: o?.cooldownBarsRemaining ?? 0,
+        pendingCount: o?.pendingCount ?? 0,
+        pending: o?.pending ?? [],
+      };
+    }
+
+    // Cap recent events to last 50 — the full ring buffer is bigger but the
+    // UI only needs the visible window.
+    const recentEvents = this.events.slice(-50).reverse();
+
+    return {
+      serverNowIso: now,
+      pairs,
+      counters: {
+        date: this.counters.date,
+        evalsToday: this.counters.evals,
+        sweepsToday: this.counters.sweeps,
+        signalsToday: this.counters.signals,
+      },
+      recentEvents,
+      isRunning: this.liveControl.isRunning(),
+    };
+  }
 
   constructor(
     private readonly prisma: PrismaService,
@@ -120,20 +213,64 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
       this.fetchAccount(),
     ]);
 
+    const evalTs = m15[m15.length - 1]?.openTime ?? new Date().toISOString();
+
+    // Snapshot pending count BEFORE evaluate() so we can detect new sweeps
+    // by comparing pre/post counts. The orchestrator may have added a sweep
+    // to the pending queue inside evaluate(), even when no signal fires.
+    const pendingBefore = this.orchestrator.getTelemetry()[symbol]?.pendingCount ?? 0;
+
     const signal = this.orchestrator.evaluate(symbol, m15, h1, d1, {
       accountEquity: account.equity,
       openDirections: new Set(openPositions.map((p) => p.side as 'BUY' | 'SELL')),
       totalOpenPositions: allOpenPositions.length,
       riskPercent: this.liveControl.getRiskPercent(),
-      nowIso: m15[m15.length - 1]?.openTime ?? new Date().toISOString(),
+      nowIso: evalTs,
       maxOpenPositions: 4,
     });
+
+    const post = this.orchestrator.getTelemetry()[symbol];
+    const pendingAfter = post?.pendingCount ?? 0;
+
+    // Emit a sweep-detected event when the pending queue grew this call.
+    // Use the most recent pending entry — buildTelemetry guarantees order.
+    if (pendingAfter > pendingBefore) {
+      const fresh = post!.pending[post!.pending.length - 1];
+      this.pushEvent({
+        ts: evalTs,
+        symbol,
+        type: 'sweep-detected',
+        direction: fresh.direction,
+        mode: fresh.mode,
+        entryHint: fresh.entryHint,
+      });
+    }
+
     if (!signal) {
       this.logger.debug(`[${symbol}] no signal`);
+      this.pushEvent({
+        ts: evalTs,
+        symbol,
+        type: 'eval',
+        decision:
+          (post?.cooldownBarsRemaining ?? 0) > 0
+            ? 'cooldown'
+            : pendingAfter > 0
+              ? 'pending-only'
+              : 'no-sweep',
+      });
       return null;
     }
 
     this.logger.log(`[${symbol}] signal → ${signal.reason}`);
+    this.pushEvent({
+      ts: evalTs,
+      symbol,
+      type: 'signal-fired',
+      side: signal.side,
+      mode: signal.mode,
+      entryPrice: signal.entryPrice,
+    });
     await this.placeOrder(signal);
     this.orchestrator.recordEntry(symbol, signal);
     // Persist state so a restart mid-cooldown doesn't lose the timer.
