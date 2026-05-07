@@ -76,10 +76,17 @@ services:
     restart: unless-stopped
     ports:
       - '9000:9000'
+    # Cap container memory at 2 GiB so a runaway replay (2-year × 4 pairs holds
+    # ~300 MB of candles + indicators in heap) can never starve postgres / nginx
+    # on the 3.7 GiB host. Pairs with NODE_OPTIONS so V8 GCs more aggressively
+    # before the kernel SIGKILLs us.
+    mem_limit: 2g
+    memswap_limit: 2g
     env_file:
       - ../.env
     environment:
       PORT: '9000'
+      NODE_OPTIONS: ${NODE_OPTIONS:---max-old-space-size=1536}
       # DATABASE_URL comes from .env (SSM-sourced in prod); fall back to a
       # docker-network-resolvable default for local dev.
       DATABASE_URL: ${DATABASE_URL:-postgresql://${POSTGRES_USER:-trading}:${POSTGRES_PASSWORD:-trading}@postgres:5432/${POSTGRES_DB:-trading_bot}?schema=public}

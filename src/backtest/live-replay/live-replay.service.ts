@@ -55,7 +55,7 @@ export class LiveReplayService {
       }
 
       const engine = new ReplayEngine(this.orchestrator);
-      const result = engine.run(
+      const result = await engine.run(
         {
           startDate: dto.startDate,
           endDate: dto.endDate,

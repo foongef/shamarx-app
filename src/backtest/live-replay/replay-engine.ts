@@ -54,6 +54,13 @@ export interface ReplayResult {
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
 
+// Yield to the event loop every N timeline events so a long replay (2y × 4 pairs
+// ≈ 280k iterations) does not block NestJS for the whole run. Without this,
+// /api/strategy/health stops responding mid-replay and nginx upstream errors
+// out — the API looks "down" until the replay finishes.
+const YIELD_EVERY = 250;
+const yieldToEventLoop = () => new Promise<void>((r) => setImmediate(r));
+
 export class ReplayEngine {
   private readonly logger = new Logger(ReplayEngine.name);
 
@@ -63,7 +70,7 @@ export class ReplayEngine {
    */
   constructor(private readonly orchestrator: LiveSmcOrchestrator) {}
 
-  run(cfg: ReplayConfig, candles: CandleBundle): ReplayResult {
+  async run(cfg: ReplayConfig, candles: CandleBundle): Promise<ReplayResult> {
     // Always start with a clean orchestrator state.
     this.orchestrator.resetAll();
     // Seed the per-pair RiskManager constructors with our test parameters
@@ -113,7 +120,9 @@ export class ReplayEngine {
     const opened: SimulatedPosition[] = [];
     const closed: ClosedPosition[] = [];
 
+    let i = 0;
     for (const ev of timeline) {
+      if (i++ % YIELD_EVERY === 0 && i > 1) await yieldToEventLoop();
       const { symbol, candle } = ev;
       const bundle = candles[symbol];
       if (!bundle) continue;

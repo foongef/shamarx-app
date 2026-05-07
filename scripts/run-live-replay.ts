@@ -99,7 +99,7 @@ async function main() {
     const orchestrator = new LiveSmcOrchestrator();
     const engine = new ReplayEngine(orchestrator);
     const t0 = Date.now();
-    const result = engine.run(
+    const result = await engine.run(
       {
         startDate: a.start,
         endDate: a.end,
