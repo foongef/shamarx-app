@@ -33,6 +33,14 @@ export class StrategyController {
     return { status: 'ok', service: 'strategy' };
   }
 
+  @Get('live/telemetry')
+  @ApiOperation({
+    summary: 'Engine Worker telemetry — per-pair last-eval, pending sweeps, recent events, daily counters',
+  })
+  telemetry() {
+    return this.live.getTelemetry();
+  }
+
   @Get('live/status')
   @ApiOperation({ summary: 'Live engine on/off + active config' })
   async status() {

@@ -58,6 +58,23 @@ export interface OrchestratorState {
   riskManager: RiskManager;
 }
 
+/** Read-only telemetry snapshot exposed to the dashboard. Does not include
+ *  RiskManager internals (those are reconstructed from trade history) and
+ *  does not include actionedSweeps (large set, not user-facing). */
+export interface OrchestratorTelemetry {
+  pendingCount: number;
+  lastProcessedH1Time: string | null;
+  cooldownBarsRemaining: number;
+  pending: Array<{
+    direction: 'BUY' | 'SELL';
+    mode: SmcMode;
+    /** sweepMid — used as entry hint, mirrors what the engine would fire at. */
+    entryHint: number;
+    detectedAtH1Idx: number;
+    expiresAtH1Idx: number;
+  }>;
+}
+
 export interface LiveContext {
   accountEquity: number;
   /** Open positions on this pair (drives same-direction stacking guard). */
@@ -465,6 +482,31 @@ export class LiveSmcOrchestrator {
         : 'FORCED_CLOSE';
       state.riskManager.recordTrade(pnl, exitTimeIso, reasonForRm);
     }
+  }
+
+  /**
+   * Read-only snapshot of per-pair orchestrator state for the dashboard
+   * "Engine Worker" telemetry view. No effect on live state. Returns
+   * one entry per pair the orchestrator has seen — empty if the engine
+   * hasn't received its first M15 close yet.
+   */
+  getTelemetry(): Record<string, OrchestratorTelemetry> {
+    const out: Record<string, OrchestratorTelemetry> = {};
+    for (const [sym, s] of this.states.entries()) {
+      out[sym] = {
+        pendingCount: s.pending.length,
+        lastProcessedH1Time: s.lastProcessedH1Time,
+        cooldownBarsRemaining: s.cooldownBarsRemaining,
+        pending: s.pending.map((p) => ({
+          direction: p.direction,
+          mode: p.mode,
+          entryHint: p.sweepMid,
+          detectedAtH1Idx: p.detectedAtH1Idx,
+          expiresAtH1Idx: p.expiresAtH1Idx,
+        })),
+      };
+    }
+    return out;
   }
 
   // ─── internals ────────────────────────────────────────────────────────
