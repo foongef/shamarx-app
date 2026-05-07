@@ -30,6 +30,11 @@ export interface ReplayConfig {
   maxOpenPositions?: number;
 }
 
+/** Optional progress reporter — called every YIELD_EVERY events. Worker uses
+ *  this to forward 'progress' messages to the parent without crossing the
+ *  thread boundary on every iteration. */
+export type ProgressFn = (processed: number, total: number) => void;
+
 /** Loaded candle bundle keyed by symbol → timeframe. */
 export type CandleBundle = Record<string, {
   m15: BacktestCandle[];
@@ -70,7 +75,11 @@ export class ReplayEngine {
    */
   constructor(private readonly orchestrator: LiveSmcOrchestrator) {}
 
-  async run(cfg: ReplayConfig, candles: CandleBundle): Promise<ReplayResult> {
+  async run(
+    cfg: ReplayConfig,
+    candles: CandleBundle,
+    onProgress?: ProgressFn,
+  ): Promise<ReplayResult> {
     // Always start with a clean orchestrator state.
     this.orchestrator.resetAll();
     // Seed the per-pair RiskManager constructors with our test parameters
@@ -121,8 +130,12 @@ export class ReplayEngine {
     const closed: ClosedPosition[] = [];
 
     let i = 0;
+    const total = timeline.length;
     for (const ev of timeline) {
-      if (i++ % YIELD_EVERY === 0 && i > 1) await yieldToEventLoop();
+      if (i++ % YIELD_EVERY === 0 && i > 1) {
+        await yieldToEventLoop();
+        onProgress?.(i, total);
+      }
       const { symbol, candle } = ev;
       const bundle = candles[symbol];
       if (!bundle) continue;

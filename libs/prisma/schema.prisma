@@ -245,6 +245,7 @@ model LiveReplaySession {
   lossesCount     Int       @default(0)
   maxOpenConcurrent Int     @default(0)
   status          String    @default("RUNNING") // RUNNING, COMPLETED, FAILED
+  progress        Int?      // 0-100, written periodically by the replay worker
   errorMessage    String?
   metrics         Json?     // free-form aggregate (Sharpe, profit factor, etc.)
   createdAt       DateTime  @default(now())
