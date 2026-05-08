@@ -115,10 +115,11 @@ export class LiveSmcOrchestrator {
     this.defaultRiskCfg = cfg;
   }
 
-  /** Snapshot — for Redis persistence. RiskManager state is reconstructed
-   *  on restore by replaying recent closed trades; we don't try to serialize
-   *  its internals (consecutiveLosses, paused-until-date, etc.) since the
-   *  position-monitor recordExit will re-establish them on the next M15. */
+  /** Snapshot — for Redis persistence. Captures pending sweeps, cooldown,
+   *  actionedSweeps dedup set, AND the RiskManager state per pair so safety
+   *  brakes (daily-loss cap, consecutive-loss pause, drawdown brake,
+   *  hard-kill) survive container restarts. Without the RiskManager
+   *  inclusion a deploy mid-cooldown would silently re-arm the engine. */
   serialize(): Record<string, unknown> {
     const out: Record<string, unknown> = {};
     for (const [sym, s] of this.states.entries()) {
@@ -127,6 +128,7 @@ export class LiveSmcOrchestrator {
         lastProcessedH1Time: s.lastProcessedH1Time,
         cooldownBarsRemaining: s.cooldownBarsRemaining,
         actionedSweeps: Array.from(s.actionedSweeps),
+        riskManager: s.riskManager.snapshot(),
       };
     }
     return out;
@@ -135,6 +137,13 @@ export class LiveSmcOrchestrator {
   restore(snapshot: Record<string, any>): void {
     this.states.clear();
     for (const [sym, raw] of Object.entries(snapshot ?? {})) {
+      const riskManager = this.buildRiskManager(sym);
+      // Backwards-compatible: legacy snapshots without the riskManager key
+      // fall through to a fresh instance (same behavior as before this
+      // fix). New snapshots re-hydrate every safety-brake field.
+      if (raw.riskManager && typeof raw.riskManager === 'object') {
+        riskManager.restore(raw.riskManager);
+      }
       this.states.set(sym, {
         pending: raw.pending ?? [],
         lastProcessedH1Time: raw.lastProcessedH1Time ?? null,
@@ -142,7 +151,7 @@ export class LiveSmcOrchestrator {
         // reset the bar counter (better than incorrectly translating times).
         cooldownBarsRemaining: typeof raw.cooldownBarsRemaining === 'number' ? raw.cooldownBarsRemaining : 0,
         actionedSweeps: new Set(raw.actionedSweeps ?? []),
-        riskManager: this.buildRiskManager(sym),
+        riskManager,
       });
     }
   }

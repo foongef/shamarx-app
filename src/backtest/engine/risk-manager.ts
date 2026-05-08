@@ -4,6 +4,31 @@ import { getInstrumentConfig } from './instrument-config';
 const WEEKLY_DD_THRESHOLD = 8;
 const WEEKLY_DD_PAUSE_DAYS = 5;
 
+const TRADE_LOG_KEEP = 30;
+
+/** Serializable snapshot of RiskManager runtime state — used by the live
+ *  orchestrator to persist safety-brake state across container restarts.
+ *  Without this, a deploy mid-cooldown would silently re-arm the engine. */
+export interface RiskManagerSnapshot {
+  balance: number;
+  equity: number;
+  dailyPnl: number;
+  consecutiveLosses: number;
+  consecutiveWins: number;
+  lastTradeDate: string | null;
+  weeklyPeakEquity: number;
+  currentWeekNumber: number;
+  pauseUntilDate: string | null;
+  consecutiveLossPauseUntil: string | null;
+  awaitingPostPauseTrade: boolean;
+  overallPeakEquity: number;
+  tradeLog: { date: string; pnl: number; isLoss: boolean }[];
+  equityDdPauseUntil: string | null;
+  lastDdTierTriggered: number;
+  rolling7DayPauseUntil: string | null;
+  hardKilled: boolean;
+}
+
 export class RiskManager {
   private state: BacktestRiskState;
   private config: EngineConfig;
@@ -281,6 +306,61 @@ export class RiskManager {
     }
 
     this.state.lastTradeDate = tradeDate;
+  }
+
+  /**
+   * Capture every state variable that affects canTrade() / lot sizing so the
+   * caller (live orchestrator) can persist it to Redis. Pure data — no
+   * methods, all primitives — survives JSON.stringify round-trip.
+   * tradeLog is capped at the last TRADE_LOG_KEEP entries to keep the
+   * snapshot small (rolling-7d only needs ~7 days of history anyway).
+   */
+  snapshot(): RiskManagerSnapshot {
+    return {
+      balance: this.state.balance,
+      equity: this.state.equity,
+      dailyPnl: this.state.dailyPnl,
+      consecutiveLosses: this.state.consecutiveLosses,
+      consecutiveWins: this.state.consecutiveWins,
+      lastTradeDate: this.state.lastTradeDate,
+      weeklyPeakEquity: this.weeklyPeakEquity,
+      currentWeekNumber: this.currentWeekNumber,
+      pauseUntilDate: this.pauseUntilDate,
+      consecutiveLossPauseUntil: this.consecutiveLossPauseUntil,
+      awaitingPostPauseTrade: this.awaitingPostPauseTrade,
+      overallPeakEquity: this.overallPeakEquity,
+      tradeLog: this.tradeLog.slice(-TRADE_LOG_KEEP),
+      equityDdPauseUntil: this.equityDdPauseUntil,
+      lastDdTierTriggered: this.lastDdTierTriggered,
+      rolling7DayPauseUntil: this.rolling7DayPauseUntil,
+      hardKilled: this.hardKilled,
+    };
+  }
+
+  /**
+   * Re-hydrate state from a prior snapshot. Called immediately after
+   * construction by live restore-from-Redis. Defensive: every field defaults
+   * to the fresh-construction value so a partial / legacy snapshot still
+   * leaves the manager in a coherent state.
+   */
+  restore(snap: Partial<RiskManagerSnapshot>): void {
+    this.state.balance = snap.balance ?? this.state.balance;
+    this.state.equity = snap.equity ?? this.state.equity;
+    this.state.dailyPnl = snap.dailyPnl ?? 0;
+    this.state.consecutiveLosses = snap.consecutiveLosses ?? 0;
+    this.state.consecutiveWins = snap.consecutiveWins ?? 0;
+    this.state.lastTradeDate = snap.lastTradeDate ?? null;
+    this.weeklyPeakEquity = snap.weeklyPeakEquity ?? this.weeklyPeakEquity;
+    this.currentWeekNumber = snap.currentWeekNumber ?? -1;
+    this.pauseUntilDate = snap.pauseUntilDate ?? null;
+    this.consecutiveLossPauseUntil = snap.consecutiveLossPauseUntil ?? null;
+    this.awaitingPostPauseTrade = snap.awaitingPostPauseTrade ?? false;
+    this.overallPeakEquity = snap.overallPeakEquity ?? this.overallPeakEquity;
+    this.tradeLog = snap.tradeLog ? [...snap.tradeLog] : [];
+    this.equityDdPauseUntil = snap.equityDdPauseUntil ?? null;
+    this.lastDdTierTriggered = snap.lastDdTierTriggered ?? 0;
+    this.rolling7DayPauseUntil = snap.rolling7DayPauseUntil ?? null;
+    this.hardKilled = snap.hardKilled ?? false;
   }
 
   getBalance(): number {
