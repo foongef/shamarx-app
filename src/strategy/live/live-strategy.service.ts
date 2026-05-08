@@ -26,6 +26,7 @@ import {
 import { LiveSmcOrchestrator } from './live-smc-orchestrator';
 import { LiveControlService } from './live-control.service';
 import { BacktestCandle } from '../../backtest/engine/types';
+import { MailService, TradeOpenedPayload } from '../../mail/mail.service';
 
 const M15_BUFFER = 100;
 const H1_BUFFER = 500;
@@ -220,6 +221,7 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
     private readonly config: ConfigService,
     private readonly liveControl: LiveControlService,
     private readonly orchestrator: LiveSmcOrchestrator,
+    private readonly mail: MailService,
   ) {
     this.liveMode = (this.config.get<string>('LIVE_MODE') || 'false').toLowerCase() === 'true';
     const pairsCsv = this.config.get<string>('STRATEGY_PAIRS') || 'XAUUSD,EURUSD,GBPUSD,USDJPY';
@@ -381,7 +383,44 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
     // PERSIST_DEBOUNCE_MS). The 4-pair burst at any M15 boundary will
     // collapse to one Redis write.
     this.markPersistDirty();
+    // Fire-and-forget email notification to all active users. MailService
+    // already swallows errors internally — the catch here just prevents an
+    // unhandled rejection from leaking out of evaluatePair.
+    this.notifyTradeOpened(signal, evalTs).catch((err) =>
+      this.logger.warn(`Trade-opened notify failed: ${(err as Error).message}`),
+    );
     return signal;
+  }
+
+  /**
+   * Send the trade-opened email to every active user. Single-user system
+   * today; ready for multi-tenant later (just filter to the session's
+   * owner once LiveSession.userId exists).
+   */
+  private async notifyTradeOpened(signal: SmcLiveSignal, openedAtIso: string): Promise<void> {
+    const users = await this.prisma.user.findMany({
+      where: { isActive: true },
+      select: { email: true },
+    });
+    if (users.length === 0) return;
+
+    const dashboardUrl = `${process.env.WEB_URL || 'https://shamarx.com'}/lives`;
+    const payload: TradeOpenedPayload = {
+      symbol: signal.symbol,
+      side: signal.side,
+      mode: signal.mode,
+      lotSize: signal.totalLot,
+      entryPrice: signal.entryPrice,
+      slPrice: signal.slPrice,
+      tpPrice: signal.tpPrice ?? null,
+      riskPercent: this.liveControl.getRiskPercent(),
+      reason: signal.reason,
+      openedAtIso,
+      dashboardUrl,
+    };
+
+    // Send in parallel; MailService handles per-recipient failures internally.
+    await Promise.all(users.map((u) => this.mail.sendTradeOpened(u.email, payload)));
   }
 
   /**

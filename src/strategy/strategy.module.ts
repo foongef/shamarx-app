@@ -3,6 +3,7 @@ import { HttpModule } from '@nestjs/axios';
 import { MarketDataModule } from '../market-data/market-data.module';
 import { RiskModule } from '../risk/risk.module';
 import { LlmFilterModule } from '../llm-filter/llm-filter.module';
+import { MailModule } from '../mail/mail.module';
 import { StrategyController } from './strategy.controller';
 import { StrategyService } from './strategy.service';
 import { PatternDetector } from './pattern-detector';
@@ -17,7 +18,7 @@ import { EquitySnapshotService } from './live/equity-snapshot.service';
 import { LiveAnalyticsService } from './live/live-analytics.service';
 
 @Module({
-  imports: [HttpModule, MarketDataModule, RiskModule, LlmFilterModule],
+  imports: [HttpModule, MarketDataModule, RiskModule, LlmFilterModule, MailModule],
   controllers: [StrategyController],
   providers: [
     StrategyService,
