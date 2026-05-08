@@ -34,6 +34,17 @@ const ORCHESTRATOR_STATE_KEY = 'live:orchestrator:state';
 
 const TELEMETRY_RING_SIZE = 200;
 
+/** Debounce window for orchestrator-state persistence. 4 pairs evaluating at
+ *  the same M15 boundary mark dirty within ~50ms of each other; coalescing
+ *  them into one Redis write keeps the write rate at ~16/hour instead of ~64. */
+const PERSIST_DEBOUNCE_MS = 500;
+
+/** Periodic safety-net interval. Catches mutations that don't go through
+ *  evaluatePair() (e.g. position-monitor's recordExit when broker closes a
+ *  position) without coupling those callers to the persistence path. Worst-
+ *  case state-loss window on a hard crash = this value. */
+const PERSIST_INTERVAL_MS = 30_000;
+
 /** Telemetry event captured for the dashboard's Engine Worker view.
  *  Stored in an in-memory ring buffer — not persisted, lost on restart.
  *  Persistence isn't worth the write traffic; the dashboard is fine
@@ -64,6 +75,47 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
 
   /** UTC-day-keyed counters. Reset lazily on the first event of a new day. */
   private counters = { date: '', evals: 0, sweeps: 0, signals: 0 };
+
+  // ─── Persistence scheduler ────────────────────────────────────────────
+  // Pattern:
+  //   - markPersistDirty(): dirty flag + 500ms debounce → coalesces bursts
+  //   - PERSIST_INTERVAL_MS interval: backstop, catches mutations from
+  //     anywhere (e.g. position-monitor.recordExit) without the caller
+  //     having to know about persistence
+  //   - flushOrchestratorState(): idempotent, in-flight guarded, retries
+  //     on failure (re-marks dirty)
+  //   - onModuleDestroy: clears timers + final await flush
+
+  private persistDirty = false;
+  private persistDebounceTimer: NodeJS.Timeout | null = null;
+  private persistIntervalTimer: NodeJS.Timeout | null = null;
+  private persistInFlight = false;
+
+  private markPersistDirty(): void {
+    this.persistDirty = true;
+    if (this.persistDebounceTimer) return;
+    this.persistDebounceTimer = setTimeout(() => {
+      this.persistDebounceTimer = null;
+      this.flushOrchestratorState().catch(() => { /* logged inside */ });
+    }, PERSIST_DEBOUNCE_MS);
+  }
+
+  private async flushOrchestratorState(): Promise<void> {
+    if (!this.persistDirty || this.persistInFlight) return;
+    this.persistInFlight = true;
+    this.persistDirty = false; // optimistic — re-marked on failure
+    try {
+      const snapshot = this.orchestrator.serialize();
+      await this.redis.set(ORCHESTRATOR_STATE_KEY, JSON.stringify(snapshot));
+    } catch (err) {
+      // Re-mark so the next debounce / interval / shutdown retries the write.
+      // We never lose a mutation — at worst we're delayed by the interval.
+      this.persistDirty = true;
+      this.logger.warn(`Could not persist orchestrator state: ${(err as Error).message}`);
+    } finally {
+      this.persistInFlight = false;
+    }
+  }
 
   private pushEvent(ev: TelemetryEvent) {
     // Roll counters at UTC midnight — not exact but close enough for a UI badge.
@@ -212,11 +264,34 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
       }
     });
     this.subscribed = true;
+
+    // Backstop persistence interval — flushes any state mutated outside
+    // evaluatePair() (most importantly position-monitor.recordExit when the
+    // broker closes a position) within PERSIST_INTERVAL_MS of the change.
+    // No-ops when nothing is dirty.
+    this.persistIntervalTimer = setInterval(() => {
+      this.flushOrchestratorState().catch(() => { /* logged inside */ });
+    }, PERSIST_INTERVAL_MS);
   }
 
   async onModuleDestroy() {
     // RedisService manages its own subscription lifecycle.
     this.subscribed = false;
+
+    // Tear down the persistence scheduler. Cancel any pending debounce so it
+    // doesn't fire after we've already flushed; cancel the periodic timer;
+    // then do a final synchronous flush so a clean shutdown never loses the
+    // most recent mutations. A hard crash (SIGKILL, OOM) skips this path —
+    // worst case = up to PERSIST_INTERVAL_MS of state lost.
+    if (this.persistDebounceTimer) {
+      clearTimeout(this.persistDebounceTimer);
+      this.persistDebounceTimer = null;
+    }
+    if (this.persistIntervalTimer) {
+      clearInterval(this.persistIntervalTimer);
+      this.persistIntervalTimer = null;
+    }
+    await this.flushOrchestratorState();
   }
 
   /**
@@ -284,6 +359,9 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
               ? 'pending-only'
               : 'no-sweep',
       });
+      // Even no-signal evaluations mutate state (cooldown decrement, sweep
+      // dedup, pending expiry). Mark dirty so the snapshot stays fresh.
+      this.markPersistDirty();
       return null;
     }
 
@@ -298,16 +376,12 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
     });
     await this.placeOrder(signal);
     this.orchestrator.recordEntry(symbol, signal);
-    // Persist state so a restart mid-cooldown doesn't lose the timer.
-    this.persistOrchestratorState().catch((err) =>
-      this.logger.warn(`Could not persist orchestrator state: ${(err as Error).message}`),
-    );
+    // Signal-fire is the most important state mutation — actionedSweeps,
+    // cooldown, RiskManager all updated. Mark dirty (debounced flush within
+    // PERSIST_DEBOUNCE_MS). The 4-pair burst at any M15 boundary will
+    // collapse to one Redis write.
+    this.markPersistDirty();
     return signal;
-  }
-
-  private async persistOrchestratorState(): Promise<void> {
-    const snapshot = this.orchestrator.serialize();
-    await this.redis.set(ORCHESTRATOR_STATE_KEY, JSON.stringify(snapshot));
   }
 
   /**
