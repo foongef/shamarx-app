@@ -296,4 +296,44 @@ export class LiveReplayService {
       orderBy: { openedAt: 'asc' },
     });
   }
+
+  /**
+   * Returns ~`bars` M15 candles centered on `time` for the SMC chart
+   * expander. Pulls roughly 60% before / 40% after so the entry sits in
+   * the right portion of the chart, leaving room to see what happened
+   * after the trade fired. Reads directly from the same Candle table the
+   * replay engine consumed.
+   */
+  async getChartCandles(symbol: string, timeIso: string, bars: number) {
+    const center = new Date(timeIso);
+    if (isNaN(center.getTime())) {
+      throw new Error(`Invalid time: ${timeIso}`);
+    }
+    const sym = symbol.toUpperCase();
+    // M15 = 15 min per bar; pad the lookup window slightly to handle
+    // weekend gaps in forex data.
+    const beforeBars = Math.floor(bars * 0.6);
+    const afterBars = bars - beforeBars;
+    const fromMs = center.getTime() - beforeBars * 15 * 60 * 1000 * 1.5;
+    const toMs = center.getTime() + afterBars * 15 * 60 * 1000 * 1.5;
+    const rows = await this.prisma.candle.findMany({
+      where: {
+        symbol: sym,
+        timeframe: 'M15',
+        openTime: { gte: new Date(fromMs), lte: new Date(toMs) },
+      },
+      orderBy: { openTime: 'asc' },
+      take: bars * 2, // hard cap; weekend gaps may inflate window
+    });
+    return {
+      symbol: sym,
+      candles: rows.map((r) => ({
+        openTime: r.openTime.toISOString(),
+        open: r.open,
+        high: r.high,
+        low: r.low,
+        close: r.close,
+      })),
+    };
+  }
 }
