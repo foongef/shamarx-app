@@ -23,15 +23,30 @@ export const SMC_PAIR_REGISTRY: Record<string, SmcPairConfig> = {
   USDJPY: USDJPY_SMC_CONFIG,
 };
 
+/** Per-pair config overrides applied at runtime. Used by the comparison
+ *  runner / experimental flags. Returns merged config from getSmcPairConfig.
+ *  Reset between scenarios via clearSmcPairConfigOverrides(). */
+const overrides: Record<string, Partial<SmcPairConfig>> = {};
+
+export function setSmcPairConfigOverride(symbol: string, partial: Partial<SmcPairConfig>): void {
+  overrides[symbol.toUpperCase()] = { ...overrides[symbol.toUpperCase()], ...partial };
+}
+
+export function clearSmcPairConfigOverrides(): void {
+  for (const k of Object.keys(overrides)) delete overrides[k];
+}
+
 export function getSmcPairConfig(symbol: string): SmcPairConfig {
-  const cfg = SMC_PAIR_REGISTRY[symbol.toUpperCase()];
+  const sym = symbol.toUpperCase();
+  const cfg = SMC_PAIR_REGISTRY[sym];
   if (!cfg) {
     throw new Error(
       `No SMC pair config for ${symbol}. Available: ${Object.keys(SMC_PAIR_REGISTRY).join(', ')}. ` +
       `Add a config file in src/backtest/engine/smc/pairs/ and register it in pairs/index.ts.`,
     );
   }
-  return cfg;
+  const ov = overrides[sym];
+  return ov ? { ...cfg, ...ov } : cfg;
 }
 
 export type { SmcPairConfig };
