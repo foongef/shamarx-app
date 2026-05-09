@@ -4,6 +4,7 @@ import {
   Get,
   Param,
   Body,
+  Query,
   HttpCode,
   HttpStatus,
   NotFoundException,
@@ -50,5 +51,23 @@ export class LiveReplayController {
     const session = await this.service.getSession(id);
     if (!session) throw new NotFoundException(`Replay session ${id} not found`);
     return this.service.getTrades(id);
+  }
+
+  @Get(':id/chart-candles')
+  @ApiOperation({
+    summary:
+      'M15 candles for the SMC annotated chart — ~50 bars centered on the given trade time',
+  })
+  @ApiParam({ name: 'id' })
+  async chartCandles(
+    @Param('id') id: string,
+    @Query('symbol') symbol: string,
+    @Query('time') time: string,
+    @Query('window') window?: string,
+  ) {
+    const session = await this.service.getSession(id);
+    if (!session) throw new NotFoundException(`Replay session ${id} not found`);
+    const bars = window ? Math.max(20, Math.min(200, parseInt(window, 10))) : 50;
+    return this.service.getChartCandles(symbol, time, bars);
   }
 }
