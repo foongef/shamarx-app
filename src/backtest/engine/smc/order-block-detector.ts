@@ -146,6 +146,78 @@ export function hasSupportingOb(
   return { ok: false };
 }
 
+/**
+ * Path-3 gate: was the swung swing high/low itself created by an order
+ * block? This is a PRE-SWEEP validity check — different from
+ * `hasSupportingOb` which fails for our strategy because it expects
+ * post-entry structure.
+ *
+ * The intuition: a swing extreme that was formed by *impulsive* movement
+ * from an OB candle is "real" institutional liquidity worth sweeping.
+ * A swing extreme formed by chop/noise is just an arbitrary wick — the
+ * sweep doesn't mean much.
+ *
+ * For BUY (sweep of swing LOW): want a bearish OB (last UP candle before
+ *   the impulsive DOWN move that created the low) within `lookback`
+ *   H1 bars before the swing.
+ * For SELL (sweep of swing HIGH): want a bullish OB (last DOWN candle
+ *   before the impulsive UP move) before the swing.
+ */
+export function hasFreshObAtSweptLevel(
+  h1Candles: BacktestCandle[],
+  swingIdx: number,
+  side: 'BUY' | 'SELL',
+  lookback: number,
+  atr: number[],
+  displacementAtrMult = 1.2,
+): { ok: true; ob: OrderBlock } | { ok: false } {
+  if (swingIdx < 1 || swingIdx >= h1Candles.length) return { ok: false };
+  const swingCandle = h1Candles[swingIdx];
+  const isLowSwing = side === 'BUY';
+  const swingLevel = isLowSwing ? swingCandle.low : swingCandle.high;
+
+  const minIdx = Math.max(1, swingIdx - lookback);
+
+  for (let k = swingIdx - 1; k >= minIdx; k--) {
+    const c = h1Candles[k];
+    const cAtr = atr[k] ?? 0;
+    if (cAtr <= 0) continue;
+
+    // For BUY (low sweep, impulse went down): want UP candle (a bearish OB)
+    // For SELL (high sweep, impulse went up): want DOWN candle (a bullish OB)
+    const isUp = c.close > c.open;
+    const isDown = c.close < c.open;
+    if (isLowSwing && !isUp) continue;
+    if (!isLowSwing && !isDown) continue;
+
+    // Confirm the impulse from this OB candle's far edge to the swing
+    // level was meaningful (≥ displacementAtrMult × ATR). This is the
+    // "displacement" that distinguishes a real OB from a coincidental
+    // candle.
+    const impulseSize = isLowSwing
+      ? c.high - swingLevel       // impulse went DOWN from c.high to swingLevel
+      : swingLevel - c.low;       // impulse went UP from c.low to swingLevel
+    if (impulseSize < 0) continue; // swing is on wrong side of OB candle
+
+    if (impulseSize >= displacementAtrMult * cAtr) {
+      return {
+        ok: true,
+        ob: {
+          top: c.high,
+          bottom: c.low,
+          candleTime: c.openTime,
+          candleIdx: k,
+          isBullish: !isLowSwing,
+          displacement: impulseSize,
+          mitigated: false,
+          mitigatedAtIdx: -1,
+        },
+      };
+    }
+  }
+  return { ok: false };
+}
+
 // ─── internals ───────────────────────────────────────────────────────────
 
 function makeOb(

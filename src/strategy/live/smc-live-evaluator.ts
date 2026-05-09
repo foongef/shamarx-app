@@ -57,6 +57,12 @@ export interface SmcLiveSignal {
     fvg?: { top: number; bottom: number; candleTime: string; isBullish: boolean };
     ob?: { top: number; bottom: number; candleTime: string; isBullish: boolean };
     bos?: { level: number; brokenAtTime: string };
+    /** Path-3 pre-sweep validity gate annotations — same chart-rendering
+     *  contract as above, but reflect the structure that VALIDATED the
+     *  sweep (rather than the structure that confirms a post-entry move). */
+    obOrigin?: { top: number; bottom: number; candleTime: string; isBullish: boolean };
+    impulseFvg?: { top: number; bottom: number; candleTime: string; isBullish: boolean };
+    bosOrigin?: { level: number; brokenAtTime: string };
   };
 }
 
