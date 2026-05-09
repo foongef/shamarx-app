@@ -287,7 +287,7 @@ curl -s https://api.shamarx.com/api/strategy/live/positions
 
 ### Engine looks dormant — no signals for hours
 
-This is the **most common false alarm**. SMC sweeps are rare by design.
+This is the **most common false alarm**. stop-hunt sweeps are rare by design.
 
 Verify in order:
 1. `isRunning: true` in pulse
@@ -298,7 +298,7 @@ Verify in order:
 
 If all green, the engine is correctly **rejecting** rather than firing.
 The replay theatre on identical historical data confirms the strategy
-logic works. SMC sweeps land roughly 0-3× per pair per day.
+logic works. stop-hunt sweeps land roughly 0-3× per pair per day.
 
 ### Replay shows different P&L vs live
 

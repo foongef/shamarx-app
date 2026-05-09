@@ -8,9 +8,17 @@ Last updated: 2026-05-09
 
 ## In one sentence
 
-ShamarX runs a **liquidity-sweep + HTF-bias + structure-anchored-stop**
-strategy on 4 forex pairs, gated by a multi-layered risk system. It is
-*one slice* of the SMC framework, not the full thing.
+ShamarX runs a **stop-hunt reversal** strategy on 4 forex pairs:
+when price wicks beyond an H1 swing extreme and closes back inside,
+the engine fades that failed extension if the daily trend confirms.
+Wyckoff would call it a spring (BUY) or upthrust (SELL); modern SMC
+traders call the same thing a "liquidity sweep". Multi-layered risk
+system on top.
+
+This is **one slice** of the SMC framework — the entry-trigger piece —
+not the full SMC framework. We don't gate on FVGs, order blocks, or
+break-of-structure (those were tested and made things worse; see
+"FVG / OB / BOS detection" below).
 
 ---
 
@@ -79,9 +87,9 @@ framing, but are not currently implemented as decision inputs:
 
 | Concept | Status | Notes |
 |---|---|---|
-| **Fair Value Gap (FVG)** | ❌ Not implemented | Tracked: planned as Phase 2 (advisory or gating) |
-| **Order Block (OB)** | ❌ Not implemented | Tracked: planned as Phase 2 |
-| **Break of Structure (BOS)** | ❌ Not explicitly tracked | Could be derived from existing structure-evaluator data |
+| **Fair Value Gap (FVG)** | 🟡 Detector exists, NOT gating | Tested both as post-entry and pre-sweep gate; both rejected via 28-month replay. Used for advisory chart annotations only. |
+| **Order Block (OB)** | 🟡 Detector exists, NOT gating | Same story as FVG. |
+| **Break of Structure (BOS)** | 🟡 Detector exists, NOT gating | Same story. |
 | **Change of Character (CHOCH)** | ❌ Not implemented | Lower priority |
 | **Mitigation block** | ❌ Not implemented | |
 | **Premium/discount Fib zones** | ❌ Not implemented | |
@@ -97,29 +105,82 @@ in replay **without** these. They're enhancements, not corrections.
 
 ## Planned additions (in priority order)
 
-### 1. FVG / OB / BOS detection — Phase 2 (in progress)
+### 1. FVG / OB / BOS detection — ✅ VALIDATED, gates stay OFF
 
-- **Step 1**: Implement detectors as pure functions (no behavior change yet)
-- **Step 2**: Wire as **optional gates** in pair configs, default OFF
-- **Step 3**: Replay-validate each combination vs baseline:
-  - Baseline (no new gates)
-  - +FVG only
-  - +OB only
-  - +BOS only
-  - +FVG +OB
-  - All three
-- **Step 4**: Lock in only configurations that meet or beat baseline
-  metrics (≥65% WR / ≥179% / 28-month, ≤current max drawdown)
-- **Step 5**: Persist detection metadata on trade rows so the
-  educational chart can render the zones
+**Two full validation rounds. 12 scenarios tested. None pass.**
 
-**Validation criteria** before live deployment of any new gate:
+Detectors implemented as pure functions and wired as optional gates.
+Comparison runner at `scripts/compare-smc-gates.ts` validates against
+the 28-month baseline. Both attempts conclude the same: **the
+strategy's existing filters already extract all available structural
+signal — additional structure gates remove signal and noise
+proportionally.**
+
+#### Round 1 — Path B: post-entry gates (2026-05-09)
+
+Question asked: "is there post-entry structure (FVG / OB / BOS)
+confirming the trade?"
+
+| Scenario | Trades | WR% | PnL | Return |
+|---|---|---|---|---|
+| **baseline** | 686 | 64.9 | $14,370 | **+143.70%** |
+| fvg | 512 (75%) | 56.6 (−8.3pp) | $5,400 | +54.01% |
+| ob | 464 (68%) | 61.4 (−3.5pp) | $5,922 | +59.22% |
+| bos | 454 (66%) | 53.7 (−11.2pp) | $540 | +5.40% |
+| fvg+ob | 332 (48%) | 50.3 (−14.6pp) | $1,894 | +18.94% |
+| all | 248 (36%) | 52.0 (−12.9pp) | $2,897 | +28.97% |
+
+Diagnosis: temporal misalignment. ShamarX fires immediately after
+sweep — we ARE the move that creates the FVG, not the move that
+retests it. The gates ask for structure that hasn't formed yet.
+
+#### Round 2 — Path 3: pre-sweep validity gates (2026-05-10)
+
+Reframed the question: "was the swept LEVEL itself created by
+meaningful structure?" — answerable at signal time, unlike Path B.
+
+| Scenario | Trades | WR% | PnL | Return |
+|---|---|---|---|---|
+| **baseline** | 686 | 64.9 | $14,370 | **+143.70%** |
+| p3-ob | 482 (70%) | 60.6 (−4.3pp) | $4,949 | +49.49% |
+| p3-fvg | 368 (54%) | 60.6 (−4.3pp) | $3,896 | +38.96% |
+| p3-bos | 496 (72%) | 62.1 (−2.8pp) | $4,633 | +46.33% |
+| p3-ob+fvg | 330 (48%) | 60.3 (−4.6pp) | $3,333 | +33.33% |
+| p3-all | 306 (45%) | 62.4 (−2.5pp) | $4,415 | +44.14% |
+
+Same shape of failure: trade count drops 28-55% AND win rate drops
+2.5-4.6pp simultaneously. PnL collapses 65-77% across the board.
+
+#### Final conclusion
+
+The strategy's existing filters (sweep buffer × ATR × D1 bias ×
+killzones × XAUUSD anchor sweeps) **already extract all the
+structural signal extractable from this approach**. There's no
+remaining "low-quality sweeps" subset that a structure gate can
+remove without also removing equally-good high-quality sweeps.
+
+The strategy's edge is the **speed-of-entry × HTF-bias-alignment**
+combination, fully baked into the existing logic. Any additional
+filter — regardless of whether it asks pre-sweep or post-entry
+questions — produces a smaller AND lower-quality sample.
+
+#### What we keep
+
+- All gate flags remain default OFF in pair configs. Live behaviour
+  unchanged from the validated baseline.
+- Detectors stay in the tree (`fvg-detector.ts`, `order-block-detector.ts`,
+  `bos-detector.ts`) for the **educational chart's advisory annotations**:
+  the dashboard draws nearby SMC structure for each trade so users
+  can SEE the patterns, even though the engine didn't *gate* on them.
+- Comparison runner stays for future re-validation if anyone wants
+  to try a different approach.
+
+#### Pass criteria (kept for any future attempt)
+
 - Win rate ≥ baseline within 1 standard error
 - Realized PnL ≥ baseline
+- Trade count ≥ 60% of baseline (less = filtering too hard)
 - Max drawdown ≤ baseline + 2 percentage points
-- Trade count ≥ 60% of baseline (some reduction OK; <60% means we're
-  filtering too aggressively)
-- Sharpe-ish (PnL/MaxDD) ≥ baseline
 
 ### 2. News-blackout filter
 
@@ -168,12 +229,19 @@ this on the same window before going to live.
 
 ## Anti-claims (be honest in marketing)
 
-When describing the strategy externally:
+When describing the strategy externally, lean primary on the
+**stop-hunt reversal** framing — it's accurate, defensible from the
+trade list, and avoids the "is this real SMC?" debate.
 
-- ✅ "Liquidity-sweep + HTF bias + structure-anchored stops" — accurate
+- ✅ "Stop-hunt reversal engine" — accurate (primary brand framing)
+- ✅ "Failed-breakout reversal with HTF bias filter" — same thing, more technical
+- ✅ "Wyckoff spring/upthrust system" — historically grounded alternative
+- ✅ "Liquidity sweep + HTF bias" — SMC-community vocabulary, also accurate
 - ✅ "Validated across 28 months of Dukascopy data" — verifiable
-- ✅ "Smart Money Concepts strategy" — accurate but narrow
-- ⚠️ "Full SMC framework" — **not accurate** until FVG/OB/BOS land
+- 🟡 "Smart Money Concepts strategy" — the *trigger* is SMC-style but the
+       full framework (FVG/OB/BOS gating) was tested and rejected. Use
+       sparingly; not the strongest framing.
+- ⚠️ "Full SMC framework" — **not accurate**; we don't gate on FVG/OB/BOS
 - ⚠️ "AI-powered" / "agentic" — **not accurate**; pure rule-based
 
 The replay theatre is the strongest credibility play we have. Lean on
