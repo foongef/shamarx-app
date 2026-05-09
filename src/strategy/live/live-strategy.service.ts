@@ -690,6 +690,11 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
               ? new Date(signal.smcContext.sweepCandleTime)
               : null,
             d1Bias: signal.smcContext?.d1Bias ?? null,
+            // Capture SL at creation. live-position-manager mutates
+            // the `slPrice` column above as BE / trail kicks in; this
+            // column never changes. The educational chart uses this so
+            // users see where SL was *placed*, not where it ended up.
+            originalSlPrice: signal.slPrice,
           },
         });
 

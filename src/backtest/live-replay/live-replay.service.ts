@@ -108,6 +108,11 @@ export class LiveReplayService {
             sweptLow: t.sweptLow ?? null,
             sweepCandleTime: t.sweepCandleTime ? new Date(t.sweepCandleTime) : null,
             d1Bias: t.d1Bias ?? null,
+            // V6SimulatedPosition.originalSlPrice is set at trade creation
+            // and never mutated by trade-management. This is what the chart
+            // shows as "SL" — where the stop was originally placed,
+            // structurally anchored to the swept extreme.
+            originalSlPrice: t.originalSlPrice ?? null,
           })),
         });
       }

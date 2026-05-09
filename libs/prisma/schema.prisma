@@ -195,6 +195,11 @@ model Trade {
   sweptLow         Float?
   sweepCandleTime  DateTime?
   d1Bias           String?   // BULLISH | BEARISH | NEUTRAL
+  // Original SL placement — never mutated. `slPrice` above moves as
+  // break-even and trailing-stop kick in. The educational chart shows
+  // this field so users see WHERE the SL started (above entry for SELL,
+  // below entry for BUY) rather than the trailed final position.
+  originalSlPrice  Float?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
@@ -291,6 +296,11 @@ model LiveReplayTrade {
   sweptLow         Float?
   sweepCandleTime  DateTime?
   d1Bias           String?   // BULLISH | BEARISH | NEUTRAL
+  // Original SL placement — never mutated. `slPrice` above is the FINAL
+  // (trailed) SL at trade close; this is where SL started so the chart
+  // can show the structural placement (above entry for SELL, below for
+  // BUY) instead of the trailed value.
+  originalSlPrice  Float?
   createdAt     DateTime @default(now())
 
   @@index([sessionId])
