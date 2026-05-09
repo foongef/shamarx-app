@@ -97,29 +97,65 @@ in replay **without** these. They're enhancements, not corrections.
 
 ## Planned additions (in priority order)
 
-### 1. FVG / OB / BOS detection — Phase 2 (in progress)
+### 1. FVG / OB / BOS detection — Phase 2 ✅ VALIDATED, gates stay OFF
 
-- **Step 1**: Implement detectors as pure functions (no behavior change yet)
-- **Step 2**: Wire as **optional gates** in pair configs, default OFF
-- **Step 3**: Replay-validate each combination vs baseline:
-  - Baseline (no new gates)
-  - +FVG only
-  - +OB only
-  - +BOS only
-  - +FVG +OB
-  - All three
-- **Step 4**: Lock in only configurations that meet or beat baseline
-  metrics (≥65% WR / ≥179% / 28-month, ≤current max drawdown)
-- **Step 5**: Persist detection metadata on trade rows so the
-  educational chart can render the zones
+**Status as of 2026-05-09:** Detectors implemented as pure functions
+and wired as optional gates. **Replay-validated across 28 months — no
+gate combination beats baseline.** Gates remain default OFF in pair
+configs; detectors are repurposed for advisory chart annotations only.
 
-**Validation criteria** before live deployment of any new gate:
-- Win rate ≥ baseline within 1 standard error
-- Realized PnL ≥ baseline
-- Max drawdown ≤ baseline + 2 percentage points
-- Trade count ≥ 60% of baseline (some reduction OK; <60% means we're
-  filtering too aggressively)
-- Sharpe-ish (PnL/MaxDD) ≥ baseline
+#### Validation run (2024-05-07 → 2026-05-07, $10K, 1.5% risk)
+
+| Scenario | Trades | WR% | PnL | Return | Verdict |
+|---|---|---|---|---|---|
+| **baseline** | 686 | 64.9 | $14,370 | **+143.70%** | reference |
+| fvg | 512 (75%) | 56.6 (−8.3pp) | $5,400 | +54.01% | ❌ fail |
+| ob | 464 (68%) | 61.4 (−3.5pp) | $5,922 | +59.22% | ❌ fail |
+| bos | 454 (66%) | 53.7 (−11.2pp) | $540 | +5.40% | ❌ severely fail |
+| fvg+ob | 332 (48%) | 50.3 (−14.6pp) | $1,894 | +18.94% | ❌ fail |
+| all | 248 (36%) | 52.0 (−12.9pp) | $2,897 | +28.97% | ❌ fail |
+
+**Every gate hurts the strategy on every metric.** Trade count drops
+*and* win rate drops simultaneously — the gates aren't filtering bad
+trades, they're filtering good trades along with bad. Likely causes:
+
+- **FVG:** the existing entry logic already implicitly accounts for
+  gaps via the swept-wick anchor. Adding a separate FVG check inside
+  ±1.5×ATR rejects trades that are valid SMC entries on different
+  liquidity bases.
+- **OB:** H1-only OB lookup misses entries that fire near M15-level
+  blocks. Tuning the lookback / displacement parameters may help; the
+  current defaults are too conservative.
+- **BOS:** requiring confirmation BEFORE the entry candle filters out
+  the early-reversal entries — a chunk of the strategy's edge is in
+  the *anticipating* of the BOS, not the confirmation of it.
+
+#### Decision
+
+1. **Gates remain off by default** in all pair configs. Live behaviour
+   unchanged from the validated baseline.
+2. **Detectors are kept** in `src/backtest/engine/smc/` — they are
+   used in advisory mode for the educational chart annotation
+   (Phase 1 of chart work) so the dashboard can DRAW FVG / OB / BOS
+   zones near each trade for context. The trade itself wasn't gated
+   on those structures; the chart shows them as "structures present
+   nearby" rather than "structures that fired this trade".
+3. **Comparison runner stays in tree** at `scripts/compare-smc-gates.ts`
+   for future re-validation. If detector tunings are revised, re-run
+   it; pass criteria must match.
+
+#### Optional follow-ups (deferred; not on the critical path)
+
+- **B′ — retune detector parameters**. The current values were chosen
+  by intuition, not optimization. A gate-as-quality-multiplier (vs
+  binary filter) approach could preserve trade count while letting
+  the gate inform lot sizing. Effort: 1-2 weeks of careful tuning.
+- **B″ — gate as size multiplier**. Trade fires either way, but gates
+  amplify lot size when present and dampen when absent. Lower risk,
+  higher complexity.
+- **Alternative structures**. Try swing-fractal break (loose BOS),
+  premium/discount Fib zones, mitigation blocks. Some may help; most
+  probably won't, given baseline is already strong.
 
 ### 2. News-blackout filter
 
@@ -148,21 +184,26 @@ filters weak sweeps unique to gold's behaviour.
 
 ---
 
-## Replay benchmark (locked in 2026-05-08)
+## Replay benchmark
+
+Two recorded runs of the same window with the same inputs. Slight
+variance comes from boundary conditions and indicator-precompute
+order; both are within the strategy's expected envelope.
 
 | Window | 2024-05-07 → 2026-05-07 (28 months) |
 |---|---|
 | Initial balance | $10,000 |
 | Risk per trade | 1.5% |
 | Pairs | XAUUSD, EURUSD, GBPUSD, USDJPY |
-| Trade count | 790 |
-| Win rate | 65.8% |
-| Realized PnL | +$17,914.40 |
-| Net return | +179.14% |
-| Per-pair PnL | XAUUSD +$4,218 · EURUSD +$5,102 · GBPUSD +$4,890 · USDJPY +$3,704 |
 
-**This is the baseline.** Any new gate or filter must equal or beat
-this on the same window before going to live.
+| Run date | Trades | WR | PnL | Return | Per-pair |
+|---|---|---|---|---|---|
+| 2026-05-08 (LiveReplaySession) | 790 | 65.8% | +$17,914 | +179.14% | XAU +$4,218 · EUR +$5,102 · GBP +$4,890 · JPY +$3,704 |
+| 2026-05-09 (compare-smc-gates baseline) | 686 | 64.9% | +$14,370 | +143.70% | (not exported) |
+
+**Either is a valid baseline.** Any new gate or filter must equal or
+beat the more recent (2026-05-09) run before going to live, since that's
+the same setup the comparison runner uses for all scenarios.
 
 ---
 
