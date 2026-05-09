@@ -103,6 +103,11 @@ export class LiveReplayService {
             mode: t.mode,
             setupTags: t.setupTags,
             reason: t.reason,
+            sweptLevel: t.sweptLevel ?? null,
+            sweptHigh: t.sweptHigh ?? null,
+            sweptLow: t.sweptLow ?? null,
+            sweepCandleTime: t.sweepCandleTime ? new Date(t.sweepCandleTime) : null,
+            d1Bias: t.d1Bias ?? null,
           })),
         });
       }

@@ -391,6 +391,20 @@ export class LiveSmcOrchestrator {
 
       const round = (n: number) => Math.round(n * factor) / factor;
 
+      // SMC annotation context — captured here so the dashboard chart can
+      // render an explainer. The H1 candle that did the sweep is at
+      // `setup.detectedAtH1Idx`; we look it up to get its openTime.
+      const sweepCandle = h1Candles[setup.detectedAtH1Idx];
+      const smcContext = sweepCandle
+        ? {
+            sweptLevel: setup.sweepLevel,
+            sweptHigh: setup.sweepCandleHigh,
+            sweptLow: setup.sweepCandleLow,
+            sweepCandleTime: sweepCandle.openTime,
+            d1Bias: liveD1Bias,
+          }
+        : undefined;
+
       // Build the signal exactly like SmcLiveEvaluator did.
       let signal: SmcLiveSignal;
       if (!usesLadder) {
@@ -407,6 +421,7 @@ export class LiveSmcOrchestrator {
           mode: setup.mode,
           h1SweepTime: sweepTime,
           reason: this.formatReason(setup, cfg.symbol, liveD1Adx, liveD1Bias, session, false),
+          smcContext,
         };
       } else {
         const tp1Lot = Math.max(0.01, Math.round(totalLot * cfg.tp1PartialFraction * 100) / 100);
@@ -431,6 +446,7 @@ export class LiveSmcOrchestrator {
           mode: setup.mode,
           h1SweepTime: sweepTime,
           reason: this.formatReason(setup, cfg.symbol, liveD1Adx, liveD1Bias, session, true),
+          smcContext,
         };
       }
 
