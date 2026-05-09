@@ -41,6 +41,14 @@ export interface SimulatedPosition extends V6SimulatedPosition {
   openedAt: string;     // duplicates entryTime for clarity in DB rows
   mode: 'REVERSAL' | 'CONTINUATION';
   reason: string;
+  /** SMC annotation context captured at signal-fire — survives into the
+   *  ClosedPosition and ultimately the LiveReplayTrade DB row so the
+   *  chart expander can render the swept level + sweep candle range. */
+  sweptLevel?: number;
+  sweptHigh?: number;
+  sweptLow?: number;
+  sweepCandleTime?: string;
+  d1Bias?: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
 }
 
 export interface ClosedPosition extends SimulatedPosition {
@@ -81,7 +89,19 @@ export class SimulatedBroker {
       // re-attach our extension fields when it returns a NEW object.
       return updated === p
         ? p
-        : ({ ...updated, id: p.id, symbol: p.symbol, openedAt: p.openedAt, mode: p.mode, reason: p.reason } as SimulatedPosition);
+        : ({
+            ...updated,
+            id: p.id,
+            symbol: p.symbol,
+            openedAt: p.openedAt,
+            mode: p.mode,
+            reason: p.reason,
+            sweptLevel: p.sweptLevel,
+            sweptHigh: p.sweptHigh,
+            sweptLow: p.sweptLow,
+            sweepCandleTime: p.sweepCandleTime,
+            d1Bias: p.d1Bias,
+          } as SimulatedPosition);
     });
     this.positions.set(symbol, managed);
 
@@ -154,6 +174,11 @@ export class SimulatedBroker {
         regimeAtEntry: 'WEAK_TREND',
         mode: signal.mode,
         reason: signal.reason,
+        sweptLevel: signal.smcContext?.sweptLevel,
+        sweptHigh: signal.smcContext?.sweptHigh,
+        sweptLow: signal.smcContext?.sweptLow,
+        sweepCandleTime: signal.smcContext?.sweepCandleTime,
+        d1Bias: signal.smcContext?.d1Bias,
       };
       list.push(pos);
       opened.push(pos);

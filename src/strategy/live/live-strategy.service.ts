@@ -682,6 +682,14 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
               originalSlPrice: signal.slPrice,
               trailKey,
             } as any,
+            // SMC annotation context for the dashboard chart expander.
+            sweptLevel: signal.smcContext?.sweptLevel ?? null,
+            sweptHigh: signal.smcContext?.sweptHigh ?? null,
+            sweptLow: signal.smcContext?.sweptLow ?? null,
+            sweepCandleTime: signal.smcContext?.sweepCandleTime
+              ? new Date(signal.smcContext.sweepCandleTime)
+              : null,
+            d1Bias: signal.smcContext?.d1Bias ?? null,
           },
         });
 

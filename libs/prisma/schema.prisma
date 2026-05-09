@@ -187,6 +187,14 @@ model Trade {
   // originalSlPrice, trailConfig key — TP1 vs RUNNER). Stored as JSON so
   // adding new tuning knobs doesn't require a schema migration.
   managementState Json    @default("{}")
+  // SMC context — captured at signal-fire time so the dashboard can render
+  // an annotated chart explaining WHY the trade fired. All nullable so
+  // legacy rows stay valid; populated only for trades fired by the SMC engine.
+  sweptLevel       Float?
+  sweptHigh        Float?
+  sweptLow         Float?
+  sweepCandleTime  DateTime?
+  d1Bias           String?   // BULLISH | BEARISH | NEUTRAL
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
@@ -275,6 +283,14 @@ model LiveReplayTrade {
   mode          String   // REVERSAL or CONTINUATION (from SmcLiveSignal.mode)
   setupTags     String[]
   reason        String   // human-readable from SmcLiveSignal.reason
+  // SMC annotation context — same shape as Trade, used by the replay
+  // theatre's "View on chart" expander to render the swept level + sweep
+  // candle range + D1 bias on top of the OHLC chart.
+  sweptLevel       Float?
+  sweptHigh        Float?
+  sweptLow         Float?
+  sweepCandleTime  DateTime?
+  d1Bias           String?   // BULLISH | BEARISH | NEUTRAL
   createdAt     DateTime @default(now())
 
   @@index([sessionId])

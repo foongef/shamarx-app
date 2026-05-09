@@ -41,6 +41,17 @@ export interface SmcLiveSignal {
   mode: 'REVERSAL' | 'CONTINUATION';
   h1SweepTime: string;       // H1 candle close time of the sweep — for de-dup
   reason: string;            // human-readable why we entered
+  /** SMC annotation context — captured at signal-fire so the dashboard's
+   *  "View on chart" expander can render an annotated chart explaining the
+   *  setup. All fields are populated by the orchestrator from the
+   *  PendingSetup + D1 indicators in scope at signal time. */
+  smcContext?: {
+    sweptLevel: number;       // the H1 swing extreme that was swept
+    sweptHigh: number;        // sweep candle high
+    sweptLow: number;         // sweep candle low
+    sweepCandleTime: string;  // ISO openTime of the H1 sweep candle
+    d1Bias: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+  };
 }
 
 export interface LiveEvaluationContext {
