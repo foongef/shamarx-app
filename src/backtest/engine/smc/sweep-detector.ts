@@ -8,6 +8,32 @@
 import { BacktestCandle, IndicatorState, D1Bias } from '../types';
 import { PendingSetup, SmcMode, SmcPairConfig } from './types';
 
+/**
+ * Locate the H1 candle index that formed the swung swing — used by the
+ * Path-3 pre-sweep validity gates. Walks back from the sweep candle
+ * looking for a candle whose extreme matches the swept price level.
+ *
+ * Returns null if no exact match is found within `searchBack` bars (rare;
+ * the sweep detector emits levels that came from real fractals, so a
+ * matching candle should exist).
+ */
+export function findSweptSwingIdx(
+  h1Candles: BacktestCandle[],
+  sweepCandleIdx: number,
+  side: 'BUY' | 'SELL',
+  sweepLevel: number,
+  searchBack = 50,
+): number | null {
+  const isLowSwing = side === 'BUY'; // BUY trade = sweep of swing low
+  const minIdx = Math.max(1, sweepCandleIdx - searchBack);
+  for (let k = sweepCandleIdx - 1; k >= minIdx; k--) {
+    const c = h1Candles[k];
+    const level = isLowSwing ? c.low : c.high;
+    if (level === sweepLevel) return k;
+  }
+  return null;
+}
+
 /** Find the most recent H1 swing high within the lookback window (3-bar fractal). */
 export function findRecentSwingHigh(
   h1Candles: BacktestCandle[],

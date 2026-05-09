@@ -139,4 +139,36 @@ export interface SmcPairConfig {
   /** Swing-fractal lookback used to define the structure that needs to
    *  break. Default = sweep-detector's `recentSwingLookbackH1`. */
   bosGateSwingLookback?: number;
+
+  // ─── Path-3 pre-sweep validity gates (default OFF) ───────────────────
+  // The original useFvgGate / useObGate / useBosGate above check structure
+  // AFTER our entry candle, which fails because our entry IS the start of
+  // the impulse that creates the structure (validated 2026-05-09 replay:
+  // every gate dropped both trade count AND win rate). These reframed
+  // gates check the validity of the swept LEVEL — was it formed by
+  // institutional structure (OB / FVG / BOS-of-prior-swing) — answering
+  // a different question that's actually answerable at signal time.
+
+  /** When true, require a fresh OB at the swept level — i.e. the swing
+   *  high/low was preceded by an opposing-direction candle whose impulse
+   *  toward the level was meaningful. Filters out sweeps of chop wicks. */
+  useObOriginGate?: boolean;
+  /** Look back this many H1 bars from the swept swing for the OB. Default 12. */
+  obOriginLookback?: number;
+  /** Required impulse displacement (× ATR) from OB candle to swung level. Default 1.2. */
+  obOriginDisplacementAtr?: number;
+
+  /** When true, require an FVG behind the impulse that BUILT the swept
+   *  level. Confirms the swing was formed by a real impulse, not chop. */
+  useImpulseFvgGate?: boolean;
+  /** Look back this many H1 bars from the swept swing for the impulse FVG. Default 5. */
+  impulseFvgLookback?: number;
+
+  /** When true, require the swept level itself was a break of an EARLIER
+   *  same-side swing — i.e. the wick that got swept was extending past
+   *  prior structure. Filters out sweeps of insignificant levels. */
+  useBosOriginGate?: boolean;
+  /** How far back to look for the prior swing whose level the swept
+   *  swing must have broken. Default 24 H1 bars. */
+  bosOriginLookback?: number;
 }

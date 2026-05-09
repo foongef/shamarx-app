@@ -76,6 +76,63 @@ export function detectBos(
 }
 
 /**
+ * Path-3 gate: was the swung swing extreme itself a break of structure
+ * — i.e., did it take out an EARLIER swing extreme in the same direction?
+ *
+ * Replaces the impossible-to-satisfy `hasBosAfter` from the failed Path B
+ * (which required a NEW BOS to form between sweep detection and our M15
+ * entry, often only 0-2 H1 bars apart).
+ *
+ * For BUY (sweep of swing LOW): was that low LOWER than a prior swing
+ *   low within `lookback` bars? If yes, the swept level itself was a
+ *   bearish BOS — a meaningful liquidity grab worth fading.
+ * For SELL (sweep of swing HIGH): was that high HIGHER than a prior
+ *   swing high?
+ *
+ * Filters out sweeps of insignificant levels (random wicks that happened
+ * to print a fractal) — keeps the trades where price was actively
+ * extending into stop-runs.
+ */
+export function sweptLevelWasItselfABos(
+  h1Candles: BacktestCandle[],
+  swingIdx: number,
+  side: 'BUY' | 'SELL',
+  lookback: number,
+  swingFractalLookback = 5,
+): { ok: true; brokenLevel: number; brokenAtTime: string } | { ok: false } {
+  if (swingIdx < 2) return { ok: false };
+
+  const isLowSwing = side === 'BUY';
+  const swingCandle = h1Candles[swingIdx];
+  const swingLevel = isLowSwing ? swingCandle.low : swingCandle.high;
+
+  const minIdx = Math.max(1, swingIdx - lookback);
+
+  // Walk back finding prior swings in the SAME direction; check whether
+  // our swing level extended past any of them.
+  for (let k = swingIdx - 2; k >= minIdx; k--) {
+    const priorSwing = isLowSwing
+      ? findRecentSwingLow(h1Candles, k + 1, swingFractalLookback)
+      : findRecentSwingHigh(h1Candles, k + 1, swingFractalLookback);
+    if (priorSwing == null) continue;
+
+    const broke = isLowSwing
+      ? swingLevel < priorSwing
+      : swingLevel > priorSwing;
+    if (broke) {
+      return {
+        ok: true,
+        brokenLevel: priorSwing,
+        brokenAtTime: swingCandle.openTime,
+      };
+    }
+    // First fractal hit that wasn't broken — keep walking for older ones,
+    // but most cases resolve in the first 1-2 fractals found.
+  }
+  return { ok: false };
+}
+
+/**
  * Gate: returns true if a BOS in the entry direction occurred between
  * `sinceIdx` (inclusive) and `endIdx` (inclusive). Used to require that
  * structure confirmed AFTER the sweep but BEFORE we fire the entry.

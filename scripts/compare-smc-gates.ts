@@ -52,7 +52,15 @@ function parseArgs(): CliArgs {
       : REPLAY_DEFAULT_PAIRS,
     scenarios: raw.scenarios
       ? raw.scenarios.split(',').map((s) => s.trim().toLowerCase())
-      : ['baseline', 'fvg', 'ob', 'bos', 'fvg+ob', 'all'],
+      : [
+          'baseline',
+          // Path-3 pre-sweep validity gates (the new approach)
+          'p3-ob',
+          'p3-fvg',
+          'p3-bos',
+          'p3-ob+fvg',
+          'p3-all',
+        ],
   };
 }
 
@@ -79,15 +87,40 @@ async function fetchTimeframe(
   }));
 }
 
-const SCENARIO_GATES: Record<string, Partial<{ useFvgGate: boolean; useObGate: boolean; useBosGate: boolean }>> = {
+const SCENARIO_GATES: Record<
+  string,
+  Partial<{
+    // Old (failed) post-entry gates — kept for regression visibility,
+    // not in the default scenario list since the 2026-05-09 validation
+    // showed they all hurt the strategy.
+    useFvgGate: boolean;
+    useObGate: boolean;
+    useBosGate: boolean;
+    // Path-3 pre-sweep validity gates — what we're actually validating
+    useObOriginGate: boolean;
+    useImpulseFvgGate: boolean;
+    useBosOriginGate: boolean;
+  }>
+> = {
   baseline: {},
+  // Old (failed) gates — opt-in via --scenarios for regression check
   fvg: { useFvgGate: true },
   ob: { useObGate: true },
   bos: { useBosGate: true },
   'fvg+ob': { useFvgGate: true, useObGate: true },
-  'fvg+bos': { useFvgGate: true, useBosGate: true },
-  'ob+bos': { useObGate: true, useBosGate: true },
   all: { useFvgGate: true, useObGate: true, useBosGate: true },
+  // Path-3 new gates — these are what we're validating now
+  'p3-ob': { useObOriginGate: true },
+  'p3-fvg': { useImpulseFvgGate: true },
+  'p3-bos': { useBosOriginGate: true },
+  'p3-ob+fvg': { useObOriginGate: true, useImpulseFvgGate: true },
+  'p3-ob+bos': { useObOriginGate: true, useBosOriginGate: true },
+  'p3-fvg+bos': { useImpulseFvgGate: true, useBosOriginGate: true },
+  'p3-all': {
+    useObOriginGate: true,
+    useImpulseFvgGate: true,
+    useBosOriginGate: true,
+  },
 };
 
 interface ScenarioResult {

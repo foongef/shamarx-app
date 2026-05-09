@@ -21,10 +21,10 @@ import { computeIndicators } from '../../backtest/engine/indicator-calculator';
 import { getInstrumentConfig } from '../../backtest/engine/instrument-config';
 import { RiskManager } from '../../backtest/engine/risk-manager';
 import { getSmcPairConfig } from '../../backtest/engine/smc/pairs';
-import { detectSweep } from '../../backtest/engine/smc/sweep-detector';
-import { hasSupportingFvg } from '../../backtest/engine/smc/fvg-detector';
-import { hasSupportingOb } from '../../backtest/engine/smc/order-block-detector';
-import { hasBosAfter } from '../../backtest/engine/smc/bos-detector';
+import { detectSweep, findSweptSwingIdx } from '../../backtest/engine/smc/sweep-detector';
+import { hasSupportingFvg, sweptMoveLeftFvg } from '../../backtest/engine/smc/fvg-detector';
+import { hasSupportingOb, hasFreshObAtSweptLevel } from '../../backtest/engine/smc/order-block-detector';
+import { hasBosAfter, sweptLevelWasItselfABos } from '../../backtest/engine/smc/bos-detector';
 import { getD1Bias } from '../../backtest/engine/strategy-evaluator';
 import { BacktestCandle, D1Bias, EngineConfig, IndicatorState } from '../../backtest/engine/types';
 import { PendingSetup, SmcMode } from '../../backtest/engine/smc/types';
@@ -418,6 +418,84 @@ export class LiveSmcOrchestrator {
         gateBos = { level: result.bos.level, brokenAtTime: result.bos.brokenAtTime };
       }
 
+      // ─── Path-3 pre-sweep validity gates ──────────────────────────
+      // These check the swept LEVEL was meaningful (formed by an OB,
+      // an impulse FVG, or a prior BOS) — questions that ARE answerable
+      // at signal time, unlike the post-entry gates above. All default
+      // OFF; flipping them on is gated by the comparison-runner pass
+      // criteria (see scripts/compare-smc-gates.ts).
+      let gateObOrigin: { top: number; bottom: number; candleTime: string; isBullish: boolean } | null = null;
+      let gateImpulseFvg: { top: number; bottom: number; candleTime: string; isBullish: boolean } | null = null;
+      let gateBosOrigin: { level: number; brokenAtTime: string } | null = null;
+
+      // Each Path-3 gate needs the H1 candle index of the swept swing,
+      // not just the price. Resolve it once and share across the gates.
+      let sweptSwingIdx: number | null = null;
+      const needsSweptIdx =
+        cfg.useObOriginGate || cfg.useImpulseFvgGate || cfg.useBosOriginGate;
+      if (needsSweptIdx) {
+        sweptSwingIdx = findSweptSwingIdx(
+          h1Candles,
+          setup.detectedAtH1Idx,
+          setup.direction,
+          setup.sweepLevel,
+          cfg.recentSwingLookbackH1,
+        );
+        // If the swept swing can't be located (rare; would imply the
+        // sweep detector emitted a level that doesn't match any candle
+        // extreme), reject — we can't validate it either way.
+        if (sweptSwingIdx == null) continue;
+      }
+
+      if (cfg.useObOriginGate && sweptSwingIdx != null) {
+        const result = hasFreshObAtSweptLevel(
+          h1Candles,
+          sweptSwingIdx,
+          setup.direction,
+          cfg.obOriginLookback ?? 12,
+          h1Indicators.atr14,
+          cfg.obOriginDisplacementAtr ?? 1.2,
+        );
+        if (!result.ok) continue;
+        gateObOrigin = {
+          top: result.ob.top,
+          bottom: result.ob.bottom,
+          candleTime: result.ob.candleTime,
+          isBullish: result.ob.isBullish,
+        };
+      }
+
+      if (cfg.useImpulseFvgGate && sweptSwingIdx != null) {
+        const result = sweptMoveLeftFvg(
+          h1Candles,
+          sweptSwingIdx,
+          setup.direction,
+          cfg.impulseFvgLookback ?? 5,
+          h1Indicators.atr14,
+        );
+        if (!result.ok) continue;
+        gateImpulseFvg = {
+          top: result.fvg.top,
+          bottom: result.fvg.bottom,
+          candleTime: result.fvg.candleTime,
+          isBullish: result.fvg.isBullish,
+        };
+      }
+
+      if (cfg.useBosOriginGate && sweptSwingIdx != null) {
+        const result = sweptLevelWasItselfABos(
+          h1Candles,
+          sweptSwingIdx,
+          setup.direction,
+          cfg.bosOriginLookback ?? 24,
+        );
+        if (!result.ok) continue;
+        gateBosOrigin = {
+          level: result.brokenLevel,
+          brokenAtTime: result.brokenAtTime,
+        };
+      }
+
       // Risk-managed lot sizing. We synthesize an EngineConfig the same
       // way SmcLiveEvaluator did — RiskManager only reads `initialBalance`
       // and `riskPercent` for sizing math.
@@ -462,9 +540,15 @@ export class LiveSmcOrchestrator {
             sweptLow: setup.sweepCandleLow,
             sweepCandleTime: sweepCandle.openTime,
             d1Bias: liveD1Bias,
+            // Old (failed) post-entry gate metadata — kept for backwards
+            // compat with smcContext consumers
             ...(gateFvg ? { fvg: gateFvg } : {}),
             ...(gateOb ? { ob: gateOb } : {}),
             ...(gateBos ? { bos: gateBos } : {}),
+            // Path-3 pre-sweep validity gate metadata
+            ...(gateObOrigin ? { obOrigin: gateObOrigin } : {}),
+            ...(gateImpulseFvg ? { impulseFvg: gateImpulseFvg } : {}),
+            ...(gateBosOrigin ? { bosOrigin: gateBosOrigin } : {}),
           }
         : undefined;
 

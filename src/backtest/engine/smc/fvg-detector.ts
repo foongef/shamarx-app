@@ -165,6 +165,53 @@ export function hasSupportingFvg(
   return { ok: false };
 }
 
+/**
+ * Path-3 gate: did the impulsive move that BUILT the swung swing leave
+ * an FVG behind?
+ *
+ * For BUY (sweep of swing low — the impulse to form the low went DOWN):
+ *   want a bearish FVG (gap-down imbalance) in the last `lookback` H1
+ *   bars before the swing
+ * For SELL (sweep of swing high — impulse went UP):
+ *   want a bullish FVG (gap-up imbalance) before the swing
+ *
+ * Confirms the move that created the swept level had real displacement
+ * (left a gap) rather than being a slow drift. Levels formed by
+ * impulses with FVGs are higher-quality liquidity than levels formed by
+ * chop.
+ */
+export function sweptMoveLeftFvg(
+  h1Candles: BacktestCandle[],
+  swingIdx: number,
+  side: 'BUY' | 'SELL',
+  lookback: number,
+  atr?: number[],
+): { ok: true; fvg: Fvg } | { ok: false } {
+  if (swingIdx < 2) return { ok: false };
+
+  // For BUY (impulse was DOWN to form low): want bearish FVG
+  // For SELL (impulse was UP to form high): want bullish FVG
+  const wantBullish = side === 'SELL';
+
+  const all = detectFvgs(h1Candles, {
+    endIdx: swingIdx,
+    lookback,
+    atr,
+  });
+
+  // Walk newest → oldest. We want the FVG closest to (but before) the
+  // swing — that's the one most likely to be the impulse that formed it.
+  const minIdx = Math.max(0, swingIdx - lookback);
+  for (let i = all.length - 1; i >= 0; i--) {
+    const f = all[i];
+    if (f.candleIdx < minIdx) break;
+    if (f.candleIdx >= swingIdx) continue;
+    if (f.isBullish !== wantBullish) continue;
+    return { ok: true, fvg: f };
+  }
+  return { ok: false };
+}
+
 // ─── internals ───────────────────────────────────────────────────────────
 
 function makeFvg(
