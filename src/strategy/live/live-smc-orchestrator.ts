@@ -22,6 +22,9 @@ import { getInstrumentConfig } from '../../backtest/engine/instrument-config';
 import { RiskManager } from '../../backtest/engine/risk-manager';
 import { getSmcPairConfig } from '../../backtest/engine/smc/pairs';
 import { detectSweep } from '../../backtest/engine/smc/sweep-detector';
+import { hasSupportingFvg } from '../../backtest/engine/smc/fvg-detector';
+import { hasSupportingOb } from '../../backtest/engine/smc/order-block-detector';
+import { hasBosAfter } from '../../backtest/engine/smc/bos-detector';
 import { getD1Bias } from '../../backtest/engine/strategy-evaluator';
 import { BacktestCandle, D1Bias, EngineConfig, IndicatorState } from '../../backtest/engine/types';
 import { PendingSetup, SmcMode } from '../../backtest/engine/smc/types';
@@ -358,6 +361,63 @@ export class LiveSmcOrchestrator {
         }
       }
 
+      // ─── Optional SMC structure gates ─────────────────────────────
+      // Each gate is enabled per-pair via SmcPairConfig flags. They run
+      // AFTER the wide-SL filter (so we don't waste compute on doomed
+      // setups) and BEFORE risk-sized lot calc. Pure read-only — they
+      // either reject the setup or pass through.
+      let gateFvg: { top: number; bottom: number; candleTime: string; isBullish: boolean } | null = null;
+      let gateOb: { top: number; bottom: number; candleTime: string; isBullish: boolean } | null = null;
+      let gateBos: { level: number; brokenAtTime: string } | null = null;
+
+      if (cfg.useFvgGate) {
+        const result = hasSupportingFvg(
+          m15Candles,
+          setup.direction,
+          entryPrice,
+          cfg.fvgGateMaxDistanceAtr ?? 1.5,
+          m15Indicators.atr14,
+          m15Len - 1,
+        );
+        if (!result.ok) continue;
+        gateFvg = {
+          top: result.fvg.top,
+          bottom: result.fvg.bottom,
+          candleTime: result.fvg.candleTime,
+          isBullish: result.fvg.isBullish,
+        };
+      }
+
+      if (cfg.useObGate) {
+        const result = hasSupportingOb(
+          h1Candles,
+          setup.direction,
+          entryPrice,
+          cfg.obGateMaxDistanceAtr ?? 2.0,
+          h1Indicators.atr14,
+          h1Len - 1,
+        );
+        if (!result.ok) continue;
+        gateOb = {
+          top: result.ob.top,
+          bottom: result.ob.bottom,
+          candleTime: result.ob.candleTime,
+          isBullish: result.ob.isBullish,
+        };
+      }
+
+      if (cfg.useBosGate) {
+        const result = hasBosAfter(
+          h1Candles,
+          setup.direction,
+          setup.detectedAtH1Idx,
+          h1Len - 1,
+          cfg.bosGateSwingLookback ?? cfg.recentSwingLookbackH1,
+        );
+        if (!result.ok) continue;
+        gateBos = { level: result.bos.level, brokenAtTime: result.bos.brokenAtTime };
+      }
+
       // Risk-managed lot sizing. We synthesize an EngineConfig the same
       // way SmcLiveEvaluator did — RiskManager only reads `initialBalance`
       // and `riskPercent` for sizing math.
@@ -402,6 +462,9 @@ export class LiveSmcOrchestrator {
             sweptLow: setup.sweepCandleLow,
             sweepCandleTime: sweepCandle.openTime,
             d1Bias: liveD1Bias,
+            ...(gateFvg ? { fvg: gateFvg } : {}),
+            ...(gateOb ? { ob: gateOb } : {}),
+            ...(gateBos ? { bos: gateBos } : {}),
           }
         : undefined;
 

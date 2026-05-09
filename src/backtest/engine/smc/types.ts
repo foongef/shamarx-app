@@ -101,4 +101,42 @@ export interface SmcPairConfig {
    *  wide-SL setups have systematically lower win rate and dilute edge at
    *  large account sizes (where the lot floor never binds). 0 = disabled. */
   maxSlAtrM15?: number;
+
+  // ─── SMC structure gates (optional, default OFF) ─────────────────────
+  // Each gate is a pure-function check that runs after the sweep + bias
+  // filters but before signal-fire. When enabled, the trade is rejected
+  // if the gate fails. Used to extend the strategy to incorporate FVG /
+  // OB / BOS confirmation. ALL gates default off so the baseline
+  // strategy is unchanged until a gate is validated to meet or beat
+  // baseline metrics in replay.
+
+  /** When true, fire only if there is an unmitigated direction-aligned
+   *  Fair Value Gap on M15 within `fvgGateMaxDistanceAtr` of the entry
+   *  price. Reads at signal-time from the M15 candle window. */
+  useFvgGate?: boolean;
+  /** Distance (in M15-ATR multiples) within which the FVG must sit
+   *  relative to the entry price. Default 1.5 — tight enough to be
+   *  meaningful, loose enough to catch most retests. */
+  fvgGateMaxDistanceAtr?: number;
+  /** Drop FVGs smaller than this fraction of the M15 ATR. 0 = keep all. */
+  fvgGateMinHeightAtr?: number;
+
+  /** When true, fire only if there is an unmitigated direction-aligned
+   *  Order Block on H1 within `obGateMaxDistanceAtr` of the entry. */
+  useObGate?: boolean;
+  /** OB displacement threshold — the impulsive move that confirms the
+   *  block must displace at least this many H1 ATRs. Default 1.5. */
+  obGateDisplacementAtrMult?: number;
+  /** Distance (in H1-ATR multiples) within which the OB must sit
+   *  relative to the entry price. Default 2.0. */
+  obGateMaxDistanceAtr?: number;
+
+  /** When true, fire only if there's a Break of Structure in the entry
+   *  direction between the sweep candle and the M15 entry candle.
+   *  Conservative confirmation — typically reduces trade count but
+   *  improves win rate. */
+  useBosGate?: boolean;
+  /** Swing-fractal lookback used to define the structure that needs to
+   *  break. Default = sweep-detector's `recentSwingLookbackH1`. */
+  bosGateSwingLookback?: number;
 }

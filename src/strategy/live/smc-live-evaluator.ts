@@ -51,6 +51,12 @@ export interface SmcLiveSignal {
     sweptLow: number;         // sweep candle low
     sweepCandleTime: string;  // ISO openTime of the H1 sweep candle
     d1Bias: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+    /** Optional structure-gate annotations — only populated when the
+     *  corresponding pair-config gate is enabled. Used by the educational
+     *  chart to draw FVG / OB / BOS zones if they actually drove the trade. */
+    fvg?: { top: number; bottom: number; candleTime: string; isBullish: boolean };
+    ob?: { top: number; bottom: number; candleTime: string; isBullish: boolean };
+    bos?: { level: number; brokenAtTime: string };
   };
 }
 
