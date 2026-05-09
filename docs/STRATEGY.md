@@ -8,9 +8,17 @@ Last updated: 2026-05-09
 
 ## In one sentence
 
-ShamarX runs a **liquidity-sweep + HTF-bias + structure-anchored-stop**
-strategy on 4 forex pairs, gated by a multi-layered risk system. It is
-*one slice* of the SMC framework, not the full thing.
+ShamarX runs a **stop-hunt reversal** strategy on 4 forex pairs:
+when price wicks beyond an H1 swing extreme and closes back inside,
+the engine fades that failed extension if the daily trend confirms.
+Wyckoff would call it a spring (BUY) or upthrust (SELL); modern SMC
+traders call the same thing a "liquidity sweep". Multi-layered risk
+system on top.
+
+This is **one slice** of the SMC framework — the entry-trigger piece —
+not the full SMC framework. We don't gate on FVGs, order blocks, or
+break-of-structure (those were tested and made things worse; see
+"FVG / OB / BOS detection" below).
 
 ---
 
@@ -221,12 +229,19 @@ this on the same window before going to live.
 
 ## Anti-claims (be honest in marketing)
 
-When describing the strategy externally:
+When describing the strategy externally, lean primary on the
+**stop-hunt reversal** framing — it's accurate, defensible from the
+trade list, and avoids the "is this real SMC?" debate.
 
-- ✅ "Liquidity-sweep + HTF bias + structure-anchored stops" — accurate
+- ✅ "Stop-hunt reversal engine" — accurate (primary brand framing)
+- ✅ "Failed-breakout reversal with HTF bias filter" — same thing, more technical
+- ✅ "Wyckoff spring/upthrust system" — historically grounded alternative
+- ✅ "Liquidity sweep + HTF bias" — SMC-community vocabulary, also accurate
 - ✅ "Validated across 28 months of Dukascopy data" — verifiable
-- ✅ "Smart Money Concepts strategy" — accurate but narrow
-- ⚠️ "Full SMC framework" — **not accurate** until FVG/OB/BOS land
+- 🟡 "Smart Money Concepts strategy" — the *trigger* is SMC-style but the
+       full framework (FVG/OB/BOS gating) was tested and rejected. Use
+       sparingly; not the strongest framing.
+- ⚠️ "Full SMC framework" — **not accurate**; we don't gate on FVG/OB/BOS
 - ⚠️ "AI-powered" / "agentic" — **not accurate**; pure rule-based
 
 The replay theatre is the strongest credibility play we have. Lean on
