@@ -200,6 +200,10 @@ model Trade {
   // this field so users see WHERE the SL started (above entry for SELL,
   // below entry for BUY) rather than the trailed final position.
   originalSlPrice  Float?
+  // Strategy that produced this trade. 'stop-hunt' (default for legacy rows)
+  // | 'range-reversion'. Used by position-monitor to route recordExit to
+  // the correct orchestrator instance.
+  strategyName     String?  @default("stop-hunt")
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
@@ -301,6 +305,7 @@ model LiveReplayTrade {
   // can show the structural placement (above entry for SELL, below for
   // BUY) instead of the trailed value.
   originalSlPrice  Float?
+  strategyName     String?  @default("stop-hunt")
   createdAt     DateTime @default(now())
 
   @@index([sessionId])

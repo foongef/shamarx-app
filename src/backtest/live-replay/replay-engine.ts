@@ -16,6 +16,7 @@
 
 import { Logger } from '@nestjs/common';
 import { LiveSmcOrchestrator, PrecomputedIndicators } from '../../strategy/live/live-smc-orchestrator';
+import { LiveRangeOrchestrator } from '../../strategy/live/live-range-orchestrator';
 import { BacktestCandle } from '../engine/types';
 import { computeIndicators } from '../engine/indicator-calculator';
 import { SimulatedBroker, ClosedPosition, SimulatedPosition } from './simulated-broker';
@@ -72,8 +73,15 @@ export class ReplayEngine {
   /**
    * Pass a fresh orchestrator per replay run; state must not leak across
    * runs (per-pair pendings/cooldown reset between sessions).
+   *
+   * `rangeOrchestrator` is optional — comparison runner constructs the
+   * engine with it disabled (null) to reproduce the single-strategy
+   * baseline. Production / combined-comparison runs supply both.
    */
-  constructor(private readonly orchestrator: LiveSmcOrchestrator) {}
+  constructor(
+    private readonly orchestrator: LiveSmcOrchestrator,
+    private readonly rangeOrchestrator: LiveRangeOrchestrator | null = null,
+  ) {}
 
   async run(
     cfg: ReplayConfig,
@@ -89,6 +97,14 @@ export class ReplayEngine {
       riskPercent: cfg.riskPercent,
       maxOpenPositions: cfg.maxOpenPositions ?? 4,
     });
+    if (this.rangeOrchestrator) {
+      this.rangeOrchestrator.resetAll();
+      this.rangeOrchestrator.setDefaultRiskCfg({
+        initialBalance: cfg.initialBalance,
+        riskPercent: cfg.riskPercent,
+        maxOpenPositions: cfg.maxOpenPositions ?? 4,
+      });
+    }
 
     const broker = new SimulatedBroker(cfg.initialBalance);
     const startMs = new Date(cfg.startDate).getTime();
@@ -167,7 +183,11 @@ export class ReplayEngine {
         // Tell the orchestrator about the exit so it can apply cooldowns
         // AND record the PnL with its RiskManager (drives consecutive-loss
         // pauses, daily-loss caps, drawdown brakes).
-        this.orchestrator.recordExit(
+        const targetOrch =
+          exit.strategyName === 'range-reversion' && this.rangeOrchestrator
+            ? this.rangeOrchestrator
+            : this.orchestrator;
+        targetOrch.recordExit(
           symbol,
           exit.exitReason === 'SL' ? 'SL' : exit.exitReason === 'TP' ? 'TP' : 'OTHER',
           exit.closedAt,
@@ -181,28 +201,51 @@ export class ReplayEngine {
       // 3. Call the orchestrator with FULL candle arrays + cursor — no
       //    array slicing per call (was O(n²)). Same numerical result as
       //    passing slices because all downstream logic is index-based.
-      const signal = this.orchestrator.evaluate(
+      const liveCtx = {
+        accountEquity: broker.getEquity(),
+        openDirections: broker.getOpenDirections(symbol),
+        totalOpenPositions: broker.totalOpenCount(),
+        riskPercent: cfg.riskPercent,
+        nowIso: candle.openTime,
+        maxOpenPositions,
+      };
+
+      const smcSignal = this.orchestrator.evaluate(
         symbol,
         bundle.m15,
         bundle.h1,
         bundle.d1,
-        {
-          accountEquity: broker.getEquity(),
-          openDirections: broker.getOpenDirections(symbol),
-          totalOpenPositions: broker.totalOpenCount(),
-          riskPercent: cfg.riskPercent,
-          nowIso: candle.openTime,
-          maxOpenPositions,
-        },
+        liveCtx,
         indicators[symbol],
         cur,
       );
+
+      // Range-reversion fires only when stop-hunt didn't. By design the
+      // D1 ADX gate splits the regimes — they should rarely co-fire — but
+      // belt-and-braces, SMC wins on conflict.
+      const rangeSignal = !smcSignal && this.rangeOrchestrator
+        ? this.rangeOrchestrator.evaluate(
+            symbol,
+            bundle.m15,
+            bundle.h1,
+            bundle.d1,
+            liveCtx,
+            indicators[symbol],
+            cur,
+          )
+        : null;
+
+      const signal = smcSignal ?? rangeSignal;
       if (!signal) continue;
 
       // 4. Place order via simulated broker — opens 1 position per leg.
       const positions = broker.placeOrder(signal, candle.openTime);
       opened.push(...positions);
-      this.orchestrator.recordEntry(symbol, signal);
+      if (signal === smcSignal) {
+        this.orchestrator.recordEntry(symbol, signal);
+      } else {
+        this.rangeOrchestrator!.recordEntry(symbol, signal);
+      }
 
       this.logger.debug(
         `[${symbol} ${candle.openTime}] ${signal.mode} ${signal.side} ${signal.totalLot}lot — ${signal.reason}`,

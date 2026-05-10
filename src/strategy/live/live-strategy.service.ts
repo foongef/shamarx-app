@@ -24,6 +24,7 @@ import {
   LiveEvaluationContext,
 } from './smc-live-evaluator';
 import { LiveSmcOrchestrator } from './live-smc-orchestrator';
+import { LiveRangeOrchestrator } from './live-range-orchestrator';
 import { LiveControlService } from './live-control.service';
 import { BacktestCandle } from '../../backtest/engine/types';
 import { MailService, TradeOpenedPayload } from '../../mail/mail.service';
@@ -221,6 +222,7 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
     private readonly config: ConfigService,
     private readonly liveControl: LiveControlService,
     private readonly orchestrator: LiveSmcOrchestrator,
+    private readonly rangeOrchestrator: LiveRangeOrchestrator,
     private readonly mail: MailService,
   ) {
     this.liveMode = (this.config.get<string>('LIVE_MODE') || 'false').toLowerCase() === 'true';
@@ -322,14 +324,25 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
     // to the pending queue inside evaluate(), even when no signal fires.
     const pendingBefore = this.orchestrator.getTelemetry()[symbol]?.pendingCount ?? 0;
 
-    const signal = this.orchestrator.evaluate(symbol, m15, h1, d1, {
+    const liveCtx = {
       accountEquity: account.equity,
       openDirections: new Set(openPositions.map((p) => p.side as 'BUY' | 'SELL')),
       totalOpenPositions: allOpenPositions.length,
       riskPercent: this.liveControl.getRiskPercent(),
       nowIso: evalTs,
       maxOpenPositions: 4,
-    });
+    };
+
+    const smcSignal = this.orchestrator.evaluate(symbol, m15, h1, d1, liveCtx);
+
+    // Fan-out: range-reversion fires only when stop-hunt does not — D1 ADX
+    // gate makes the two strategies mutually exclusive by construction, but
+    // belt-and-braces guard SMC wins if both somehow signal.
+    const rangeSignal = smcSignal
+      ? null
+      : this.rangeOrchestrator.evaluate(symbol, m15, h1, d1, liveCtx);
+
+    const signal = smcSignal ?? rangeSignal;
 
     const post = this.orchestrator.getTelemetry()[symbol];
     const pendingAfter = post?.pendingCount ?? 0;
@@ -377,7 +390,11 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
       entryPrice: signal.entryPrice,
     });
     await this.placeOrder(signal);
-    this.orchestrator.recordEntry(symbol, signal);
+    if (signal === smcSignal) {
+      this.orchestrator.recordEntry(symbol, signal);
+    } else {
+      this.rangeOrchestrator.recordEntry(symbol, signal);
+    }
     // Signal-fire is the most important state mutation — actionedSweeps,
     // cooldown, RiskManager all updated. Mark dirty (debounced flush within
     // PERSIST_DEBOUNCE_MS). The 4-pair burst at any M15 boundary will
@@ -695,6 +712,9 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
             // column never changes. The educational chart uses this so
             // users see where SL was *placed*, not where it ended up.
             originalSlPrice: signal.slPrice,
+            strategyName: leg.setupTags.includes('RANGE')
+              ? 'range-reversion'
+              : 'stop-hunt',
           },
         });
 
