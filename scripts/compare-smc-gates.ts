@@ -17,6 +17,7 @@
 import 'reflect-metadata';
 import { PrismaClient } from '@prisma/client';
 import { LiveSmcOrchestrator } from '../src/strategy/live/live-smc-orchestrator';
+import { LiveRangeOrchestrator } from '../src/strategy/live/live-range-orchestrator';
 import { ReplayEngine, CandleBundle } from '../src/backtest/live-replay/replay-engine';
 import { BacktestCandle } from '../src/backtest/engine/types';
 import { REPLAY_DEFAULT_PAIRS } from '../src/backtest/live-replay/dto/start-replay.dto';
@@ -24,6 +25,10 @@ import {
   setSmcPairConfigOverride,
   clearSmcPairConfigOverrides,
 } from '../src/backtest/engine/smc/pairs';
+import {
+  setRangePairConfigOverride,
+  clearRangePairConfigOverrides,
+} from '../src/backtest/engine/range/pairs';
 
 const HTF_WARMUP_DAYS = 90;
 
@@ -54,12 +59,8 @@ function parseArgs(): CliArgs {
       ? raw.scenarios.split(',').map((s) => s.trim().toLowerCase())
       : [
           'baseline',
-          // Path-3 pre-sweep validity gates (the new approach)
-          'p3-ob',
-          'p3-fvg',
-          'p3-bos',
-          'p3-ob+fvg',
-          'p3-all',
+          // Strategy #2 — range reversion in low-ADX regimes
+          'combined',
         ],
   };
 }
@@ -141,17 +142,29 @@ async function runScenario(
   bundle: CandleBundle,
   args: CliArgs,
 ): Promise<ScenarioResult> {
-  const gates = SCENARIO_GATES[scenario];
-  if (!gates) throw new Error(`Unknown scenario: ${scenario}`);
-
-  // Apply per-pair overrides for the gates this scenario enables
+  // Reset overrides before applying scenario-specific config so prior
+  // scenario state doesn't leak.
   clearSmcPairConfigOverrides();
-  for (const p of pairs) {
-    setSmcPairConfigOverride(p, gates);
+  clearRangePairConfigOverrides();
+
+  let enableRange = false;
+
+  if (scenario === 'combined' || scenario === 'range-only') {
+    enableRange = true;
+    for (const p of pairs) {
+      setRangePairConfigOverride(p, { enabled: true });
+    }
+  } else {
+    const gates = SCENARIO_GATES[scenario];
+    if (!gates) throw new Error(`Unknown scenario: ${scenario}`);
+    for (const p of pairs) {
+      setSmcPairConfigOverride(p, gates);
+    }
   }
 
   const orchestrator = new LiveSmcOrchestrator();
-  const engine = new ReplayEngine(orchestrator);
+  const rangeOrchestrator = enableRange ? new LiveRangeOrchestrator() : null;
+  const engine = new ReplayEngine(orchestrator, rangeOrchestrator);
   const t0 = Date.now();
   const result = await engine.run(
     {
@@ -279,6 +292,7 @@ async function main() {
     }
   } finally {
     clearSmcPairConfigOverrides();
+    clearRangePairConfigOverrides();
     await prisma.$disconnect();
   }
 }

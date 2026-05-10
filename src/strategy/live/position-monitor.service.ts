@@ -16,6 +16,7 @@ import { RedisService, REDIS_CHANNELS } from '@app/redis';
 import { Timeframe, SERVICE_URLS } from '@app/common';
 import { LiveControlService } from './live-control.service';
 import { LiveSmcOrchestrator } from './live-smc-orchestrator';
+import { LiveRangeOrchestrator } from './live-range-orchestrator';
 
 interface BrokerPosition {
   ticket: number;
@@ -44,6 +45,7 @@ export class PositionMonitorService implements OnModuleInit {
     @Inject(forwardRef(() => LiveControlService))
     private readonly liveControl: LiveControlService,
     private readonly orchestrator: LiveSmcOrchestrator,
+    private readonly rangeOrchestrator: LiveRangeOrchestrator,
   ) {
     this.liveMode = (this.config.get<string>('LIVE_MODE') || 'false').toLowerCase() === 'true';
     const pairsCsv = this.config.get<string>('STRATEGY_PAIRS') || 'XAUUSD,EURUSD,GBPUSD,USDJPY';
@@ -95,7 +97,17 @@ export class PositionMonitorService implements OnModuleInit {
         continue;
       }
       // Position no longer at broker → it was closed (SL, TP, or manual).
-      await this.finalizeClosedTrade(trade.id, trade.mt5Ticket!, symbol, trade.side as 'BUY' | 'SELL', trade.lotSize, trade.entryPrice, trade.slPrice, trade.tpPrice);
+      await this.finalizeClosedTrade(
+        trade.id,
+        trade.mt5Ticket!,
+        symbol,
+        trade.side as 'BUY' | 'SELL',
+        trade.lotSize,
+        trade.entryPrice,
+        trade.slPrice,
+        trade.tpPrice,
+        (trade as any).strategyName ?? 'stop-hunt',
+      );
     }
   }
 
@@ -114,6 +126,7 @@ export class PositionMonitorService implements OnModuleInit {
     entryPrice: number,
     slPrice: number,
     tpPrice: number,
+    strategyName: string,
   ): Promise<void> {
     try {
       // 1. Try to fetch the REAL close info from broker history (MetaApi deals
@@ -188,7 +201,9 @@ export class PositionMonitorService implements OnModuleInit {
         exitReason.startsWith('SL') ? 'SL'
         : exitReason.startsWith('TP') ? 'TP'
         : 'OTHER';
-      this.orchestrator.recordExit(symbol, normalized, closedAt.toISOString(), pnl ?? undefined);
+      const targetOrch =
+        strategyName === 'range-reversion' ? this.rangeOrchestrator : this.orchestrator;
+      targetOrch.recordExit(symbol, normalized, closedAt.toISOString(), pnl ?? undefined);
 
       this.logger.log(`[${symbol}] CLOSED ticket=${ticket} reason=${exitReason} pnl=$${pnl} closePrice=${closePrice}`);
     } catch (err) {

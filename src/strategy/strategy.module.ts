@@ -13,6 +13,7 @@ import { PositionMonitorService } from './live/position-monitor.service';
 import { LivePositionManagerService } from './live/live-position-manager.service';
 import { SmcLiveEvaluator } from './live/smc-live-evaluator';
 import { LiveSmcOrchestrator } from './live/live-smc-orchestrator';
+import { LiveRangeOrchestrator } from './live/live-range-orchestrator';
 import { LiveControlService } from './live/live-control.service';
 import { EquitySnapshotService } from './live/equity-snapshot.service';
 import { LiveAnalyticsService } from './live/live-analytics.service';
@@ -26,6 +27,7 @@ import { LiveAnalyticsService } from './live/live-analytics.service';
     StructureAnalyzer,
     SmcLiveEvaluator,
     LiveSmcOrchestrator,
+    LiveRangeOrchestrator,
     LiveControlService,
     LiveStrategyService,
     PositionMonitorService,
