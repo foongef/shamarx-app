@@ -49,9 +49,6 @@ export interface SimulatedPosition extends V6SimulatedPosition {
   sweptLow?: number;
   sweepCandleTime?: string;
   d1Bias?: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
-  /** Strategy that fired this position. Used by ReplayEngine + DB
-   *  persistence to route recordExit() to the correct orchestrator. */
-  strategyName?: string;
 }
 
 export interface ClosedPosition extends SimulatedPosition {
@@ -182,7 +179,6 @@ export class SimulatedBroker {
         sweptLow: signal.smcContext?.sweptLow,
         sweepCandleTime: signal.smcContext?.sweepCandleTime,
         d1Bias: signal.smcContext?.d1Bias,
-        strategyName: leg.setupTags.includes('RANGE') ? 'range-reversion' : 'stop-hunt',
       };
       list.push(pos);
       opened.push(pos);
