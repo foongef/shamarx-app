@@ -154,6 +154,38 @@ async function runScenario(
     for (const p of pairs) {
       setRangePairConfigOverride(p, { enabled: true });
     }
+  } else if (scenario === 'combined-loose') {
+    // Loosened gates — first comparison fired only ONE range trade in 28
+    // months, indicating the conservative defaults are too strict to
+    // ever co-trigger. Loosen each gate by ~1 stddev and re-run to see
+    // whether range can actually contribute alpha.
+    enableRange = true;
+    for (const p of pairs) {
+      const xau = p === 'XAUUSD';
+      setRangePairConfigOverride(p, {
+        enabled: true,
+        rsiOversold: xau ? 25 : 30, // 25 → 30 (XAU stays slightly tighter)
+        rsiOverbought: xau ? 75 : 70, // 75 → 70
+        d1AdxMaxForRange: xau ? 27 : 25, // 22 → 25 (24 → 27 for XAU)
+        atrSpikeRatio: xau ? 3.0 : 3.0, // 2.0 → 3.0
+        minMeanDistanceAtr: xau ? 0.8 : 0.5, // 1.0 → 0.5 (1.2 → 0.8 for XAU)
+      });
+    }
+  } else if (scenario === 'combined-very-loose') {
+    // Belt-and-braces — go even further to detect whether the issue is
+    // gates vs detector logic. If THIS doesn't fire many trades, the
+    // detector itself has a bug.
+    enableRange = true;
+    for (const p of pairs) {
+      setRangePairConfigOverride(p, {
+        enabled: true,
+        rsiOversold: 35,
+        rsiOverbought: 65,
+        d1AdxMaxForRange: 28,
+        atrSpikeRatio: 4.0,
+        minMeanDistanceAtr: 0.3,
+      });
+    }
   } else {
     const gates = SCENARIO_GATES[scenario];
     if (!gates) throw new Error(`Unknown scenario: ${scenario}`);
