@@ -182,12 +182,43 @@ questions — produces a smaller AND lower-quality sample.
 - Trade count ≥ 60% of baseline (less = filtering too hard)
 - Max drawdown ≤ baseline + 2 percentage points
 
-### 2. News-blackout filter
+### 2. Range-reversion as second strategy — ✅ VALIDATED, removed from tree
+
+Tried adding RSI + EMA20 mean-reversion in low-D1-ADX regimes as a
+complementary strategy to fire when stop-hunt is dormant.
+
+**Result (2026-05-10):** combined fired exactly **1** range trade in
+the 28-month window — a 0.01-lot USDJPY SELL. Combined matched
+baseline within $0.27 PnL / 0.1pp WR (technical pass on all three
+criteria, but practically a no-op).
+
+```
+Scenario      Trades   Wins  Losses    WR%        PnL$   Return%
+baseline         686    445     241   64.9   $14369.62    143.70
+combined         687    445     242   64.8   $14369.35    143.69
+```
+
+**Conclusion:** the conservative gates (RSI ≤ 25 / ≥ 75 + D1 ADX < 22
++ ATR spike < 2× + mean-distance ≥ 1× ATR) co-trigger almost never.
+Loosening was an option but amounts to "guess more aggressively" —
+not a credible plan. Removed from tree (PR cleanup) rather than carry
+unproven dead code that dilutes stop-hunt focus.
+
+What survived the cleanup:
+- `Trade.strategyName` + `LiveReplayTrade.strategyName` columns
+  (cheap analytics; populated as literal `'stop-hunt'`)
+- `LiveSmcOrchestrator.name = 'stop-hunt'` field
+
+Git history preserves the full implementation if anyone wants to
+revisit with a different approach. Same pattern as the FVG/OB/BOS
+gate validations: validate first, then either ship or remove.
+
+### 3. News-blackout filter
 
 Skip evaluations 30 min before / 60 min after high-impact macro
 events (NFP, FOMC, CPI, ECB, BoE). Captured in `FUTURE_WORK.md`.
 
-### 3. Live `/lives/[id]` chart wiring
+### 4. Live `/lives/[id]` chart wiring
 
 Same SmcAnnotatedChart on live trades (replay-only today).
 

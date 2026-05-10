@@ -94,8 +94,8 @@ export interface LiveContext {
 
 @Injectable()
 export class LiveSmcOrchestrator {
-  /** Strategy identifier — used in Redis keys, trade tagging, telemetry.
-   *  Conforms to IStrategyOrchestrator. */
+  /** Strategy identifier — written to Trade.strategyName + LiveReplayTrade.strategyName
+   *  for analytics. Single-strategy today; literal constant. */
   readonly name = 'stop-hunt';
 
   private readonly logger = new Logger(LiveSmcOrchestrator.name);

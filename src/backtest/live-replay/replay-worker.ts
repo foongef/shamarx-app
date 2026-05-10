@@ -13,7 +13,6 @@
 
 import { parentPort } from 'node:worker_threads';
 import { LiveSmcOrchestrator } from '../../strategy/live/live-smc-orchestrator';
-import { LiveRangeOrchestrator } from '../../strategy/live/live-range-orchestrator';
 import { ReplayEngine } from './replay-engine';
 import type { ParentMessage, WorkerMessage } from './worker-protocol';
 
@@ -35,12 +34,7 @@ port.on('message', async (msg: ParentMessage) => {
 
   try {
     const orchestrator = new LiveSmcOrchestrator();
-    // Range orchestrator instantiated unconditionally — its per-pair
-    // configs default `enabled: false`, so without an explicit override
-    // it's a no-op. Production replays don't enable range yet; the
-    // comparison runner sets overrides in-process (different code path).
-    const rangeOrchestrator = new LiveRangeOrchestrator();
-    const engine = new ReplayEngine(orchestrator, rangeOrchestrator);
+    const engine = new ReplayEngine(orchestrator);
     const result = await engine.run(msg.cfg, msg.candles, (processed, total) => {
       send({ type: 'progress', processed, total });
     });
