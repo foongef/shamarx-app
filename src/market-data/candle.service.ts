@@ -44,10 +44,17 @@ export class CandleService implements OnModuleInit {
   async pollCandles() {
     // Poll all configured pairs in parallel. Each pair × timeframe runs
     // independently so a single failure doesn't stop the others.
+    //
+    // D1 is polled every minute too — it's cheap (skipDuplicates short-circuits
+    // when the same closed bar is returned) and ensures the daily bar is
+    // ingested within ~60s of session rollover instead of waiting on a
+    // manual backfill. Strategy uses D1 ADX/EMA50 for bias, so a stale D1
+    // can mask valid setups.
     await Promise.all(
       this.pairs.flatMap((symbol) => [
         this.fetchAndStoreCandles(symbol, Timeframe.M15, 5),
         this.fetchAndStoreCandles(symbol, Timeframe.H1, 3),
+        this.fetchAndStoreCandles(symbol, Timeframe.D1, 2),
       ]),
     );
   }
