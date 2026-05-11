@@ -12,6 +12,7 @@ import { writeFileSync, mkdirSync, existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { BacktestEngine } from '../src/backtest/engine/backtest-engine';
 import { BacktestCandle, EngineConfig } from '../src/backtest/engine/types';
+import { HTF_WARMUP_DAYS } from '../src/backtest/engine/warmup-constants';
 
 const EXEC_URL = process.env.EXECUTION_SERVICE_URL ?? 'http://localhost:8000';
 const PERIODS = [
@@ -35,11 +36,10 @@ async function fetchCandles(symbol: string, tf: string, start: string, end: stri
 }
 
 /**
- * Apply 90-day HTF warmup window to match the production NestJS service.
- * Without this, indicators are NaN for the first ~50 days and results are
- * unfairly inflated.
+ * Apply the canonical HTF warmup window so the script's results match the
+ * production NestJS service. Source-of-truth lives in warmup-constants.ts.
  */
-function htfStart(start: string, days = 90): string {
+function htfStart(start: string, days = HTF_WARMUP_DAYS): string {
   const d = new Date(start);
   d.setUTCDate(d.getUTCDate() - days);
   return d.toISOString().slice(0, 10);

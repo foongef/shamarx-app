@@ -84,8 +84,10 @@ export class SmcLiveEvaluator {
    *
    * @param symbol           e.g. "EURUSD"
    * @param m15Candles       rolling buffer, last ~100 closed candles
-   * @param h1Candles        rolling buffer, last ~500 closed candles (90d warmup recommended)
+   * @param h1Candles        rolling buffer, last ~500 closed candles
    * @param d1Candles        rolling buffer, last ~400 closed candles
+   *                          (live buffers exceed replay's HTF_WARMUP_DAYS=220
+   *                           — D1 EMA50 is fully converged at every evaluation)
    * @param ctx              live state passed in from the caller
    * @param riskPercent      override risk percent (from runtime config, not env)
    */
