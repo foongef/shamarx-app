@@ -25,7 +25,7 @@ import {
   clearSmcPairConfigOverrides,
 } from '../src/backtest/engine/smc/pairs';
 
-const HTF_WARMUP_DAYS = 90;
+const HTF_WARMUP_DAYS = 220; // see live-replay.service.ts for rationale
 
 interface CliArgs {
   start: string;
