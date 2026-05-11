@@ -32,6 +32,10 @@ const M15_BUFFER = 100;
 const H1_BUFFER = 500;
 const D1_BUFFER = 400;
 const ORCHESTRATOR_STATE_KEY = 'live:orchestrator:state';
+/** Telemetry feed (events ring + per-pair lastEval + UTC counters) — persisted
+ *  so the dashboard Engine Worker view survives container restarts. Tied to
+ *  the same debounced-flush scheduler as the orchestrator state. */
+const TELEMETRY_FEED_KEY = 'live:telemetry:feed';
 
 const TELEMETRY_RING_SIZE = 200;
 
@@ -108,6 +112,16 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
     try {
       const snapshot = this.orchestrator.serialize();
       await this.redis.set(ORCHESTRATOR_STATE_KEY, JSON.stringify(snapshot));
+      // Persist the dashboard telemetry feed alongside strategy state — both
+      // are touched on every evaluatePair, so coalescing into the same flush
+      // is free. Restored on onModuleInit so the Engine Worker view doesn't
+      // empty out after a deploy.
+      const feed = {
+        events: this.events,
+        lastEval: Array.from(this.lastEval.entries()),
+        counters: this.counters,
+      };
+      await this.redis.set(TELEMETRY_FEED_KEY, JSON.stringify(feed));
     } catch (err) {
       // Re-mark so the next debounce / interval / shutdown retries the write.
       // We never lose a mutation — at worst we're delayed by the interval.
@@ -136,6 +150,9 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
     if (this.events.length > TELEMETRY_RING_SIZE) {
       this.events.splice(0, this.events.length - TELEMETRY_RING_SIZE);
     }
+    // Pull the feed into the same debounced Redis flush as the orchestrator
+    // state so a deploy / OOM doesn't empty the dashboard.
+    this.markPersistDirty();
   }
 
   /** Public-facing minimal pulse for the marketing landing page. Does NOT
@@ -247,6 +264,34 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
       }
     } catch (err) {
       this.logger.warn(`Could not restore orchestrator state: ${(err as Error).message}`);
+    }
+
+    // Restore the dashboard telemetry feed (Engine Worker view + pair scanner
+    // badges + daily counters). Without this every deploy empties the panel
+    // and gives the false impression that the engine just woke up.
+    try {
+      const raw = await this.redis.get(TELEMETRY_FEED_KEY);
+      if (raw) {
+        const feed = JSON.parse(raw) as {
+          events?: TelemetryEvent[];
+          lastEval?: Array<[string, { ts: string; decision: 'no-sweep' | 'pending-only' | 'cooldown' }]>;
+          counters?: { date: string; evals: number; sweeps: number; signals: number };
+        };
+        if (Array.isArray(feed.events)) {
+          this.events = feed.events.slice(-TELEMETRY_RING_SIZE);
+        }
+        if (Array.isArray(feed.lastEval)) {
+          this.lastEval = new Map(feed.lastEval);
+        }
+        if (feed.counters) {
+          this.counters = feed.counters;
+        }
+        this.logger.log(
+          `Restored telemetry feed: ${this.events.length} events, ${this.lastEval.size} pair eval snapshots`,
+        );
+      }
+    } catch (err) {
+      this.logger.warn(`Could not restore telemetry feed: ${(err as Error).message}`);
     }
 
     await this.redis.subscribe(REDIS_CHANNELS.CANDLE_STORED, (message) => {
