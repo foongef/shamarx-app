@@ -243,8 +243,17 @@ export class LiveReplayService {
     const bundle: CandleBundle = {};
 
     for (const symbol of pairs) {
+      // M15 is preloaded from htfStart too — not just for indicator warmup,
+      // but more importantly so the orchestrator's m15Len < 30 guard is
+      // satisfied from the FIRST timeline event. Without this, the first
+      // ~7.5 hours of the requested window get skipped entirely (no
+      // detectSweep calls on H1 bars closing during that gap), causing
+      // short-window replays to silently miss setups that a longer replay
+      // would have found. ReplayEngine's buildTimeline still only emits
+      // events for [start, end], so the preload only feeds warmup, never
+      // generates trades outside the requested window.
       const [m15, h1, d1] = await Promise.all([
-        this.fetchTimeframe(symbol, 'M15', start, end),
+        this.fetchTimeframe(symbol, 'M15', htfStart, end),
         this.fetchTimeframe(symbol, 'H1', htfStart, end),
         this.fetchTimeframe(symbol, 'D1', htfStart, end),
       ]);
