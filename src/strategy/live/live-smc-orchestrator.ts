@@ -235,29 +235,38 @@ export class LiveSmcOrchestrator {
     // 15:30 all see the same 14:00–15:00 H1 bar as the last closed). We use
     // openTime to dedup processing, just like smc-engine.ts:122 uses an
     // index pointer.
-    if (
-      lastClosedH1 &&
-      state.lastProcessedH1Time !== lastClosedH1.openTime
-    ) {
-      if (liveD1Adx >= cfg.d1AdxFloor) {
-        const setup = detectSweep(
-          h1Candles,
-          h1Indicators,
-          lastClosedH1Idx,
-          liveD1Bias,
-          liveD1Adx,
-          cfg,
-          d1Candles,
-          d1Indicators,
-          lastM15.openTime,
-        );
-        if (setup && !(cfg.disabledModes ?? []).includes(setup.mode)) {
-          // Skip if we've already actioned this exact H1 sweep timestamp
-          // (defensive — pending queue already prevents double-take, but a
-          // session restore could re-add).
-          const sweepTime = h1Candles[setup.detectedAtH1Idx].openTime;
-          if (!state.actionedSweeps.has(sweepTime)) {
-            state.pending.push(setup);
+    //
+    // CATCH-UP: When the engine resumes after downtime (deploy / OOM /
+    // weekend), `lastProcessedH1Time` may be many H1 boundaries behind the
+    // current latest. We iterate forward through every unprocessed H1 bar
+    // so each gets one `detectSweep` call — otherwise a sweep on a bar that
+    // closed during downtime would be permanently lost.
+    if (lastClosedH1 && state.lastProcessedH1Time !== lastClosedH1.openTime) {
+      const firstUnprocessedIdx = state.lastProcessedH1Time
+        ? this.findH1IdxAfter(h1Candles, state.lastProcessedH1Time, lastClosedH1Idx)
+        : lastClosedH1Idx;
+
+      for (let idx = firstUnprocessedIdx; idx <= lastClosedH1Idx; idx++) {
+        if (liveD1Adx >= cfg.d1AdxFloor) {
+          const setup = detectSweep(
+            h1Candles,
+            h1Indicators,
+            idx,
+            liveD1Bias,
+            liveD1Adx,
+            cfg,
+            d1Candles,
+            d1Indicators,
+            lastM15.openTime,
+          );
+          if (setup && !(cfg.disabledModes ?? []).includes(setup.mode)) {
+            // Skip if we've already actioned this exact H1 sweep timestamp
+            // (defensive — pending queue already prevents double-take, but a
+            // session restore could re-add).
+            const sweepTime = h1Candles[setup.detectedAtH1Idx].openTime;
+            if (!state.actionedSweeps.has(sweepTime)) {
+              state.pending.push(setup);
+            }
           }
         }
       }
@@ -686,6 +695,26 @@ export class LiveSmcOrchestrator {
   }
 
   // ─── internals ────────────────────────────────────────────────────────
+
+  /**
+   * Locate the first H1 index whose openTime is strictly AFTER the supplied
+   * `afterIso`, capped at `maxIdx`. Used by the catch-up loop to resume
+   * sweep detection from the bar immediately following the last one we
+   * processed. Falls back to maxIdx when the previously-processed bar can't
+   * be located (e.g. it dropped off the rolling buffer between restarts) —
+   * a single-bar process is still better than infinite-loop-or-nothing.
+   */
+  private findH1IdxAfter(
+    h1Candles: BacktestCandle[],
+    afterIso: string,
+    maxIdx: number,
+  ): number {
+    const afterMs = new Date(afterIso).getTime();
+    for (let i = 0; i <= maxIdx; i++) {
+      if (new Date(h1Candles[i].openTime).getTime() > afterMs) return i;
+    }
+    return maxIdx; // fall back: only process the latest
+  }
 
   private getOrCreateState(symbol: string): OrchestratorState {
     let s = this.states.get(symbol);
