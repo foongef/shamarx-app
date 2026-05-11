@@ -5,6 +5,7 @@ import { PrismaService } from '@app/prisma';
 import { firstValueFrom } from 'rxjs';
 import { BacktestEngine } from './engine/backtest-engine';
 import { BacktestCandle, EngineConfig } from './engine/types';
+import { HTF_WARMUP_DAYS } from './engine/warmup-constants';
 import { CreateBacktestDto } from './dto/create-backtest.dto';
 import { BacktestRunResult, BacktestTradeResult } from './dto/backtest-result.dto';
 
@@ -57,12 +58,11 @@ export class BacktestService {
         data: { status: 'RUNNING' },
       });
 
-      // HTF indicator warm-up — D1 ADX(14) + EMA50 both need ~50 bars of
-      // history before they stabilize, otherwise the SMC engine sits on its
-      // hands for the first 1-2 months of the requested range. Pre-fetch HTF
-      // bars from `startDate − 90 days` so indicators are warm on day 1.
-      // M15 stays at the requested start so the walk-forward is unaffected.
-      const warmupDays = 90;
+      // HTF indicator warm-up. Pulls H1/H4/D1 from `startDate - HTF_WARMUP_DAYS`
+      // so D1 EMA50 + ADX(14) are fully converged on day 1 of the M15 walk-
+      // forward (M15 itself stays at the requested start, untouched).
+      // See src/backtest/engine/warmup-constants.ts for the math.
+      const warmupDays = HTF_WARMUP_DAYS;
       const htfStart = new Date(dto.startDate);
       htfStart.setUTCDate(htfStart.getUTCDate() - warmupDays);
       const htfStartStr = htfStart.toISOString().slice(0, 10);

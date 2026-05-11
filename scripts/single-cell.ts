@@ -1,6 +1,7 @@
 import 'reflect-metadata';
 import { BacktestEngine } from '../src/backtest/engine/backtest-engine';
 import { BacktestCandle, EngineConfig } from '../src/backtest/engine/types';
+import { HTF_WARMUP_DAYS } from '../src/backtest/engine/warmup-constants';
 
 const EXEC_URL = 'http://localhost:8000';
 async function fetch1(symbol: string, tf: string, start: string, end: string) {
@@ -9,11 +10,11 @@ async function fetch1(symbol: string, tf: string, start: string, end: string) {
 }
 
 (async () => {
-  // Mimic the NestJS service exactly: 90-day HTF warmup
+  // Mimic the NestJS service exactly — shared HTF warmup constant.
   const start = '2025-01-01';
   const end = '2025-12-31';
   const htfStart = new Date(start);
-  htfStart.setUTCDate(htfStart.getUTCDate() - 90);
+  htfStart.setUTCDate(htfStart.getUTCDate() - HTF_WARMUP_DAYS);
   const htfStartStr = htfStart.toISOString().slice(0, 10);
 
   const m15 = await fetch1('XAUUSD', 'M15', start, end);

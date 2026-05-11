@@ -16,7 +16,7 @@ import { ReplayEngine, CandleBundle } from '../src/backtest/live-replay/replay-e
 import { BacktestCandle } from '../src/backtest/engine/types';
 import { REPLAY_DEFAULT_PAIRS } from '../src/backtest/live-replay/dto/start-replay.dto';
 
-const HTF_WARMUP_DAYS = 220; // see live-replay.service.ts for rationale
+import { HTF_WARMUP_DAYS } from '../src/backtest/engine/warmup-constants';
 
 interface CliArgs {
   start: string;

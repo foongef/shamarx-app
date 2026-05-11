@@ -6,22 +6,8 @@ import { LiveSmcOrchestrator } from '../../strategy/live/live-smc-orchestrator';
 import { ReplayEngine, CandleBundle, ReplayResult } from './replay-engine';
 import { StartReplayDto, REPLAY_DEFAULT_PAIRS } from './dto/start-replay.dto';
 import { BacktestCandle } from '../engine/types';
+import { HTF_WARMUP_DAYS } from '../engine/warmup-constants';
 import type { ParentMessage, WorkerMessage } from './worker-protocol';
-
-/**
- * D1 EMA50 needs ~150 D1 bars (≈ 210 calendar days incl. weekends) for the
- * seed value to fully decay and the indicator to track its true value.
- * At 90 days (the old default) a 5-week window still has ~56% of the seed
- * weighting in the EMA50, which materially distorts the D1 bias and ADX
- * gates — causing short replays to silently reject setups that a longer
- * replay starting earlier would have fired.
- *
- * 220 days gives ~150 D1 trading bars of EMA50 warmup, putting residual
- * seed influence below 5%. Replay startup cost grows linearly (each pair
- * loads more H1/D1 rows) but stays well under 1 second for the longest
- * windows we use.
- */
-const HTF_WARMUP_DAYS = 220;
 
 // Worker safety net — if the replay hangs (shouldn't, but defense in depth)
 // we kill the thread after 30 min and mark the session FAILED.
