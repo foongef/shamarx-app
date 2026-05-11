@@ -254,6 +254,31 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
     this.logger.log(`LIVE_MODE=true — SMC-V2 live trading enabled for ${this.pairs.join(', ')}`);
     for (const pair of this.pairs) this.actionedSweeps.set(pair, new Set());
 
+    // Seed the orchestrator's long-lived per-pair RiskManager with the REAL
+    // broker equity. Replay calls setDefaultRiskCfg with cfg.initialBalance
+    // before each run; live previously never called it, so the canTrade()
+    // pause/drawdown brake thresholds operated on the default $10k mental
+    // model regardless of actual account size. On a $1k account that means
+    // the 5% drawdown brake would fire at $500 lost — 50% of the real
+    // balance. Lot sizing was already correct (uses ctx.accountEquity per
+    // signal), this only fixes the daily-loss / consecutive-loss state.
+    try {
+      const acct = await this.fetchAccount();
+      const riskPercent = this.liveControl.getRiskPercent();
+      this.orchestrator.setDefaultRiskCfg({
+        initialBalance: acct.equity,
+        riskPercent,
+        maxOpenPositions: 4,
+      });
+      this.logger.log(
+        `RiskManager seeded from broker: equity=${acct.equity} risk=${riskPercent}% maxOpen=4`,
+      );
+    } catch (err) {
+      this.logger.warn(
+        `Could not seed RiskManager from broker (using defaults): ${(err as Error).message}`,
+      );
+    }
+
     // Restore orchestrator state from Redis so a container restart mid-day
     // doesn't drop the pending-sweeps queue or cooldown timers.
     try {
