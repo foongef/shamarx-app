@@ -97,12 +97,44 @@ ssm() {
 ssm 'docker compose -f /opt/trading-bot/repo/docker/docker-compose.yml ps'
 ```
 
-Expected: 4 rows — `trading-bot-app`, `trading-bot-execution` (healthy),
-`trading-bot-postgres` (healthy), `trading-bot-redis` (healthy).
+Expected: 5 rows — `trading-bot-app`, `trading-bot-execution` (healthy),
+`trading-bot-postgres` (healthy), `trading-bot-redis` (healthy), and the
+`trading-bot-autoheal` sidecar (no healthcheck of its own; just `Up`).
 
 Red flags:
 - Any row in `Restarting` or `Exited` state
-- `RestartCount` > 0 (run `docker inspect <name>` for OOM / exit-code clues)
+- `trading-bot-execution` showing `(unhealthy)` — autoheal will restart it
+  within ~60s; if you still see unhealthy 2 minutes later, autoheal itself
+  is broken, see below
+- `RestartCount` > 0 on `trading-bot-execution` — autoheal kicked in
+  recently. Check `docker logs trading-bot-autoheal` to see what it did
+  and `docker logs trading-bot-execution` for the *prior* run's tail
+- Frequent restarts (>3/hour) on `trading-bot-execution` → not a stuck
+  loop but a recurring problem, investigate root cause (MetaApi auth,
+  network, OOM)
+
+### Auto-recovery: how the watchdog works
+
+`willfarrell/autoheal` polls the Docker daemon every 30s. For each
+container labelled `autoheal: 'true'` (currently just execution-service)
+whose health is `unhealthy`, it issues a `docker restart`. The
+execution-service container is opted in because its asyncio event loop
+can be starved by a pathological MetaApi WebSocket retry state — in that
+mode the process is alive but uvicorn cannot accept connections, and
+`restart: unless-stopped` would leave it stuck forever (it only fires on
+exit, not on health failure).
+
+End-to-end timing of an automatic recovery:
+
+| Step | Time after fault |
+|---|---|
+| `/health` returns 503 (no successful op in 5 min) | T+5m00s |
+| Docker marks container `unhealthy` (5 consecutive failures × 10s) | T+5m50s |
+| autoheal poll detects, issues restart | T+6m20s (avg) |
+| Container back to `(healthy)` with fresh MetaApi session | T+6m40s |
+
+Tune via env: `AUTOHEAL_INTERVAL` (sidecar poll period),
+`HEALTH_STALE_THRESHOLD_SEC` (staleness gate in execution-service).
 
 ```bash
 # Memory / CPU snapshot
