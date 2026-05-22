@@ -31,6 +31,14 @@ import { MailService, TradeOpenedPayload } from '../../mail/mail.service';
 const M15_BUFFER = 100;
 const H1_BUFFER = 500;
 const D1_BUFFER = 400;
+/** Bar duration per timeframe — used by fetchCandles to filter out the
+ *  currently-open trailing bar that MetaApi includes in /candles responses. */
+const TIMEFRAME_DURATION_MS: Record<string, number> = {
+  M15: 15 * 60 * 1000,
+  H1: 60 * 60 * 1000,
+  H4: 4 * 60 * 60 * 1000,
+  D1: 24 * 60 * 60 * 1000,
+};
 const ORCHESTRATOR_STATE_KEY = 'live:orchestrator:state';
 /** Telemetry feed (events ring + per-pair lastEval + UTC counters) — persisted
  *  so the dashboard Engine Worker view survives container restarts. Tied to
@@ -586,16 +594,31 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
     const res = await firstValueFrom(
       this.httpService.get<CandleDto[]>(url, { params: { symbol, timeframe, count } }),
     );
-    return (res.data || []).map((c) => ({
-      symbol,
-      timeframe,
-      openTime: c.openTime,
-      open: c.open,
-      high: c.high,
-      low: c.low,
-      close: c.close,
-      volume: c.volume,
-    }));
+    // MetaApi (and our /candles endpoint) returns the currently-OPEN bar as
+    // the last element of the response. Without filtering, the orchestrator's
+    // H1 catchup loop sees a partial bar as `lastClosedH1`, processes it on
+    // `detectSweep` with incomplete OHLC, and (worse) writes
+    // `state.lastProcessedH1Time = bar.openTime` — which means once the bar
+    // ACTUALLY closes the write-once dedup makes the bar permanently invisible
+    // to the orchestrator. Sweep wicks that form in the latter half of an H1
+    // bar (the common case) are silently lost in live but caught by replay,
+    // because replay reads from Postgres where the cursor only advances when
+    // a bar fully closes. Keep only bars whose close time is at-or-before now.
+    const tfMs = TIMEFRAME_DURATION_MS[timeframe];
+    const now = Date.now();
+    const rows = res.data || [];
+    return rows
+      .filter((c) => !tfMs || new Date(c.openTime).getTime() + tfMs <= now)
+      .map((c) => ({
+        symbol,
+        timeframe,
+        openTime: c.openTime,
+        open: c.open,
+        high: c.high,
+        low: c.low,
+        close: c.close,
+        volume: c.volume,
+      }));
   }
 
   private async fetchOpenPositions(
