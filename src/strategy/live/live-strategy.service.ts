@@ -590,6 +590,32 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
     timeframe: string,
     count: number,
   ): Promise<BacktestCandle[]> {
+    // D1 SPECIAL CASE: MetaApi's /candles?D1 returns bars aligned to the
+    // BROKER session (typically 21:00 UTC start), while the replay engine
+    // reads D1 from Postgres where the cron poller's H1→D1 resample (see
+    // candle.service.ts:resampleH1ToD1, added in PR #19) writes bars aligned
+    // to UTC midnight. Different OHLC per "calendar day" → different D1
+    // ADX/EMA50 → different bias → live's `liveD1Adx >= cfg.d1AdxFloor`
+    // gate fails on bars where replay's passes. Every sweep is silently
+    // skipped before detectSweep is even called. Reading D1 from Postgres
+    // here makes live + replay share the same D1 source of truth.
+    if (timeframe === Timeframe.D1) {
+      const rows = await this.prisma.candle.findMany({
+        where: { symbol, timeframe },
+        orderBy: { openTime: 'desc' },
+        take: count,
+      });
+      return rows.reverse().map((r) => ({
+        symbol: r.symbol,
+        timeframe: r.timeframe,
+        openTime: r.openTime.toISOString(),
+        open: r.open,
+        high: r.high,
+        low: r.low,
+        close: r.close,
+        volume: r.volume,
+      }));
+    }
     const url = `${SERVICE_URLS.EXECUTION}/candles`;
     const res = await firstValueFrom(
       this.httpService.get<CandleDto[]>(url, { params: { symbol, timeframe, count } }),
