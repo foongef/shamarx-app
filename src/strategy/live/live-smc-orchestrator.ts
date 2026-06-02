@@ -241,12 +241,32 @@ export class LiveSmcOrchestrator {
     // current latest. We iterate forward through every unprocessed H1 bar
     // so each gets one `detectSweep` call — otherwise a sweep on a bar that
     // closed during downtime would be permanently lost.
-    if (lastClosedH1 && state.lastProcessedH1Time !== lastClosedH1.openTime) {
+    // 1-BAR LAG: only process H1 bars where bar N+1 has ALSO closed.
+    // detectAnchorSweep's displacement check (sweep-detector.ts:269-278) requires
+    // h1Candles[h1Idx + 1] to confirm a strong-bodied move in the trade direction
+    // before approving a setup. In replay, h1Candles is the FULL historical array
+    // and h1Idx + 1 is always accessible — replay accidentally enjoys look-ahead.
+    // In live, h1Candles is the latest closed bars only; at the M15 close that
+    // immediately follows a sweep H1 bar's close, the displacement bar is still
+    // 0 minutes old (not closed). h1Candles[idx + 1] is undefined → nextBar=null
+    // → passesDisplacement returns false → setup rejected. Then the catchup
+    // marks the bar processed via state.lastProcessedH1Time so we never re-try.
+    // Result: every potential sweep on the latest-just-closed H1 is silently
+    // dropped in live, but caught in replay.
+    //
+    // Fix: define `lastUsableH1Idx = lastClosedH1Idx - 1`. We only evaluate
+    // bar N once bar N+1 has also closed (one H1 later than naively possible).
+    // Live can now satisfy the displacement check; replay does the exact same
+    // thing → live/replay symmetry is restored. Trade entry is delayed by 1
+    // H1 vs. the old (look-ahead-biased) replay timing, which is honest.
+    const lastUsableH1Idx = lastClosedH1Idx - 1;
+    const lastUsableH1 = lastUsableH1Idx >= 0 ? h1Candles[lastUsableH1Idx] : null;
+    if (lastUsableH1 && state.lastProcessedH1Time !== lastUsableH1.openTime) {
       const firstUnprocessedIdx = state.lastProcessedH1Time
-        ? this.findH1IdxAfter(h1Candles, state.lastProcessedH1Time, lastClosedH1Idx)
-        : lastClosedH1Idx;
+        ? this.findH1IdxAfter(h1Candles, state.lastProcessedH1Time, lastUsableH1Idx)
+        : lastUsableH1Idx;
 
-      for (let idx = firstUnprocessedIdx; idx <= lastClosedH1Idx; idx++) {
+      for (let idx = firstUnprocessedIdx; idx <= lastUsableH1Idx; idx++) {
         if (liveD1Adx >= cfg.d1AdxFloor) {
           const setup = detectSweep(
             h1Candles,
@@ -270,7 +290,7 @@ export class LiveSmcOrchestrator {
           }
         }
       }
-      state.lastProcessedH1Time = lastClosedH1.openTime;
+      state.lastProcessedH1Time = lastUsableH1.openTime;
     }
 
     // ─── 2. Expire stale setups ────────────────────────────────────────────
