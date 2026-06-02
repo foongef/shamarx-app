@@ -21,6 +21,7 @@ import { Timeframe, SERVICE_URLS, CandleDto } from '@app/common';
 import {
   SmcLiveEvaluator,
   SmcLiveSignal,
+  SmcLiveSignalLeg,
   LiveEvaluationContext,
 } from './smc-live-evaluator';
 import { LiveSmcOrchestrator } from './live-smc-orchestrator';
@@ -454,7 +455,26 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
       mode: signal.mode,
       entryPrice: signal.entryPrice,
     });
-    await this.placeOrder(signal);
+
+    const placeResult = await this.placeOrder(signal);
+
+    if (placeResult.successfulLegs === 0) {
+      // No leg succeeded (broker rejection on all legs, partial-fill rollback,
+      // slippage close, DB persist failure, etc.). The orchestrator's pending
+      // queue still holds the sweep, so the NEXT M15 close will re-try until
+      // the setup's `expiresAtH1Bars` window elapses. We do NOT call
+      // recordEntry — that would mark the sweep as actioned and prevent retry.
+      // Before PR #31 this path silently consumed the sweep + applied a fake
+      // 1-bar cooldown to a trade that didn't actually happen.
+      this.logger.warn(
+        `[${symbol}] placeOrder produced 0 successful legs — sweep stays in pending for retry`,
+      );
+      // Persist anyway: evaluate() did mutate non-firing state (lastProcessedH1Time,
+      // catchup pending pushes, expiry filter). Keep Redis snapshot fresh.
+      this.markPersistDirty();
+      return null;
+    }
+
     this.orchestrator.recordEntry(symbol, signal);
     // Signal-fire is the most important state mutation — actionedSweeps,
     // cooldown, RiskManager all updated. Mark dirty (debounced flush within
@@ -703,7 +723,25 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
     return res.data;
   }
 
-  private async placeOrder(signal: SmcLiveSignal): Promise<void> {
+  /**
+   * Place all legs of a signal as broker orders + persist Trade rows.
+   *
+   * Returns the count of legs that fully succeeded (broker fill + DB persist).
+   * Caller uses this count to decide whether to call orchestrator.recordEntry
+   * — if 0, the orchestrator's pending queue stays untouched and the sweep
+   * will retry on the next M15 close (until pending expiry).
+   *
+   * Fault handling:
+   *   - Per-leg broker failure → logged, leg skipped, next leg attempted
+   *   - Per-leg DB-persist failure → broker position closed (compensating
+   *     action) to avoid orphans, leg counted as failed
+   *   - Excessive slippage on fill → broker position closed + CANCELLED
+   *     Trade row written as audit trail
+   *   - Partial fill (some legs succeed, some fail) → ALL successful legs
+   *     are rolled back, so we never run with asymmetric exposure (e.g.
+   *     TP1-only without runner). Returns successfulLegs=0 in that case.
+   */
+  private async placeOrder(signal: SmcLiveSignal): Promise<{ successfulLegs: number }> {
     const slPoints = Math.abs(signal.entryPrice - signal.slPrice);
     // Slippage guardrail: live broker fills can drift from the intended
     // entry. If the actual fill price differs from `signal.entryPrice` by
@@ -713,7 +751,8 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
     // out-of-band executions implicit in its commission model.
     const MAX_SLIPPAGE_FRACTION = 0.30;
 
-    // Each leg becomes a separate broker order.
+    const placed: Array<{ mt5Ticket: number; tradeId: string }> = [];
+
     for (const leg of signal.legs) {
       const clientOrderId = randomUUID();
       // Idempotency: refuse if a Trade with this clientOrderId already exists.
@@ -721,6 +760,7 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
       const dupe = await this.prisma.trade.findUnique({ where: { clientOrderId } });
       if (dupe) continue;
 
+      let brokerOrder: { mt5Ticket?: number; entryPrice?: number } | null = null;
       try {
         const res = await this.postOrderWithRetry({
           symbol: signal.symbol,
@@ -731,30 +771,34 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
           tpPrice: leg.tpPrice,
           comment: `SMC:${clientOrderId.slice(0, 8)}`,
         });
-        const order = res.data;
+        brokerOrder = res.data;
+      } catch (err) {
+        this.logger.error(`[${signal.symbol}] order failed for leg ${JSON.stringify(leg)}: ${(err as Error).message}`);
+        continue;
+      }
 
-        const fillPrice = typeof order.entryPrice === 'number' && order.entryPrice > 0
-          ? order.entryPrice
-          : signal.entryPrice;
-        const slippage = Math.abs(fillPrice - signal.entryPrice);
-        const slippageFrac = slPoints > 0 ? slippage / slPoints : 0;
-        if (slippageFrac > MAX_SLIPPAGE_FRACTION) {
-          this.logger.warn(
-            `[${signal.symbol}] excessive slippage ${(slippageFrac * 100).toFixed(1)}% — closing ticket=${order.mt5Ticket} immediately`,
-          );
-          if (order.mt5Ticket) {
-            try {
-              await firstValueFrom(
-                this.httpService.post(`${SERVICE_URLS.EXECUTION}/positions/${order.mt5Ticket}/close`, {}),
-              );
-            } catch (closeErr) {
-              this.logger.error(`emergency close failed ticket=${order.mt5Ticket}: ${(closeErr as Error).message}`);
-            }
-          }
-          continue;
-        }
+      const order = brokerOrder!;
+      const mt5Ticket = order.mt5Ticket;
+      const fillPrice = typeof order.entryPrice === 'number' && order.entryPrice > 0
+        ? order.entryPrice
+        : signal.entryPrice;
+      const slippage = Math.abs(fillPrice - signal.entryPrice);
+      const slippageFrac = slPoints > 0 ? slippage / slPoints : 0;
 
-        // Persist a CandidateTrade + Trade so dashboard + journal pick it up.
+      if (slippageFrac > MAX_SLIPPAGE_FRACTION) {
+        this.logger.warn(
+          `[${signal.symbol}] excessive slippage ${(slippageFrac * 100).toFixed(1)}% — closing ticket=${mt5Ticket} + writing audit row`,
+        );
+        await this.bestEffortClose(mt5Ticket, 'emergency close (slippage)');
+        // Fix 4: audit trail so the slippage event is visible in the dashboard.
+        await this.writeAuditTradeRow(signal, leg, clientOrderId, mt5Ticket, fillPrice, 'EXCESSIVE_SLIPPAGE');
+        continue;
+      }
+
+      // Persist CandidateTrade + Trade. Failure here = orphan broker position
+      // unless we compensate — close the broker position and skip this leg.
+      let tradeId: string;
+      try {
         const candidate = await this.prisma.candidateTrade.create({
           data: {
             symbol: signal.symbol,
@@ -775,11 +819,11 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
         });
 
         const trailKey: 'TP1' | 'RUNNER' = leg.setupTags.includes('TP1') ? 'TP1' : 'RUNNER';
-        await this.prisma.trade.create({
+        const trade = await this.prisma.trade.create({
           data: {
             candidateId: candidate.id,
             clientOrderId,
-            mt5Ticket: order.mt5Ticket ?? null,
+            mt5Ticket: mt5Ticket ?? null,
             sessionId: this.liveControl.getCurrentSessionId(),
             symbol: signal.symbol,
             side: signal.side,
@@ -790,7 +834,7 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
             status: 'OPEN',
             statusHistory: [
               { status: 'PENDING', timestamp: new Date().toISOString() },
-              { status: 'OPEN', timestamp: new Date().toISOString(), ticket: order.mt5Ticket },
+              { status: 'OPEN', timestamp: new Date().toISOString(), ticket: mt5Ticket },
             ],
             // Seed trade-management state so LivePositionManagerService has
             // what it needs on the next M15 close (BE flag, original SL,
@@ -817,6 +861,7 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
             strategyName: 'stop-hunt',
           },
         });
+        tradeId = trade.id;
 
         await this.redis.publish(REDIS_CHANNELS.TRADE_OPENED, {
           candidateId: candidate.id,
@@ -825,16 +870,134 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
           side: signal.side,
           lotSize: leg.lotSize,
           entryPrice: signal.entryPrice,
-          mt5Ticket: order.mt5Ticket,
+          mt5Ticket,
         });
 
         this.logger.log(
-          `[${signal.symbol}] OPENED ${signal.side} ${leg.lotSize} lot @${signal.entryPrice} SL=${signal.slPrice} TP=${leg.tpPrice} ticket=${order.mt5Ticket}`,
+          `[${signal.symbol}] OPENED ${signal.side} ${leg.lotSize} lot @${signal.entryPrice} SL=${signal.slPrice} TP=${leg.tpPrice} ticket=${mt5Ticket}`,
         );
-      } catch (err) {
-        const msg = (err as Error).message;
-        this.logger.error(`[${signal.symbol}] order failed for leg ${JSON.stringify(leg)}: ${msg}`);
+      } catch (dbErr) {
+        // Fix 2: DB persist failed — close the broker position to avoid orphan.
+        this.logger.error(
+          `[${signal.symbol}] DB persist failed for ticket=${mt5Ticket}, closing orphan: ${(dbErr as Error).message}`,
+        );
+        await this.bestEffortClose(mt5Ticket, 'orphan close (DB persist failed)');
+        continue;
       }
+
+      if (typeof mt5Ticket === 'number') {
+        placed.push({ mt5Ticket, tradeId });
+      }
+    }
+
+    // Fix 3: Partial fill rollback. If we got some legs but not all, the
+    // strategy was designed for the full ladder — running asymmetric (e.g.
+    // TP1 alone, or runner alone) has a different risk profile than what
+    // was sized. Close the partial fills.
+    if (placed.length > 0 && placed.length < signal.legs.length) {
+      this.logger.warn(
+        `[${signal.symbol}] partial fill (${placed.length}/${signal.legs.length}) — rolling back successful legs`,
+      );
+      for (const p of placed) {
+        await this.bestEffortClose(p.mt5Ticket, 'partial-fill rollback');
+        try {
+          await this.prisma.trade.update({
+            where: { id: p.tradeId },
+            data: { status: 'CLOSED', exitReason: 'PARTIAL_FILL_ROLLBACK', closedAt: new Date() },
+          });
+        } catch (e) {
+          this.logger.error(`failed to mark trade ${p.tradeId} as rolled-back: ${(e as Error).message}`);
+        }
+      }
+      return { successfulLegs: 0 };
+    }
+
+    return { successfulLegs: placed.length };
+  }
+
+  /** Best-effort close of a broker position. Logs but never throws. */
+  private async bestEffortClose(mt5Ticket: number | undefined, reason: string): Promise<void> {
+    if (!mt5Ticket) return;
+    try {
+      await firstValueFrom(
+        this.httpService.post(`${SERVICE_URLS.EXECUTION}/positions/${mt5Ticket}/close`, {}),
+      );
+    } catch (err) {
+      this.logger.error(`${reason} failed for ticket=${mt5Ticket}: ${(err as Error).message}`);
+    }
+  }
+
+  /** Write a CLOSED Trade row to the DB so error events (slippage, etc.) have
+   *  an audit trail visible in the dashboard. Best-effort — logs on failure. */
+  private async writeAuditTradeRow(
+    signal: SmcLiveSignal,
+    leg: SmcLiveSignalLeg,
+    clientOrderId: string,
+    mt5Ticket: number | undefined,
+    fillPrice: number,
+    exitReason: string,
+  ): Promise<void> {
+    try {
+      const candidate = await this.prisma.candidateTrade.create({
+        data: {
+          symbol: signal.symbol,
+          side: signal.side,
+          entryPrice: signal.entryPrice,
+          slPrice: signal.slPrice,
+          tpPrice: leg.tpPrice,
+          slPoints: Math.abs(signal.entryPrice - signal.slPrice),
+          tpPoints: Math.abs(leg.tpPrice - signal.entryPrice),
+          setupTags: leg.setupTags,
+          h1Bias: signal.side === 'BUY' ? 'BULLISH' : 'BEARISH',
+          rsiValue: 0,
+          atrValue: 0,
+          spreadAtDetection: 0,
+          timeframe: 'M15',
+          status: 'REJECTED',
+        },
+      });
+      const trailKey: 'TP1' | 'RUNNER' = leg.setupTags.includes('TP1') ? 'TP1' : 'RUNNER';
+      await this.prisma.trade.create({
+        data: {
+          candidateId: candidate.id,
+          clientOrderId,
+          mt5Ticket: mt5Ticket ?? null,
+          sessionId: this.liveControl.getCurrentSessionId(),
+          symbol: signal.symbol,
+          side: signal.side,
+          lotSize: leg.lotSize,
+          entryPrice: fillPrice,
+          slPrice: signal.slPrice,
+          tpPrice: leg.tpPrice,
+          closePrice: fillPrice,
+          pnl: 0,
+          status: 'CLOSED',
+          exitReason,
+          closedAt: new Date(),
+          statusHistory: [
+            { status: 'PENDING', timestamp: new Date().toISOString() },
+            { status: 'OPEN', timestamp: new Date().toISOString(), ticket: mt5Ticket },
+            { status: 'CLOSED', timestamp: new Date().toISOString(), reason: exitReason },
+          ],
+          managementState: {
+            breakevenActivated: false,
+            peakFavorablePrice: fillPrice,
+            originalSlPrice: signal.slPrice,
+            trailKey,
+          } as any,
+          sweptLevel: signal.smcContext?.sweptLevel ?? null,
+          sweptHigh: signal.smcContext?.sweptHigh ?? null,
+          sweptLow: signal.smcContext?.sweptLow ?? null,
+          sweepCandleTime: signal.smcContext?.sweepCandleTime
+            ? new Date(signal.smcContext.sweepCandleTime)
+            : null,
+          d1Bias: signal.smcContext?.d1Bias ?? null,
+          originalSlPrice: signal.slPrice,
+          strategyName: 'stop-hunt',
+        },
+      });
+    } catch (e) {
+      this.logger.error(`audit trade row write failed: ${(e as Error).message}`);
     }
   }
 }

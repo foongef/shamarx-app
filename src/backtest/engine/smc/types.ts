@@ -19,6 +19,11 @@ export interface PendingSetup {
   detectedAtH1Idx: number;
   expiresAtH1Idx: number;
   mode: SmcMode;
+  /** openTime of the sweep H1 bar. Stable across array shifts (the live H1
+   *  buffer rolls every minute), unlike detectedAtH1Idx which only points
+   *  to the right bar at the moment of creation. Used by the orchestrator
+   *  to identify and dedup setups after they've been added to pending. */
+  sweepTime: string;
 }
 
 /**
