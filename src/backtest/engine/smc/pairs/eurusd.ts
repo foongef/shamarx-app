@@ -49,17 +49,22 @@ export const EURUSD_SMC_CONFIG: SmcPairConfig = {
   // liquidity clusters at session-derived levels, not random swings).
   useAnchorSweeps: true,
 
-  // Step 4.4 — post-sweep displacement filter. Per-pair carve-out: EURUSD
-  // is the ONLY pair that regresses when this filter is disabled.
-  // 12-month replay (2025-06 → 2026-06, $1k @ 1.5%):
-  //   dispAtr=0:    -$123 (48.2% WR over 114 trades) ← below 50% WR
-  //   dispAtr=0.5:  -$7   (56.0% WR over 108 trades) ← near-break-even
-  // Removing the filter for EURUSD turns a marginal pair into a net
-  // drag. Hypothesis: EURUSD's typical sweep size is closer to noise
-  // floor, so the post-sweep momentum confirmation is genuinely earning
-  // its keep here (unlike XAUUSD/GBPUSD/USDJPY where it was net-negative).
-  // The other 3 pairs keep dispAtr=0 — see PR #28 for full rationale.
-  anchorDisplacementAtr: 0.5,
+  // Step 4.4 — post-sweep displacement filter. Disabled across all pairs.
+  // PR #29 attempted to restore this filter for EURUSD only, based on
+  // single-pair algebra: EURUSD alone improves -$123 → -$7 with the filter
+  // on. However the empirical multi-pair replay (e666c18f) showed the
+  // EURUSD carve-out HURTS the portfolio: total dropped from +$970 to +$287
+  // (12-month, $1k @ 1.5%). All pairs got worse, not just EURUSD —
+  // XAUUSD especially crashed from +$590 to +$196. Root cause: per-pair
+  // PnL contributions are not independent. Shared account balance affects
+  // lot sizing for ALL pairs; the global maxOpenPositions cap creates
+  // timing-dependent slot contention; sequential simulated broker state
+  // is order-sensitive. Restoring the filter for EURUSD changes its trade
+  // timing (1h lag) which cascades through these shared mechanisms.
+  // Lesson: do not project multi-pair behavior from single-pair algebra.
+  // Validate every config combination empirically before deploying.
+  // See PR #28 for full rationale on the all-pairs disable.
+  anchorDisplacementAtr: 0,
 
   // Step 4.5 — sit out 15min windows around NFP/FOMC/CPI/ECB.
   newsBlackoutMinutes: 15,
