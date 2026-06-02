@@ -49,18 +49,17 @@ export const EURUSD_SMC_CONFIG: SmcPairConfig = {
   // liquidity clusters at session-derived levels, not random swings).
   useAnchorSweeps: true,
 
-  // Step 4.4 — post-sweep displacement filter. Originally 0.5×ATR; disabled
-  // (0) after 2026-06-02 multi-variant replay showed the filter was net
-  // negative under honest (no-look-ahead) evaluation. The filter previously
-  // appeared profitable only because the look-ahead bias let it cherry-pick
-  // confirmed displacement bars from the future. Without that cheat, the
-  // filter just rejects equally-good setups and forces a 1h evaluation lag
-  // that often pushes detection past killzone close. 12-month replay over
-  // 2025-06→2026-06: dispAtr=0 vs dispAtr=0.5 gave +$898 vs +$140 at 1.5%
-  // risk (across all pairs). EURUSD specifically regressed slightly under
-  // dispAtr=0 (-$121 vs -$7) — flagged for separate review, but keeping
-  // global setting consistent for now.
-  anchorDisplacementAtr: 0,
+  // Step 4.4 — post-sweep displacement filter. Per-pair carve-out: EURUSD
+  // is the ONLY pair that regresses when this filter is disabled.
+  // 12-month replay (2025-06 → 2026-06, $1k @ 1.5%):
+  //   dispAtr=0:    -$123 (48.2% WR over 114 trades) ← below 50% WR
+  //   dispAtr=0.5:  -$7   (56.0% WR over 108 trades) ← near-break-even
+  // Removing the filter for EURUSD turns a marginal pair into a net
+  // drag. Hypothesis: EURUSD's typical sweep size is closer to noise
+  // floor, so the post-sweep momentum confirmation is genuinely earning
+  // its keep here (unlike XAUUSD/GBPUSD/USDJPY where it was net-negative).
+  // The other 3 pairs keep dispAtr=0 — see PR #28 for full rationale.
+  anchorDisplacementAtr: 0.5,
 
   // Step 4.5 — sit out 15min windows around NFP/FOMC/CPI/ECB.
   newsBlackoutMinutes: 15,
