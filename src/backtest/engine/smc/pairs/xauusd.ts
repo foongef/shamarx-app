@@ -64,8 +64,9 @@ export const XAUUSD_SMC_CONFIG: SmcPairConfig = {
   // from low-quality sweeps. Mirrors what the other 3 pairs already do.
   useAnchorSweeps: true,
 
-  // Require the H1 bar AFTER the sweep to displace ≥ 0.5 × ATR in the trade
-  // direction. Filters chop where the wick happens but no real momentum
-  // follows. 0.5 matches EURUSD/GBPUSD/USDJPY tuning.
-  anchorDisplacementAtr: 0.5,
+  // Disabled (was 0.5) — see eurusd.ts:54 for full rationale. XAUUSD benefits
+  // the MOST from removing this filter: 12-month replay went from $8 (14T) at
+  // 71% WR to $614 (46T) at 72% WR at 1.5% risk. Gold's edge was being
+  // suppressed by a filter designed for forex behavior.
+  anchorDisplacementAtr: 0,
 };

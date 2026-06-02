@@ -42,6 +42,9 @@ export const USDJPY_SMC_CONFIG: SmcPairConfig = {
 
   autoModeFilter: true,
   useAnchorSweeps: true,
-  anchorDisplacementAtr: 0.5,
+  // Disabled (was 0.5) — see eurusd.ts:54 for full rationale. 12-month replay
+  // showed USDJPY went from $0 (136T) to $104 (174T) at 1.5% risk after
+  // removing the displacement filter.
+  anchorDisplacementAtr: 0,
   newsBlackoutMinutes: 15,
 };
