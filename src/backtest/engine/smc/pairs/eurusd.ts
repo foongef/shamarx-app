@@ -49,9 +49,18 @@ export const EURUSD_SMC_CONFIG: SmcPairConfig = {
   // liquidity clusters at session-derived levels, not random swings).
   useAnchorSweeps: true,
 
-  // Step 4.4 — require post-sweep H1 bar to displace ≥0.5×ATR in the trade
-  // direction. Filters obvious chop without rejecting valid setups.
-  anchorDisplacementAtr: 0.5,
+  // Step 4.4 — post-sweep displacement filter. Originally 0.5×ATR; disabled
+  // (0) after 2026-06-02 multi-variant replay showed the filter was net
+  // negative under honest (no-look-ahead) evaluation. The filter previously
+  // appeared profitable only because the look-ahead bias let it cherry-pick
+  // confirmed displacement bars from the future. Without that cheat, the
+  // filter just rejects equally-good setups and forces a 1h evaluation lag
+  // that often pushes detection past killzone close. 12-month replay over
+  // 2025-06→2026-06: dispAtr=0 vs dispAtr=0.5 gave +$898 vs +$140 at 1.5%
+  // risk (across all pairs). EURUSD specifically regressed slightly under
+  // dispAtr=0 (-$121 vs -$7) — flagged for separate review, but keeping
+  // global setting consistent for now.
+  anchorDisplacementAtr: 0,
 
   // Step 4.5 — sit out 15min windows around NFP/FOMC/CPI/ECB.
   newsBlackoutMinutes: 15,

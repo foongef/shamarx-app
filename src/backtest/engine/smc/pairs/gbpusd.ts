@@ -38,6 +38,9 @@ export const GBPUSD_SMC_CONFIG: SmcPairConfig = {
 
   autoModeFilter: true,
   useAnchorSweeps: true,
-  anchorDisplacementAtr: 0.5,
+  // Disabled (was 0.5) — see eurusd.ts:54 for full rationale. 12-month replay
+  // showed GBPUSD specifically went from +$140 (94T) to +$301 (120T) at 1.5%
+  // risk after removing the displacement filter.
+  anchorDisplacementAtr: 0,
   newsBlackoutMinutes: 15,
 };
