@@ -151,8 +151,16 @@ export class LiveSmcOrchestrator {
       if (raw.riskManager && typeof raw.riskManager === 'object') {
         riskManager.restore(raw.riskManager);
       }
+      // Drop any pending setup that lacks sweepTime — those were created
+      // under the pre-PR-31 schema and the new fire/commit path requires
+      // sweepTime to match setups stably. They'd otherwise sit in the
+      // queue and be skipped (failing the actionedSweeps dedup check by
+      // comparing undefined). Cleaner to discard them at restore time.
+      const pending = (raw.pending ?? []).filter((p: { sweepTime?: string }) =>
+        typeof p.sweepTime === 'string' && p.sweepTime.length > 0,
+      );
       this.states.set(sym, {
-        pending: raw.pending ?? [],
+        pending,
         lastProcessedH1Time: raw.lastProcessedH1Time ?? null,
         // Migrate legacy snapshots: if we see the old wall-clock field,
         // reset the bar counter (better than incorrectly translating times).
@@ -282,9 +290,10 @@ export class LiveSmcOrchestrator {
           if (setup && !(cfg.disabledModes ?? []).includes(setup.mode)) {
             // Skip if we've already actioned this exact H1 sweep timestamp
             // (defensive — pending queue already prevents double-take, but a
-            // session restore could re-add).
-            const sweepTime = h1Candles[setup.detectedAtH1Idx].openTime;
-            if (!state.actionedSweeps.has(sweepTime)) {
+            // session restore could re-add). Use stable setup.sweepTime
+            // instead of h1Candles[idx].openTime, which becomes incorrect
+            // as the live H1 buffer shifts across evaluate() calls.
+            if (!state.actionedSweeps.has(setup.sweepTime)) {
               state.pending.push(setup);
             }
           }
@@ -334,14 +343,10 @@ export class LiveSmcOrchestrator {
       // Same-direction stacking guard — same as V6-alt and the original evaluator.
       if (ctx.openDirections.has(setup.direction)) continue;
 
-      const sweepTime = h1Candles[setup.detectedAtH1Idx]?.openTime ?? '';
-
-      // Defensive — shouldn't happen since we filter pendings above, but
-      // sweepTime can be missing if the H1 buffer rotated past the index.
-      if (!sweepTime) {
-        state.pending.splice(s, 1);
-        continue;
-      }
+      // Use the stable setup.sweepTime (captured at detection) instead of
+      // looking up h1Candles[setup.detectedAtH1Idx].openTime — the latter
+      // breaks once the live H1 buffer rolls (the index becomes stale).
+      const sweepTime = setup.sweepTime;
 
       if (state.actionedSweeps.has(sweepTime)) {
         state.pending.splice(s, 1);
@@ -630,11 +635,15 @@ export class LiveSmcOrchestrator {
         };
       }
 
-      // Mark consumed → remove from queue, dedup, set 1-bar cooldown
-      // (matches V6-alt's `cooldownUntil = i + 1; break;` after entry).
-      state.pending.splice(s, 1);
-      state.actionedSweeps.add(sweepTime);
-      state.cooldownBarsRemaining = 1;
+      // DO NOT mutate state here. Splicing pending / adding actionedSweeps
+      // / setting cooldown happens in recordEntry(), which the caller calls
+      // ONLY after at least one broker order leg actually succeeded. If
+      // placeOrder fails for all legs, recordEntry is NOT called and the
+      // setup stays in pending → next M15 close will retry. Pending expiry
+      // (cfg.setupExpiryH1Bars) bounds the retry window naturally.
+      //
+      // Replay (SimulatedBroker always succeeds) calls recordEntry
+      // unconditionally — same outcome as the old in-evaluate mutations.
 
       return signal;
     }
@@ -643,17 +652,29 @@ export class LiveSmcOrchestrator {
   }
 
   /**
-   * Apply post-trade cooldown — call AFTER the order is actually placed
-   * (so we don't punish ourselves for skipped/rejected setups).
+   * Commit a fired signal: remove the corresponding setup from pending,
+   * mark its sweepTime as actioned to prevent re-firing, and apply the
+   * post-trade 1-bar cooldown.
    *
-   * V6-alt uses bar-index arithmetic; live uses time arithmetic.
-   * SL/TP cooldowns are applied by `recordExit()` when positions close.
+   * Caller contract: MUST be called AFTER at least one broker order leg
+   * has actually been placed (and persisted to the DB). In live, that
+   * means LiveStrategyService.placeOrder confirmed `successfulLegs > 0`.
+   * In replay, SimulatedBroker always succeeds so this is unconditional.
+   *
+   * If placeOrder fails entirely (broker rejection on every leg, DB write
+   * failure, etc.), the caller must NOT call this — leaving the setup in
+   * pending so the next M15 close re-tries. The orchestrator's expiry
+   * filter (cfg.setupExpiryH1Bars) bounds the retry window.
+   *
+   * Before this refactor the state mutations were baked into evaluate()
+   * itself, so a failed broker order silently consumed the sweep — see
+   * the 'Bug A' analysis on PR #31.
    */
-  recordEntry(symbol: string, _signal: SmcLiveSignal): void {
+  recordEntry(symbol: string, signal: SmcLiveSignal): void {
     const state = this.getOrCreateState(symbol);
-    // Cooldown was already set to next M15 inside evaluate(); recordEntry
-    // is reserved for any future bookkeeping (e.g. quality scoring).
-    void state; // touch
+    state.pending = state.pending.filter((p) => p.sweepTime !== signal.h1SweepTime);
+    state.actionedSweeps.add(signal.h1SweepTime);
+    state.cooldownBarsRemaining = 1;
   }
 
   /**

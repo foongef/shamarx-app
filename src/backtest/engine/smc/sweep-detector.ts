@@ -181,6 +181,7 @@ export function detectSweep(
     detectedAtH1Idx: h1Idx,
     expiresAtH1Idx: h1Idx + cfg.setupExpiryH1Bars,
     mode,
+    sweepTime: bar.openTime,
   });
 
   if (mode === 'CONTINUATION') {
@@ -292,6 +293,7 @@ function detectAnchorSweep(
     detectedAtH1Idx: h1Idx,
     expiresAtH1Idx: h1Idx + cfg.setupExpiryH1Bars,
     mode,
+    sweepTime: bar.openTime,
   });
 
   // Iterate all upper anchors (PDH, AsianHigh, WeeklyHigh) — first hit wins

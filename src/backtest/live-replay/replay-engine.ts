@@ -202,7 +202,14 @@ export class ReplayEngine {
       // 4. Place order via simulated broker — opens 1 position per leg.
       const positions = broker.placeOrder(signal, candle.openTime);
       opened.push(...positions);
-      this.orchestrator.recordEntry(symbol, signal);
+
+      // PR #31: state-commit moved out of evaluate() into recordEntry().
+      // SimulatedBroker is infallible (no slippage / margin / network),
+      // so any returned positions = full success. Live equivalent is
+      // gated on placeOrder().successfulLegs > 0.
+      if (positions.length > 0) {
+        this.orchestrator.recordEntry(symbol, signal);
+      }
 
       this.logger.debug(
         `[${symbol} ${candle.openTime}] ${signal.mode} ${signal.side} ${signal.totalLot}lot — ${signal.reason}`,
