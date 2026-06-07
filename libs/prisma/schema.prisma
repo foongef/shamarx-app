@@ -42,16 +42,16 @@ model PasswordResetToken {
 }
 
 model EquitySnapshot {
-  id              String   @id @default(uuid())
-  takenAt         DateTime @default(now())
-  source          String   @default("live")  // "live" | "backtest"
-  mode            String                     // "mock" | "metaapi"
-  balance         Float
-  equity          Float
-  unrealizedPnl   Float    @default(0)
-  margin          Float    @default(0)
-  freeMargin      Float    @default(0)
-  openPositions  Int      @default(0)
+  id            String   @id @default(uuid())
+  takenAt       DateTime @default(now())
+  source        String   @default("live") // "live" | "backtest"
+  mode          String // "mock" | "metaapi"
+  balance       Float
+  equity        Float
+  unrealizedPnl Float    @default(0)
+  margin        Float    @default(0)
+  freeMargin    Float    @default(0)
+  openPositions Int      @default(0)
 
   @@index([source, takenAt])
 }
@@ -113,7 +113,7 @@ model SupportResistanceLevel {
   symbol    String
   timeframe String
   price     Float
-  type      String   // SUPPORT or RESISTANCE
+  type      String // SUPPORT or RESISTANCE
   strength  Int      @default(1)
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
@@ -123,22 +123,22 @@ model SupportResistanceLevel {
 }
 
 model CandidateTrade {
-  id          String   @id @default(uuid())
-  symbol      String
-  side        String   // BUY or SELL
-  entryPrice  Float
-  slPrice     Float
-  tpPrice     Float
-  slPoints    Float
-  tpPoints    Float
-  setupTags   String[] // e.g. ["BOS", "PULLBACK_EMA20", "ENGULFING"]
-  h1Bias      String   // BULLISH, BEARISH, NEUTRAL
-  rsiValue    Float
-  atrValue    Float
+  id                String   @id @default(uuid())
+  symbol            String
+  side              String // BUY or SELL
+  entryPrice        Float
+  slPrice           Float
+  tpPrice           Float
+  slPoints          Float
+  tpPoints          Float
+  setupTags         String[] // e.g. ["BOS", "PULLBACK_EMA20", "ENGULFING"]
+  h1Bias            String // BULLISH, BEARISH, NEUTRAL
+  rsiValue          Float
+  atrValue          Float
   spreadAtDetection Float
-  timeframe   String
-  status      String   @default("PENDING") // PENDING, APPROVED, REJECTED
-  createdAt   DateTime @default(now())
+  timeframe         String
+  status            String   @default("PENDING") // PENDING, APPROVED, REJECTED
+  createdAt         DateTime @default(now())
 
   llmDecision LlmDecision?
   trade       Trade?
@@ -147,67 +147,67 @@ model CandidateTrade {
 }
 
 model LlmDecision {
-  id            String   @id @default(uuid())
-  candidateId   String   @unique
-  candidate     CandidateTrade @relation(fields: [candidateId], references: [id])
-  decision      String   // ALLOW or REJECT
-  confidence    Float
-  reasoning     String
-  toolsUsed     String[]
-  rawResponse   String
-  inputTokens   Int
-  outputTokens  Int
-  latencyMs     Int
-  createdAt     DateTime @default(now())
+  id           String         @id @default(uuid())
+  candidateId  String         @unique
+  candidate    CandidateTrade @relation(fields: [candidateId], references: [id])
+  decision     String // ALLOW or REJECT
+  confidence   Float
+  reasoning    String
+  toolsUsed    String[]
+  rawResponse  String
+  inputTokens  Int
+  outputTokens Int
+  latencyMs    Int
+  createdAt    DateTime       @default(now())
 }
 
 model Trade {
-  id             String   @id @default(uuid())
-  candidateId    String   @unique
-  candidate      CandidateTrade @relation(fields: [candidateId], references: [id])
-  clientOrderId  String?  @unique
-  mt5Ticket      Int?
-  sessionId      String?
-  session        LiveSession? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
-  symbol         String
-  side           String
-  lotSize        Float
-  entryPrice     Float
-  closePrice     Float?
-  slPrice        Float
-  tpPrice        Float
-  status         String   @default("PENDING") // PENDING, OPEN, CLOSED, CANCELLED
-  exitReason     String?  // SL, TP, BREAKEVEN, FORCED_CLOSE
-  pnl            Float?
-  closedAt       DateTime?
-  statusHistory  Json     @default("[]")
+  id              String         @id @default(uuid())
+  candidateId     String         @unique
+  candidate       CandidateTrade @relation(fields: [candidateId], references: [id])
+  clientOrderId   String?        @unique
+  mt5Ticket       Int?
+  sessionId       String?
+  session         LiveSession?   @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  symbol          String
+  side            String
+  lotSize         Float
+  entryPrice      Float
+  closePrice      Float?
+  slPrice         Float
+  tpPrice         Float
+  status          String         @default("PENDING") // PENDING, OPEN, CLOSED, CANCELLED
+  exitReason      String? // SL, TP, BREAKEVEN, FORCED_CLOSE
+  pnl             Float?
+  closedAt        DateTime?
+  statusHistory   Json           @default("[]")
   // Trade-management state — read/written by the live position manager on
   // every M15 close. Mirrors V6-alt's SimulatedPosition fields used by
   // updatePositionManagement (breakevenActivated, peakFavorablePrice,
   // originalSlPrice, trailConfig key — TP1 vs RUNNER). Stored as JSON so
   // adding new tuning knobs doesn't require a schema migration.
-  managementState Json    @default("{}")
+  managementState Json           @default("{}")
   // SMC context — captured at signal-fire time so the dashboard can render
   // an annotated chart explaining WHY the trade fired. All nullable so
   // legacy rows stay valid; populated only for trades fired by the SMC engine.
-  sweptLevel       Float?
-  sweptHigh        Float?
-  sweptLow         Float?
-  sweepCandleTime  DateTime?
-  d1Bias           String?   // BULLISH | BEARISH | NEUTRAL
+  sweptLevel      Float?
+  sweptHigh       Float?
+  sweptLow        Float?
+  sweepCandleTime DateTime?
+  d1Bias          String? // BULLISH | BEARISH | NEUTRAL
   // Original SL placement — never mutated. `slPrice` above moves as
   // break-even and trailing-stop kick in. The educational chart shows
   // this field so users see WHERE the SL started (above entry for SELL,
   // below entry for BUY) rather than the trailed final position.
-  originalSlPrice  Float?
+  originalSlPrice Float?
   // Strategy that produced this trade. 'stop-hunt' (default for legacy rows)
   // | 'range-reversion'. Used by position-monitor to route recordExit to
   // the correct orchestrator instance.
-  strategyName     String?  @default("stop-hunt")
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  strategyName    String?        @default("stop-hunt")
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
 
-  journalEntry   JournalEntry?
+  journalEntry JournalEntry?
 
   @@index([status])
   @@index([symbol, createdAt])
@@ -215,25 +215,25 @@ model Trade {
 }
 
 model LiveSession {
-  id               String    @id @default(uuid())
-  startedAt        DateTime  @default(now())
-  endedAt          DateTime?
-  strategyVersion  String
-  riskPercent      Float
-  mode             String    // "mock" | "metaapi"
-  mockBalance      Float?
-  startEquity      Float
-  endEquity        Float?
-  realizedPnl      Float     @default(0)
-  tradesCount      Int       @default(0)
-  winsCount        Int       @default(0)
-  lossesCount      Int       @default(0)
-  status           String    @default("RUNNING") // RUNNING, ENDED, CRASHED
-  pairs            String[]
-  createdAt        DateTime  @default(now())
-  updatedAt        DateTime  @updatedAt
+  id              String    @id @default(uuid())
+  startedAt       DateTime  @default(now())
+  endedAt         DateTime?
+  strategyVersion String
+  riskPercent     Float
+  mode            String // "mock" | "metaapi"
+  mockBalance     Float?
+  startEquity     Float
+  endEquity       Float?
+  realizedPnl     Float     @default(0)
+  tradesCount     Int       @default(0)
+  winsCount       Int       @default(0)
+  lossesCount     Int       @default(0)
+  status          String    @default("RUNNING") // RUNNING, ENDED, CRASHED
+  pairs           String[]
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
-  trades           Trade[]
+  trades Trade[]
 
   @@index([status, startedAt])
 }
@@ -245,146 +245,149 @@ model LiveSession {
 // metrics (max concurrent positions, capital exposure across pairs) are
 // recoverable without polluting the legacy single-pair backtest history.
 model LiveReplaySession {
-  id              String    @id @default(uuid())
-  startedAt       DateTime  @default(now())
-  endedAt         DateTime?
-  startDate       DateTime  // start of the replay window
-  endDate         DateTime  // end of the replay window
-  initialBalance  Float
-  riskPercent     Float
-  pairs           String[]  // ["XAUUSD","EURUSD","GBPUSD","USDJPY"]
-  strategyVersion String    @default("SMC-V2")
-  startEquity     Float
-  endEquity       Float?
-  realizedPnl     Float     @default(0)
-  tradesCount     Int       @default(0)
-  winsCount       Int       @default(0)
-  lossesCount     Int       @default(0)
-  maxOpenConcurrent Int     @default(0)
-  status          String    @default("RUNNING") // RUNNING, COMPLETED, FAILED
-  progress        Int?      // 0-100, written periodically by the replay worker
-  errorMessage    String?
-  metrics         Json?     // free-form aggregate (Sharpe, profit factor, etc.)
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  id                String    @id @default(uuid())
+  startedAt         DateTime  @default(now())
+  endedAt           DateTime?
+  startDate         DateTime // start of the replay window
+  endDate           DateTime // end of the replay window
+  initialBalance    Float
+  riskPercent       Float
+  pairs             String[] // ["XAUUSD","EURUSD","GBPUSD","USDJPY"]
+  strategyVersion   String    @default("SMC-V2")
+  startEquity       Float
+  endEquity         Float?
+  realizedPnl       Float     @default(0)
+  tradesCount       Int       @default(0)
+  winsCount         Int       @default(0)
+  lossesCount       Int       @default(0)
+  maxOpenConcurrent Int       @default(0)
+  status            String    @default("RUNNING") // RUNNING, COMPLETED, FAILED
+  progress          Int? // 0-100, written periodically by the replay worker
+  errorMessage      String?
+  metrics           Json? // free-form aggregate (Sharpe, profit factor, etc.)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 
-  trades          LiveReplayTrade[]
+  trades LiveReplayTrade[]
 
   @@index([status, startedAt])
 }
 
 model LiveReplayTrade {
-  id            String   @id @default(uuid())
-  sessionId     String
-  session       LiveReplaySession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-  symbol        String
-  side          String   // BUY or SELL
-  lotSize       Float
-  entryPrice    Float
-  closePrice    Float?
-  slPrice       Float
-  tpPrice       Float?   // nullable — trade management can remove TP and rely on trail
-  status        String   @default("OPEN") // OPEN, CLOSED
-  exitReason    String?  // SL, TP, FORCED_CLOSE
-  pnl           Float?
-  openedAt      DateTime // candle openTime when entry fired
-  closedAt      DateTime? // candle openTime when exit fired
-  mode          String   // REVERSAL or CONTINUATION (from SmcLiveSignal.mode)
-  setupTags     String[]
-  reason        String   // human-readable from SmcLiveSignal.reason
+  id              String            @id @default(uuid())
+  sessionId       String
+  session         LiveReplaySession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  symbol          String
+  side            String // BUY or SELL
+  lotSize         Float
+  entryPrice      Float
+  closePrice      Float?
+  slPrice         Float
+  tpPrice         Float? // nullable — trade management can remove TP and rely on trail
+  status          String            @default("OPEN") // OPEN, CLOSED
+  exitReason      String? // SL, TP, FORCED_CLOSE
+  pnl             Float?
+  openedAt        DateTime // candle openTime when entry fired
+  closedAt        DateTime? // candle openTime when exit fired
+  mode            String // REVERSAL or CONTINUATION (from SmcLiveSignal.mode)
+  setupTags       String[]
+  reason          String // human-readable from SmcLiveSignal.reason
   // SMC annotation context — same shape as Trade, used by the replay
   // theatre's "View on chart" expander to render the swept level + sweep
   // candle range + D1 bias on top of the OHLC chart.
-  sweptLevel       Float?
-  sweptHigh        Float?
-  sweptLow         Float?
-  sweepCandleTime  DateTime?
-  d1Bias           String?   // BULLISH | BEARISH | NEUTRAL
+  sweptLevel      Float?
+  sweptHigh       Float?
+  sweptLow        Float?
+  sweepCandleTime DateTime?
+  d1Bias          String? // BULLISH | BEARISH | NEUTRAL
   // Original SL placement — never mutated. `slPrice` above is the FINAL
   // (trailed) SL at trade close; this is where SL started so the chart
   // can show the structural placement (above entry for SELL, below for
   // BUY) instead of the trailed value.
-  originalSlPrice  Float?
-  strategyName     String?  @default("stop-hunt")
-  createdAt     DateTime @default(now())
+  originalSlPrice Float?
+  strategyName    String?           @default("stop-hunt")
+  createdAt       DateTime          @default(now())
 
   @@index([sessionId])
   @@index([symbol, openedAt])
 }
 
 model RiskState {
-  id                  String   @id @default(uuid())
-  date                DateTime @unique @db.Date
-  dailyPnl            Float    @default(0)
-  consecutiveLosses   Int      @default(0)
-  openPositionCount   Int      @default(0)
-  dailyLossLimitHit   Boolean  @default(false)
-  consecutiveLossLimitHit Boolean @default(false)
-  createdAt           DateTime @default(now())
-  updatedAt           DateTime @updatedAt
+  id                      String   @id @default(uuid())
+  date                    DateTime @unique @db.Date
+  dailyPnl                Float    @default(0)
+  consecutiveLosses       Int      @default(0)
+  openPositionCount       Int      @default(0)
+  dailyLossLimitHit       Boolean  @default(false)
+  consecutiveLossLimitHit Boolean  @default(false)
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
 }
 
 model RiskConfig {
-  id                    String @id @default(uuid())
-  maxDailyLossPercent   Float  @default(3.0)
-  maxOpenPositions      Int    @default(3)
-  maxConsecutiveLosses  Int    @default(3)
-  riskPerTradePercent   Float  @default(1.0)
-  maxSpreadPoints       Float  @default(50)
-  createdAt             DateTime @default(now())
-  updatedAt             DateTime @updatedAt
+  id                   String   @id @default(uuid())
+  maxDailyLossPercent  Float    @default(3.0)
+  maxOpenPositions     Int      @default(3)
+  maxConsecutiveLosses Int      @default(3)
+  riskPerTradePercent  Float    @default(1.0)
+  maxSpreadPoints      Float    @default(50)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
 }
 
 model JournalEntry {
-  id            String   @id @default(uuid())
-  tradeId       String   @unique
-  trade         Trade    @relation(fields: [tradeId], references: [id])
-  setupSummary  String
-  llmReasoning  String
-  entryContext  Json?
-  exitContext   Json?
-  outcome       String?
-  tags          String[]
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id             String   @id @default(uuid())
+  tradeId        String   @unique
+  trade          Trade    @relation(fields: [tradeId], references: [id], onDelete: Cascade)
+  setupSummary   String
+  llmReasoning   String
+  entryContext   Json?
+  exitContext    Json?
+  outcome        String?
+  tags           String[]
+  reflectionNote String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([tradeId])
 }
 
 model EconomicEvent {
   id        String   @id @default(uuid())
   title     String
   country   String
-  impact    String   // HIGH, MEDIUM, LOW
+  impact    String // HIGH, MEDIUM, LOW
   eventTime DateTime
   actual    String?
   forecast  String?
   previous  String?
   createdAt DateTime @default(now())
 
-  @@index([eventTime, impact])
   @@unique([title, eventTime])
+  @@index([eventTime, impact])
 }
 
 model BacktestRun {
-  id             String    @id @default(uuid())
-  symbol         String    @default("XAUUSD")
-  startDate      DateTime
-  endDate        DateTime
-  initialBalance Float
-  riskPercent    Float
-  withLlm        Boolean   @default(false)
-  strategyVersion String?  // V5.5b | V6 | SMC-V2 (legacy: V6-alt) — null for legacy runs
-  status         String    @default("PENDING") // PENDING, RUNNING, COMPLETED, FAILED
-  metrics        Json?
-  errorMessage   String?
-  createdAt      DateTime  @default(now())
-  completedAt    DateTime?
-  trades         BacktestTrade[]
+  id              String          @id @default(uuid())
+  symbol          String          @default("XAUUSD")
+  startDate       DateTime
+  endDate         DateTime
+  initialBalance  Float
+  riskPercent     Float
+  withLlm         Boolean         @default(false)
+  strategyVersion String? // V5.5b | V6 | SMC-V2 (legacy: V6-alt) — null for legacy runs
+  status          String          @default("PENDING") // PENDING, RUNNING, COMPLETED, FAILED
+  metrics         Json?
+  errorMessage    String?
+  createdAt       DateTime        @default(now())
+  completedAt     DateTime?
+  trades          BacktestTrade[]
 
   @@index([status, createdAt])
 }
 
 model BacktestTrade {
-  id            String   @id @default(uuid())
+  id            String      @id @default(uuid())
   backtestRunId String
   backtestRun   BacktestRun @relation(fields: [backtestRunId], references: [id], onDelete: Cascade)
   side          String
@@ -394,14 +397,24 @@ model BacktestTrade {
   tpPrice       Float
   lotSize       Float
   pnl           Float
-  commission    Float    @default(0)
+  commission    Float       @default(0)
   setupTags     String[]
   entryTime     DateTime
   exitTime      DateTime
-  exitReason    String   // SL, TP, FORCED_CLOSE
+  exitReason    String // SL, TP, FORCED_CLOSE
   h1Bias        String
   rsiAtEntry    Float
   atrAtEntry    Float
 
   @@index([backtestRunId])
+}
+
+model DayNote {
+  id        String   @id @default(uuid())
+  date      DateTime @unique @db.Date
+  note      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([date])
 }
