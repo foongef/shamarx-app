@@ -27,3 +27,6 @@ docker/data/
 
 # Next.js
 apps/web/.next/
+
+# Brainstorming/visual-companion mockups
+.superpowers/
