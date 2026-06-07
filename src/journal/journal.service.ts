@@ -239,4 +239,28 @@ export class JournalService {
       weeklyTotals: Array.from(weekMap.values()).sort((a, b) => a.weekStart.localeCompare(b.weekStart)),
     };
   }
+
+  async getAvailableMonths(): Promise<{ months: string[]; earliestTradeDate: string | null; latestTradeDate: string | null }> {
+    const bounds = await this.prisma.trade.aggregate({
+      _min: { createdAt: true },
+      _max: { createdAt: true },
+    });
+    const min = bounds._min?.createdAt as Date | null;
+    const max = bounds._max?.createdAt as Date | null;
+    if (!min || !max) return { months: [], earliestTradeDate: null, latestTradeDate: null };
+
+    const months: string[] = [];
+    const cursor = new Date(Date.UTC(min.getUTCFullYear(), min.getUTCMonth(), 1));
+    const end = new Date(Date.UTC(max.getUTCFullYear(), max.getUTCMonth(), 1));
+    while (cursor.getTime() <= end.getTime()) {
+      const ym = `${cursor.getUTCFullYear()}-${String(cursor.getUTCMonth() + 1).padStart(2, '0')}`;
+      months.push(ym);
+      cursor.setUTCMonth(cursor.getUTCMonth() + 1);
+    }
+    return {
+      months: months.reverse(),
+      earliestTradeDate: min.toISOString().slice(0, 10),
+      latestTradeDate: max.toISOString().slice(0, 10),
+    };
+  }
 }

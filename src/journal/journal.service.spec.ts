@@ -239,3 +239,34 @@ describe('JournalService.getMonthAggregate', () => {
     expect(result.days.every((d) => d.tradesCount === 0)).toBe(true);
   });
 });
+
+describe('JournalService.getAvailableMonths', () => {
+  let service: JournalService;
+  let prisma: any;
+
+  beforeEach(async () => {
+    prisma = { trade: { aggregate: jest.fn(), groupBy: jest.fn() } };
+    const moduleRef = await Test.createTestingModule({
+      providers: [
+        JournalService,
+        { provide: PrismaService, useValue: prisma },
+      ],
+    }).compile();
+    service = moduleRef.get(JournalService);
+  });
+
+  it('returns descending list of months with trades + bounds', async () => {
+    prisma.trade.aggregate.mockResolvedValue({ _min: { createdAt: new Date('2026-04-12T08:00Z') }, _max: { createdAt: new Date('2026-06-05T20:00Z') } });
+    const result = await service.getAvailableMonths();
+    expect(result.months).toEqual(['2026-06', '2026-05', '2026-04']);
+    expect(result.earliestTradeDate).toBe('2026-04-12');
+    expect(result.latestTradeDate).toBe('2026-06-05');
+  });
+
+  it('returns empty list when no trades exist', async () => {
+    prisma.trade.aggregate.mockResolvedValue({ _min: { createdAt: null }, _max: { createdAt: null } });
+    const result = await service.getAvailableMonths();
+    expect(result.months).toEqual([]);
+    expect(result.earliestTradeDate).toBeNull();
+  });
+});
