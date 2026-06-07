@@ -178,3 +178,64 @@ describe('JournalService.getDay', () => {
     expect(result.trades).toEqual([]);
   });
 });
+
+describe('JournalService.getMonthAggregate', () => {
+  let service: JournalService;
+  let prisma: any;
+
+  beforeEach(async () => {
+    prisma = {
+      trade: { findMany: jest.fn() },
+      dayNote: { findMany: jest.fn() },
+      journalEntry: { findMany: jest.fn() },
+    };
+    const moduleRef = await Test.createTestingModule({
+      providers: [
+        JournalService,
+        { provide: PrismaService, useValue: prisma },
+      ],
+    }).compile();
+    service = moduleRef.get(JournalService);
+  });
+
+  it('aggregates trades per day with month + weekly totals', async () => {
+    prisma.trade.findMany.mockResolvedValue([
+      { id: 'A', createdAt: new Date('2026-06-02T10:00Z'), pnl: -22, status: 'CLOSED', journalEntry: { tags: [], reflectionNote: null } },
+      { id: 'B', createdAt: new Date('2026-06-02T14:00Z'), pnl: 0, status: 'CLOSED', journalEntry: { tags: [], reflectionNote: null } },
+      { id: 'C', createdAt: new Date('2026-06-03T09:00Z'), pnl: 12, status: 'CLOSED', journalEntry: { tags: ['Setup looked good'], reflectionNote: null } },
+      { id: 'D', createdAt: new Date('2026-06-03T11:00Z'), pnl: 36, status: 'CLOSED', journalEntry: { tags: [], reflectionNote: 'good' } },
+      { id: 'E', createdAt: new Date('2026-06-08T08:00Z'), pnl: null, status: 'OPEN', journalEntry: null },
+    ]);
+    prisma.dayNote.findMany.mockResolvedValue([
+      { date: new Date('2026-06-03') },
+    ]);
+
+    const result = await service.getMonthAggregate('2026-06');
+
+    expect(result.month).toBe('2026-06');
+    expect(result.monthTotals.tradesCount).toBe(5);
+    expect(result.monthTotals.realizedPnl).toBe(26);
+    expect(result.monthTotals.winsCount).toBe(2);
+    expect(result.monthTotals.lossesCount).toBe(1);
+    expect(result.monthTotals.winRatePct).toBe(67);
+    const jun3 = result.days.find((d) => d.date === '2026-06-03')!;
+    expect(jun3.tradesCount).toBe(2);
+    expect(jun3.realizedPnl).toBe(48);
+    expect(jun3.hasDayNote).toBe(true);
+    expect(jun3.hasReflections).toBe(true);
+    const jun8 = result.days.find((d) => d.date === '2026-06-08')!;
+    expect(jun8.hasOpenTrades).toBe(true);
+    const wk1 = result.weeklyTotals.find((w) => w.weekStart === '2026-06-01');
+    expect(wk1?.tradesCount).toBe(4);
+    expect(wk1?.realizedPnl).toBe(26);
+  });
+
+  it('handles a month with zero trades', async () => {
+    prisma.trade.findMany.mockResolvedValue([]);
+    prisma.dayNote.findMany.mockResolvedValue([]);
+    const result = await service.getMonthAggregate('2025-01');
+    expect(result.monthTotals.tradesCount).toBe(0);
+    expect(result.days).toHaveLength(31);
+    expect(result.days.every((d) => d.tradesCount === 0)).toBe(true);
+  });
+});
