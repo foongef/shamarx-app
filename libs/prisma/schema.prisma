@@ -348,8 +348,6 @@ model JournalEntry {
   reflectionNote String?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
-
-  @@index([tradeId])
 }
 
 model EconomicEvent {
