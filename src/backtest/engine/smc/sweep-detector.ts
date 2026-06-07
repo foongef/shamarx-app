@@ -282,6 +282,7 @@ function detectAnchorSweep(
     direction: 'BUY' | 'SELL',
     level: number,
     wick: number,
+    anchorType: 'PDH' | 'PDL' | 'ASIAN_H' | 'ASIAN_L' | 'WEEKLY_H' | 'WEEKLY_L',
   ): PendingSetup => ({
     direction,
     sweepLevel: level,
@@ -294,6 +295,7 @@ function detectAnchorSweep(
     expiresAtH1Idx: h1Idx + cfg.setupExpiryH1Bars,
     mode,
     sweepTime: bar.openTime,
+    anchorType,
   });
 
   // Iterate all upper anchors (PDH, AsianHigh, WeeklyHigh) — first hit wins
@@ -302,14 +304,14 @@ function detectAnchorSweep(
     [anchors.asianHigh, 'ASIAN_H'],
     [anchors.weeklyHigh, 'WEEKLY_H'],
   ];
-  for (const [level] of highs) {
+  for (const [level, label] of highs) {
     if (level === null) continue;
     if (bar.high > level + buffer && bar.close < level) {
       const dir: 'SELL' = 'SELL';
       if (!passesDisplacement(dir)) continue;
-      if (mode === 'REVERSAL') return make(dir, level, bar.high);
+      if (mode === 'REVERSAL') return make(dir, level, bar.high, label as any);
       if (mode === 'CONTINUATION' && d1Bias === 'BEARISH') {
-        return make(dir, level, bar.high);
+        return make(dir, level, bar.high, label as any);
       }
     }
   }
@@ -320,14 +322,14 @@ function detectAnchorSweep(
     [anchors.asianLow, 'ASIAN_L'],
     [anchors.weeklyLow, 'WEEKLY_L'],
   ];
-  for (const [level] of lows) {
+  for (const [level, label] of lows) {
     if (level === null) continue;
     if (bar.low < level - buffer && bar.close > level) {
       const dir: 'BUY' = 'BUY';
       if (!passesDisplacement(dir)) continue;
-      if (mode === 'REVERSAL') return make(dir, level, bar.low);
+      if (mode === 'REVERSAL') return make(dir, level, bar.low, label as any);
       if (mode === 'CONTINUATION' && d1Bias === 'BULLISH') {
-        return make(dir, level, bar.low);
+        return make(dir, level, bar.low, label as any);
       }
     }
   }

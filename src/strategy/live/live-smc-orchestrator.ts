@@ -573,6 +573,7 @@ export class LiveSmcOrchestrator {
       const sweepCandle = h1Candles[setup.detectedAtH1Idx];
       const smcContext = sweepCandle
         ? {
+            anchorType: setup.anchorType,
             sweptLevel: setup.sweepLevel,
             sweptHigh: setup.sweepCandleHigh,
             sweptLow: setup.sweepCandleLow,

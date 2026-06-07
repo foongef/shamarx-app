@@ -46,6 +46,9 @@ export interface SmcLiveSignal {
    *  setup. All fields are populated by the orchestrator from the
    *  PendingSetup + D1 indicators in scope at signal time. */
   smcContext?: {
+    /** Which anchor was swept (PDH/PDL/etc) — only populated when
+     *  cfg.useAnchorSweeps. */
+    anchorType?: 'PDH' | 'PDL' | 'ASIAN_H' | 'ASIAN_L' | 'WEEKLY_H' | 'WEEKLY_L';
     sweptLevel: number;       // the H1 swing extreme that was swept
     sweptHigh: number;        // sweep candle high
     sweptLow: number;         // sweep candle low
