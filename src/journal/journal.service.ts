@@ -35,4 +35,38 @@ export class JournalService {
     });
     return { date: yyyymmdd, note };
   }
+
+  async updateTradeJournal(
+    tradeId: string,
+    body: { tags?: string[]; reflectionNote?: string | null },
+  ): Promise<{ tags: string[]; reflectionNote: string | null; entryContext: any; exitContext: any; setupSummary: string }> {
+    const trade = await this.prisma.trade.findUnique({ where: { id: tradeId } });
+    if (!trade) throw new NotFoundException(`Trade not found: ${tradeId}`);
+
+    const update: Record<string, any> = {};
+    if (body.tags !== undefined) update.tags = body.tags;
+    if (body.reflectionNote !== undefined) update.reflectionNote = body.reflectionNote;
+
+    const create: Record<string, any> = {
+      tradeId,
+      setupSummary: '',
+      llmReasoning: '',
+      tags: body.tags ?? [],
+      reflectionNote: body.reflectionNote ?? null,
+    };
+
+    const updated = await this.prisma.journalEntry.upsert({
+      where: { tradeId },
+      create: create as any,
+      update,
+    });
+
+    return {
+      tags: updated.tags,
+      reflectionNote: updated.reflectionNote,
+      entryContext: updated.entryContext as any,
+      exitContext: updated.exitContext as any,
+      setupSummary: updated.setupSummary,
+    };
+  }
 }

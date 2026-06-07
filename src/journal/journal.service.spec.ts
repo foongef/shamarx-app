@@ -54,3 +54,57 @@ describe('JournalService.upsertDayNote', () => {
     await expect(service.upsertDayNote(future, 'x')).rejects.toBeInstanceOf(UnprocessableEntityException);
   });
 });
+
+describe('JournalService.updateTradeJournal', () => {
+  let service: JournalService;
+  let prisma: any;
+
+  beforeEach(async () => {
+    prisma = {
+      trade: { findUnique: jest.fn() },
+      journalEntry: { upsert: jest.fn(), findUnique: jest.fn() },
+    };
+    const moduleRef = await Test.createTestingModule({
+      providers: [
+        JournalService,
+        { provide: PrismaService, useValue: prisma },
+      ],
+    }).compile();
+    service = moduleRef.get(JournalService);
+  });
+
+  it('replaces tags array (not merge)', async () => {
+    prisma.trade.findUnique.mockResolvedValue({ id: 't1', sessionId: 'live-1' });
+    prisma.journalEntry.upsert.mockResolvedValue({
+      tags: ['News spike'], reflectionNote: null, entryContext: null, exitContext: null, setupSummary: '',
+    });
+    const result = await service.updateTradeJournal('t1', { tags: ['News spike'] });
+    expect(prisma.journalEntry.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      update: { tags: ['News spike'] },
+    }));
+    expect(result.tags).toEqual(['News spike']);
+  });
+
+  it('updates reflectionNote independently from tags', async () => {
+    prisma.trade.findUnique.mockResolvedValue({ id: 't1', sessionId: 'live-1' });
+    prisma.journalEntry.upsert.mockResolvedValue({ tags: [], reflectionNote: 'note', entryContext: null, exitContext: null, setupSummary: '' });
+    await service.updateTradeJournal('t1', { reflectionNote: 'note' });
+    expect(prisma.journalEntry.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      update: { reflectionNote: 'note' },
+    }));
+  });
+
+  it('clears reflectionNote when given null', async () => {
+    prisma.trade.findUnique.mockResolvedValue({ id: 't1', sessionId: 'live-1' });
+    prisma.journalEntry.upsert.mockResolvedValue({ tags: [], reflectionNote: null, entryContext: null, exitContext: null, setupSummary: '' });
+    await service.updateTradeJournal('t1', { reflectionNote: null });
+    expect(prisma.journalEntry.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      update: { reflectionNote: null },
+    }));
+  });
+
+  it('throws 404 when trade does not exist', async () => {
+    prisma.trade.findUnique.mockResolvedValue(null);
+    await expect(service.updateTradeJournal('missing', { tags: [] })).rejects.toMatchObject({ status: 404 });
+  });
+});
