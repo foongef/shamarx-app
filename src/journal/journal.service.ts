@@ -263,4 +263,15 @@ export class JournalService {
       latestTradeDate: max.toISOString().slice(0, 10),
     };
   }
+
+  deriveOutcome(
+    pnl: number | null,
+    exitReason: string | null,
+  ): JournalOutcome {
+    if (exitReason === 'FORCED_CLOSE') return 'FORCED_CLOSE';
+    const p = pnl ?? 0;
+    if (p > 0.5) return 'WIN';
+    if (p < -0.5) return 'LOSS';
+    return 'BE';
+  }
 }

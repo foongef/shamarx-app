@@ -270,3 +270,28 @@ describe('JournalService.getAvailableMonths', () => {
     expect(result.earliestTradeDate).toBeNull();
   });
 });
+
+describe('JournalService.deriveOutcome', () => {
+  let service: JournalService;
+  beforeEach(async () => {
+    const moduleRef = await Test.createTestingModule({
+      providers: [JournalService, { provide: PrismaService, useValue: {} }],
+    }).compile();
+    service = moduleRef.get(JournalService);
+  });
+
+  it('returns WIN for positive pnl above $0.50 threshold', () => {
+    expect(service.deriveOutcome(2.5, 'TP')).toBe('WIN');
+  });
+  it('returns LOSS for negative pnl below -$0.50', () => {
+    expect(service.deriveOutcome(-5.0, 'SL')).toBe('LOSS');
+  });
+  it('returns BE within ±$0.50', () => {
+    expect(service.deriveOutcome(0.3, 'BREAKEVEN')).toBe('BE');
+    expect(service.deriveOutcome(-0.4, 'TP')).toBe('BE');
+  });
+  it('returns FORCED_CLOSE regardless of pnl when exitReason is FORCED_CLOSE', () => {
+    expect(service.deriveOutcome(10, 'FORCED_CLOSE')).toBe('FORCED_CLOSE');
+    expect(service.deriveOutcome(-10, 'FORCED_CLOSE')).toBe('FORCED_CLOSE');
+  });
+});
