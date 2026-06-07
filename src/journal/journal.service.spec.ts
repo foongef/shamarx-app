@@ -108,3 +108,73 @@ describe('JournalService.updateTradeJournal', () => {
     await expect(service.updateTradeJournal('missing', { tags: [] })).rejects.toMatchObject({ status: 404 });
   });
 });
+
+describe('JournalService.getDay', () => {
+  let service: JournalService;
+  let prisma: any;
+
+  beforeEach(async () => {
+    prisma = {
+      trade: { findMany: jest.fn() },
+      dayNote: { findUnique: jest.fn() },
+    };
+    const moduleRef = await Test.createTestingModule({
+      providers: [
+        JournalService,
+        { provide: PrismaService, useValue: prisma },
+      ],
+    }).compile();
+    service = moduleRef.get(JournalService);
+  });
+
+  it('returns trades + dayNote + dayTotals for a date', async () => {
+    prisma.trade.findMany.mockResolvedValue([
+      {
+        id: 'T1', symbol: 'EURUSD', side: 'SELL', lotSize: 0.01,
+        entryPrice: 1.16, closePrice: 1.158, slPrice: 1.165, originalSlPrice: 1.165,
+        tpPrice: 1.155, pnl: 2.0, exitReason: 'TP', status: 'CLOSED',
+        createdAt: new Date('2026-06-05T07:15Z'), closedAt: new Date('2026-06-05T09:48Z'),
+        sweptLevel: 1.161, sweepCandleTime: new Date('2026-06-05T06:00Z'), d1Bias: 'BEARISH',
+        candidate: { setupTags: ['REVERSAL'] },
+        journalEntry: {
+          tags: ['Setup looked good'], reflectionNote: null,
+          entryContext: { d1Adx: 24 }, exitContext: { holdMinutes: 153 },
+          setupSummary: 'REVERSAL SELL on EURUSD', outcome: 'WIN',
+        },
+      },
+      {
+        id: 'T2', symbol: 'GBPUSD', side: 'SELL', lotSize: 0.01,
+        entryPrice: 1.275, closePrice: null, slPrice: 1.280, originalSlPrice: 1.280,
+        tpPrice: 1.270, pnl: null, exitReason: null, status: 'OPEN',
+        createdAt: new Date('2026-06-05T08:00Z'), closedAt: null,
+        sweptLevel: null, sweepCandleTime: null, d1Bias: 'BEARISH',
+        candidate: { setupTags: [] },
+        journalEntry: null,
+      },
+    ]);
+    prisma.dayNote.findUnique.mockResolvedValue({ note: 'caught by news' });
+
+    const result = await service.getDay('2026-06-05');
+
+    expect(result.date).toBe('2026-06-05');
+    expect(result.dayNote).toBe('caught by news');
+    expect(result.trades).toHaveLength(2);
+    expect(result.trades[0].id).toBe('T1');
+    expect(result.trades[0].journal.outcome).toBe('WIN');
+    expect(result.trades[1].journal.outcome).toBeNull();
+    expect(result.dayTotals).toEqual({
+      tradesCount: 2,
+      realizedPnl: 2.0,
+      winsCount: 1,
+      lossesCount: 0,
+    });
+  });
+
+  it('returns null dayNote when no row exists', async () => {
+    prisma.trade.findMany.mockResolvedValue([]);
+    prisma.dayNote.findUnique.mockResolvedValue(null);
+    const result = await service.getDay('2026-06-05');
+    expect(result.dayNote).toBeNull();
+    expect(result.trades).toEqual([]);
+  });
+});
