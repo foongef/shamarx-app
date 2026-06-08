@@ -28,6 +28,7 @@ import { LiveSmcOrchestrator } from './live-smc-orchestrator';
 import { LiveControlService } from './live-control.service';
 import { BacktestCandle } from '../../backtest/engine/types';
 import { MailService, TradeOpenedPayload } from '../../mail/mail.service';
+import { JournalService } from '../../journal/journal.service';
 
 const M15_BUFFER = 100;
 const H1_BUFFER = 500;
@@ -248,6 +249,7 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
     private readonly liveControl: LiveControlService,
     private readonly orchestrator: LiveSmcOrchestrator,
     private readonly mail: MailService,
+    private readonly journal: JournalService,
   ) {
     this.liveMode = (this.config.get<string>('LIVE_MODE') || 'false').toLowerCase() === 'true';
     const pairsCsv = this.config.get<string>('STRATEGY_PAIRS') || 'XAUUSD,EURUSD,GBPUSD,USDJPY';
@@ -481,6 +483,27 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
     // PERSIST_DEBOUNCE_MS). The 4-pair burst at any M15 boundary will
     // collapse to one Redis write.
     this.markPersistDirty();
+    // Journal entry — auto-populate entryContext snapshot.
+    // Fire-and-forget; failure logged, never thrown.
+    const killzone = this.classifyKillzone(symbol, evalTs);
+    const h1Last: any = h1.length > 0 ? h1[h1.length - 1] : null;
+    const h1Atr = h1Last && typeof h1Last.atr14 === 'number' ? h1Last.atr14 : 0;
+    const tele: any = this.orchestrator.getTelemetry()[symbol] ?? {};
+    this.journal.createJournalEntriesForSignal(signal, evalTs, {
+      d1Adx: tele.d1Adx ?? 0,
+      d1Bias: tele.d1Bias ?? 'NEUTRAL',
+      killzone,
+      h1Atr,
+      pendingQueueSize: tele.pendingCount ?? 0,
+      spread: 0,
+      accountEquity: account.equity,
+      openPositionsCount: allOpenPositions.length,
+      openDirections: openPositions.map((p) => p.side as 'BUY' | 'SELL'),
+      anchorLevel: signal.smcContext?.sweptLevel ?? null,
+      anchorType: signal.smcContext?.anchorType ?? null,
+    }).catch((err) =>
+      this.logger.warn(`JournalEntry create failed: ${(err as Error).message}`),
+    );
     // Fire-and-forget email notification to all active users. MailService
     // already swallows errors internally — the catch here just prevents an
     // unhandled rejection from leaking out of evaluatePair.
@@ -488,6 +511,14 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
       this.logger.warn(`Trade-opened notify failed: ${(err as Error).message}`),
     );
     return signal;
+  }
+
+  private classifyKillzone(symbol: string, iso: string): 'LONDON' | 'NY' | 'ASIAN' | null {
+    const hour = new Date(iso).getUTCHours();
+    if (hour >= 6 && hour < 12) return 'LONDON';
+    if (hour >= 12 && hour < 18) return 'NY';
+    if (hour >= 22 || hour < 6) return 'ASIAN';
+    return null;
   }
 
   /**
