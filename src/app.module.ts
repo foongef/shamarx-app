@@ -15,6 +15,7 @@ import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
 import { BrokerAccountsModule } from './broker-accounts/broker-accounts.module';
 import { InviteModule } from './invites/invite.module';
+import { MeModule } from './me/me.module';
 
 @Module({
   imports: [
@@ -27,6 +28,7 @@ import { InviteModule } from './invites/invite.module';
     AuthModule,
     BrokerAccountsModule,
     InviteModule,
+    MeModule,
     MarketDataModule,
     StrategyModule,
     RiskModule,
