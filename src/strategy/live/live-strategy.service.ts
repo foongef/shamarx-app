@@ -524,12 +524,9 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
     }).catch((err) =>
       this.logger.warn(`JournalEntry create failed: ${(err as Error).message}`),
     );
-    // Fire-and-forget email notification to all active users. MailService
-    // already swallows errors internally — the catch here just prevents an
-    // unhandled rejection from leaking out of evaluatePair.
-    this.notifyTradeOpened(signal, evalTs).catch((err) =>
-      this.logger.warn(`Trade-opened notify failed: ${(err as Error).message}`),
-    );
+    // Trade-opened email is intentionally omitted from the legacy single-account
+    // path. This path is deprecated in favour of evaluatePairAllAccounts
+    // (fan-out), which scopes notifications to account.user.email directly.
     return signal;
   }
 
@@ -588,7 +585,7 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
    */
   private async evaluatePairForAccountInternal(
     symbol: string,
-    account: { id: string; name: string },
+    account: { id: string; name: string; user: { email: string } },
     preset: StrategyPreset,
   ): Promise<SmcLiveSignal | null> {
     const [m15, h1, d1, openPositions, allOpenPositions, accountInfo] = await Promise.all([
@@ -627,11 +624,10 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
       return null;
     }
     orchestrator.recordEntry(symbol, signal);
-    // Fire-and-forget email notification — matches legacy evaluatePair()
-    // behavior. Without this, the fan-out path silently skipped trade-opened
-    // emails. MailService handles its own errors; catch here just prevents
+    // Fire-and-forget email notification scoped to this account's owner.
+    // MailService handles its own errors; catch here just prevents
     // an unhandled rejection from leaking out of evaluatePairForAccount.
-    this.notifyTradeOpened(signal, evalTs).catch((err) =>
+    this.notifyTradeOpened(signal, evalTs, account.user.email).catch((err) =>
       this.logger.warn(`Trade-opened notify failed: ${(err as Error).message}`),
     );
     return signal;
@@ -860,17 +856,15 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Send the trade-opened email to every active user. Single-user system
-   * today; ready for multi-tenant later (just filter to the session's
-   * owner once LiveSession.userId exists).
+   * Send the trade-opened email to the trade owner. Email is scoped to the
+   * account owner derived at the call site (BrokerAccountWithUser.user.email),
+   * so no DB lookup is needed here.
    */
-  private async notifyTradeOpened(signal: SmcLiveSignal, openedAtIso: string): Promise<void> {
-    const users = await this.prisma.user.findMany({
-      where: { isActive: true },
-      select: { email: true },
-    });
-    if (users.length === 0) return;
-
+  private async notifyTradeOpened(
+    signal: SmcLiveSignal,
+    openedAtIso: string,
+    ownerEmail: string,
+  ): Promise<void> {
     const dashboardUrl = `${process.env.WEB_URL || 'https://shamarx.com'}/lives`;
     const payload: TradeOpenedPayload = {
       symbol: signal.symbol,
@@ -886,8 +880,7 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
       dashboardUrl,
     };
 
-    // Send in parallel; MailService handles per-recipient failures internally.
-    await Promise.all(users.map((u) => this.mail.sendTradeOpened(u.email, payload)));
+    await this.mail.sendTradeOpened(ownerEmail, payload);
   }
 
   /**
