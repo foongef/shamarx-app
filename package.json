@@ -45,6 +45,7 @@
     "@nestjs/schedule": "^4.1.2",
     "@nestjs/swagger": "^11.2.6",
     "@prisma/client": "^6.2.1",
+    "argon2": "^0.44.0",
     "axios": "^1.7.9",
     "bcrypt": "^6.0.0",
     "class-transformer": "^0.5.1",
@@ -93,6 +94,7 @@
       "@nestjs/core",
       "@prisma/client",
       "@prisma/engines",
+      "argon2",
       "prisma"
     ]
   },

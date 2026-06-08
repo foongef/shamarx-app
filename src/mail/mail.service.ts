@@ -68,6 +68,10 @@ export class MailService {
     }
   }
 
+  async sendInvite(email: string, url: string): Promise<void> {
+    this.logger.log(`(stub) sendInvite to=${email} url=${url}`);
+  }
+
   private formatUtc(iso: string): string {
     const d = new Date(iso);
     const yyyy = d.getUTCFullYear();
