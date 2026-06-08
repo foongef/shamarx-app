@@ -224,8 +224,100 @@ export class PositionMonitorService implements OnModuleInit {
       this.orchestrator.recordExit(symbol, normalized, closedAt.toISOString(), pnl ?? undefined);
 
       this.logger.log(`[${symbol}] CLOSED ticket=${ticket} reason=${exitReason} pnl=$${pnl} closePrice=${closePrice}`);
+
+      // Cross-leg signaling: when a TP1 leg closes at TP, the sister Runner
+      // earned the right to be a "free trade" — move its broker SL to BE so
+      // worst-case is zero on the Runner. Without this, a Runner that peaks
+      // below the 1.5R RUNNER-trail BE threshold (trail-config.ts:25) reverses
+      // back to the original SL — turning a partial-profit ladder into a net
+      // loss. The position-simulator already gives each leg independent
+      // trail management (position-simulator.ts:18), but it never modeled
+      // a TP1→Runner signal.
+      if (normalized === 'TP') {
+        await this.maybeTriggerSisterRunnerBe(tradeId).catch((err) =>
+          this.logger.warn(
+            `[${symbol}] sister Runner BE trigger failed for ${tradeId}: ${(err as Error).message}`,
+          ),
+        );
+      }
     } catch (err) {
       this.logger.error(`finalize tradeId=${tradeId} failed: ${(err as Error).message}`);
     }
+  }
+
+  /**
+   * If a TP1 leg just closed at TP, find its sister Runner (same symbol+side+
+   * entryPrice, opened within ±5s) and activate break-even on it: move broker
+   * SL to entry ± 10% of original risk (matches position-simulator.ts:52,77
+   * buffer), update DB managementState.breakevenActivated=true.
+   *
+   * Idempotent — skipped if sister already has breakevenActivated=true (e.g.
+   * the M15 position manager already moved it past BE via its own trail).
+   * Fire-and-forget at call site; failures logged not thrown.
+   */
+  private async maybeTriggerSisterRunnerBe(closedTradeId: string): Promise<void> {
+    const closed = await this.prisma.trade.findUnique({ where: { id: closedTradeId } });
+    if (!closed) return;
+    const closedMgmt = (closed.managementState ?? {}) as { trailKey?: 'TP1' | 'RUNNER' };
+    if (closedMgmt.trailKey !== 'TP1') return;
+
+    const lower = new Date(closed.createdAt.getTime() - 5_000);
+    const upper = new Date(closed.createdAt.getTime() + 5_000);
+    const sister = await this.prisma.trade.findFirst({
+      where: {
+        symbol: closed.symbol,
+        side: closed.side,
+        entryPrice: closed.entryPrice,
+        status: 'OPEN',
+        mt5Ticket: { not: null },
+        id: { not: closed.id },
+        createdAt: { gte: lower, lte: upper },
+      },
+    });
+    if (!sister) return;
+
+    const sisterMgmt = (sister.managementState ?? {}) as {
+      trailKey?: 'TP1' | 'RUNNER';
+      originalSlPrice?: number;
+      breakevenActivated?: boolean;
+      peakFavorablePrice?: number;
+    };
+    if (sisterMgmt.trailKey !== 'RUNNER') return;
+    if (sisterMgmt.breakevenActivated === true) return;
+
+    const originalSl = sisterMgmt.originalSlPrice ?? sister.slPrice;
+    const risk = Math.abs(sister.entryPrice - originalSl);
+    const buffer = risk * 0.1;
+    const newSl = sister.side === 'BUY'
+      ? sister.entryPrice + buffer
+      : sister.entryPrice - buffer;
+
+    try {
+      await firstValueFrom(
+        this.httpService.post(
+          `${SERVICE_URLS.EXECUTION}/positions/${sister.mt5Ticket}/modify`,
+          { slPrice: newSl, tpPrice: sister.tpPrice ?? 0 },
+        ),
+      );
+    } catch (err) {
+      this.logger.warn(
+        `[${sister.symbol}] sister BE broker modify failed for ticket=${sister.mt5Ticket}: ${(err as Error).message}`,
+      );
+      return;
+    }
+
+    await this.prisma.trade.update({
+      where: { id: sister.id },
+      data: {
+        slPrice: newSl,
+        managementState: {
+          ...sisterMgmt,
+          breakevenActivated: true,
+        } as any,
+      },
+    });
+    this.logger.log(
+      `[${sister.symbol}] sister Runner BE activated — ticket=${sister.mt5Ticket} SL ${sister.slPrice.toFixed(5)}→${newSl.toFixed(5)} (TP1 ticket=${closed.mt5Ticket} closed at ${closed.exitReason})`,
+    );
   }
 }
