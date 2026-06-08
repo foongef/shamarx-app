@@ -85,7 +85,7 @@ export class JournalService {
 
     const [trades, dayNote] = await Promise.all([
       this.prisma.trade.findMany({
-        where: { createdAt: { gte: dayStart, lt: dayEnd } },
+        where: { createdAt: { gte: dayStart, lt: dayEnd }, account: { userId } },
         include: { journalEntry: true, candidate: true },
         orderBy: { createdAt: 'asc' },
       }),
@@ -140,7 +140,7 @@ export class JournalService {
     };
   }
 
-  async getMonthAggregate(yyyymm: string): Promise<{
+  async getMonthAggregate(userId: string, yyyymm: string): Promise<{
     month: string;
     days: Array<{ date: string; tradesCount: number; realizedPnl: number; winsCount: number; lossesCount: number; hasDayNote: boolean; hasReflections: boolean; hasOpenTrades: boolean }>;
     monthTotals: { tradesCount: number; realizedPnl: number; winsCount: number; lossesCount: number; winRatePct: number };
@@ -155,15 +155,13 @@ export class JournalService {
     const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
 
     const [trades, dayNotes] = await Promise.all([
-      // TODO(Task 15): scope by userId — currently returns cross-tenant data
       this.prisma.trade.findMany({
-        where: { createdAt: { gte: monthStart, lt: monthEnd } },
+        where: { createdAt: { gte: monthStart, lt: monthEnd }, account: { userId } },
         include: { journalEntry: true },
         orderBy: { createdAt: 'asc' },
       }),
-      // TODO(Task 15): scope by userId — currently returns cross-tenant data
       this.prisma.dayNote.findMany({
-        where: { date: { gte: monthStart, lt: monthEnd } },
+        where: { date: { gte: monthStart, lt: monthEnd }, userId },
         select: { date: true },
       }),
     ]);
@@ -248,9 +246,9 @@ export class JournalService {
     };
   }
 
-  async getAvailableMonths(): Promise<{ months: string[]; earliestTradeDate: string | null; latestTradeDate: string | null }> {
-    // TODO(Task 15): scope by userId — currently returns cross-tenant data
+  async getAvailableMonths(userId: string): Promise<{ months: string[]; earliestTradeDate: string | null; latestTradeDate: string | null }> {
     const bounds = await this.prisma.trade.aggregate({
+      where: { account: { userId } },
       _min: { createdAt: true },
       _max: { createdAt: true },
     });

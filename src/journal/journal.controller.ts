@@ -21,14 +21,14 @@ export class JournalController {
 
   @Get('available-months')
   @ApiOperation({ summary: 'Months with any live trade — for month picker' })
-  availableMonths() {
-    return this.journal.getAvailableMonths();
+  availableMonths(@Req() req: Request) {
+    return this.journal.getAvailableMonths((req.user as AuthenticatedUser).id);
   }
 
   @Get('month/:yyyymm')
   @ApiOperation({ summary: 'Per-day aggregate stats for a month' })
-  month(@Param('yyyymm') yyyymm: string) {
-    return this.journal.getMonthAggregate(yyyymm);
+  month(@Req() req: Request, @Param('yyyymm') yyyymm: string) {
+    return this.journal.getMonthAggregate((req.user as AuthenticatedUser).id, yyyymm);
   }
 
   @Get('day/:yyyymmdd')

@@ -30,9 +30,16 @@ describe('JournalController routing', () => {
     expect(controller.health()).toEqual({ status: 'ok', service: 'journal' });
   });
 
+  it('routes GET /available-months to service with userId', async () => {
+    const mockReq = { user: { id: 'user-1' } } as unknown as import('express').Request;
+    await controller.availableMonths(mockReq);
+    expect(service.getAvailableMonths).toHaveBeenCalledWith('user-1');
+  });
+
   it('routes GET /month/:yyyymm to service', async () => {
-    await controller.month('2026-06');
-    expect(service.getMonthAggregate).toHaveBeenCalledWith('2026-06');
+    const mockReq = { user: { id: 'user-1' } } as unknown as import('express').Request;
+    await controller.month(mockReq, '2026-06');
+    expect(service.getMonthAggregate).toHaveBeenCalledWith('user-1', '2026-06');
   });
 
   it('routes GET /day/:yyyymmdd to service', async () => {

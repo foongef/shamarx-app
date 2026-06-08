@@ -228,7 +228,7 @@ describe('JournalService.getMonthAggregate', () => {
       { date: new Date('2026-06-03') },
     ]);
 
-    const result = await service.getMonthAggregate('2026-06');
+    const result = await service.getMonthAggregate('user-1', '2026-06');
 
     expect(result.month).toBe('2026-06');
     expect(result.monthTotals.tradesCount).toBe(5);
@@ -251,7 +251,7 @@ describe('JournalService.getMonthAggregate', () => {
   it('handles a month with zero trades', async () => {
     prisma.trade.findMany.mockResolvedValue([]);
     prisma.dayNote.findMany.mockResolvedValue([]);
-    const result = await service.getMonthAggregate('2025-01');
+    const result = await service.getMonthAggregate('user-1', '2025-01');
     expect(result.monthTotals.tradesCount).toBe(0);
     expect(result.days).toHaveLength(31);
     expect(result.days.every((d) => d.tradesCount === 0)).toBe(true);
@@ -266,7 +266,7 @@ describe('JournalService.getMonthAggregate', () => {
     ]);
     prisma.dayNote.findMany.mockResolvedValue([]);
 
-    const result = await service.getMonthAggregate('2026-06');
+    const result = await service.getMonthAggregate('user-1', '2026-06');
 
     expect(result.monthTotals.tradesCount).toBe(4);
     expect(result.monthTotals.realizedPnl).toBe(3);  // 5 + 8 + -3 + -7
@@ -293,7 +293,7 @@ describe('JournalService.getAvailableMonths', () => {
 
   it('returns descending list of months with trades + bounds', async () => {
     prisma.trade.aggregate.mockResolvedValue({ _min: { createdAt: new Date('2026-04-12T08:00Z') }, _max: { createdAt: new Date('2026-06-05T20:00Z') } });
-    const result = await service.getAvailableMonths();
+    const result = await service.getAvailableMonths('user-1');
     expect(result.months).toEqual(['2026-06', '2026-05', '2026-04']);
     expect(result.earliestTradeDate).toBe('2026-04-12');
     expect(result.latestTradeDate).toBe('2026-06-05');
@@ -301,7 +301,7 @@ describe('JournalService.getAvailableMonths', () => {
 
   it('returns empty list when no trades exist', async () => {
     prisma.trade.aggregate.mockResolvedValue({ _min: { createdAt: null }, _max: { createdAt: null } });
-    const result = await service.getAvailableMonths();
+    const result = await service.getAvailableMonths('user-1');
     expect(result.months).toEqual([]);
     expect(result.earliestTradeDate).toBeNull();
   });
