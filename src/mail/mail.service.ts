@@ -69,7 +69,18 @@ export class MailService {
   }
 
   async sendInvite(email: string, url: string): Promise<void> {
-    this.logger.log(`(stub) sendInvite to=${email} url=${url}`);
+    try {
+      await this.mailer.sendMail({
+        to: email,
+        subject: "You're invited to Shamarx",
+        template: 'invite',
+        context: { url },
+      });
+      this.logger.log(`Invite email sent to ${email}`);
+    } catch (err) {
+      this.logger.error(`Failed to send invite to ${email}`, err);
+      throw err;
+    }
   }
 
   private formatUtc(iso: string): string {
