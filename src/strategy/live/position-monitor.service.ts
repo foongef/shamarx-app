@@ -16,6 +16,7 @@ import { RedisService, REDIS_CHANNELS } from '@app/redis';
 import { Timeframe, SERVICE_URLS } from '@app/common';
 import { LiveControlService } from './live-control.service';
 import { LiveSmcOrchestrator } from './live-smc-orchestrator';
+import { JournalService } from '../../journal/journal.service';
 
 interface BrokerPosition {
   ticket: number;
@@ -44,6 +45,7 @@ export class PositionMonitorService implements OnModuleInit {
     @Inject(forwardRef(() => LiveControlService))
     private readonly liveControl: LiveControlService,
     private readonly orchestrator: LiveSmcOrchestrator,
+    private readonly journal: JournalService,
   ) {
     this.liveMode = (this.config.get<string>('LIVE_MODE') || 'false').toLowerCase() === 'true';
     const pairsCsv = this.config.get<string>('STRATEGY_PAIRS') || 'XAUUSD,EURUSD,GBPUSD,USDJPY';
@@ -179,6 +181,10 @@ export class PositionMonitorService implements OnModuleInit {
           closedAt,
         },
       });
+
+      this.journal.enrichJournalOnExit(tradeId).catch((err) =>
+        this.logger.warn(`enrichJournalOnExit failed for ${tradeId}: ${(err as Error).message}`),
+      );
 
       await this.redis.publish(REDIS_CHANNELS.TRADE_CLOSED, {
         tradeId,
