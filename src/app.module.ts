@@ -16,6 +16,7 @@ import { UsersModule } from './users/users.module';
 import { BrokerAccountsModule } from './broker-accounts/broker-accounts.module';
 import { InviteModule } from './invites/invite.module';
 import { MeModule } from './me/me.module';
+import { AdminModule } from './admin/admin.module';
 
 @Module({
   imports: [
@@ -36,6 +37,7 @@ import { MeModule } from './me/me.module';
     JournalModule,
     BacktestModule,
     LiveReplayModule,
+    AdminModule,
   ],
 })
 export class AppModule {}
