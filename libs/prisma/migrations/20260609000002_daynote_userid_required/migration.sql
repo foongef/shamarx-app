@@ -1,5 +1,6 @@
 -- Drop existing unique index on date alone
 DROP INDEX IF EXISTS "DayNote_date_key";
+-- Belt-and-suspenders: handle DB copies where the unique was created as a named constraint
 ALTER TABLE "DayNote" DROP CONSTRAINT IF EXISTS "DayNote_date_key";
 
 -- Tighten userId to NOT NULL

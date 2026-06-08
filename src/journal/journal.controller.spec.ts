@@ -36,7 +36,8 @@ describe('JournalController routing', () => {
   });
 
   it('routes GET /day/:yyyymmdd to service', async () => {
-    await controller.day({ user: { id: 'user-1' } }, '2026-06-05');
+    const mockReq = { user: { id: 'user-1' } } as unknown as import('express').Request;
+    await controller.day(mockReq, '2026-06-05');
     expect(service.getDay).toHaveBeenCalledWith('user-1', '2026-06-05');
   });
 
@@ -46,7 +47,8 @@ describe('JournalController routing', () => {
   });
 
   it('routes PATCH /day/:yyyymmdd with note', async () => {
-    await controller.updateDay({ user: { id: 'user-1' } }, '2026-06-05', { note: 'hi' } as any);
+    const mockReq = { user: { id: 'user-1' } } as unknown as import('express').Request;
+    await controller.updateDay(mockReq, '2026-06-05', { note: 'hi' } as any);
     expect(service.upsertDayNote).toHaveBeenCalledWith('user-1', '2026-06-05', 'hi');
   });
 });

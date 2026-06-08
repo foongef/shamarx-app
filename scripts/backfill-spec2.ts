@@ -13,9 +13,12 @@ async function main() {
     console.log(`Promoted ${me.email} to SUPERADMIN`);
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const updated = await (prisma.dayNote as any).updateMany({
-    where: { userId: null },
+  // Script runs in the transient state between migration 20260609000001
+  // (userId nullable) and 20260609000002 (userId NOT NULL). Prisma's final-
+  // state types treat userId as non-nullable, so the null filter needs a
+  // narrow cast — at runtime, the column is still nullable.
+  const updated = await prisma.dayNote.updateMany({
+    where: { userId: null as unknown as string },
     data: { userId: me.id },
   });
   console.log(`Backfilled ${updated.count} DayNote rows with userId=${me.id}`);

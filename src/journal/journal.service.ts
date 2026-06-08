@@ -155,11 +155,13 @@ export class JournalService {
     const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
 
     const [trades, dayNotes] = await Promise.all([
+      // TODO(Task 15): scope by userId — currently returns cross-tenant data
       this.prisma.trade.findMany({
         where: { createdAt: { gte: monthStart, lt: monthEnd } },
         include: { journalEntry: true },
         orderBy: { createdAt: 'asc' },
       }),
+      // TODO(Task 15): scope by userId — currently returns cross-tenant data
       this.prisma.dayNote.findMany({
         where: { date: { gte: monthStart, lt: monthEnd } },
         select: { date: true },
@@ -247,6 +249,7 @@ export class JournalService {
   }
 
   async getAvailableMonths(): Promise<{ months: string[]; earliestTradeDate: string | null; latestTradeDate: string | null }> {
+    // TODO(Task 15): scope by userId — currently returns cross-tenant data
     const bounds = await this.prisma.trade.aggregate({
       _min: { createdAt: true },
       _max: { createdAt: true },
