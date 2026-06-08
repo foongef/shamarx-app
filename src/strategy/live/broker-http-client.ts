@@ -63,6 +63,14 @@ export class BrokerHttpClient {
     );
   }
 
+  async closePosition(accountId: string, ticket: number): Promise<any> {
+    const opts = await this.credsOpts(accountId);
+    const res = await firstValueFrom(
+      this.http.post(`${SERVICE_URLS.EXECUTION}/accounts/${accountId}/positions/${ticket}/close`, {}, opts),
+    );
+    return res.data;
+  }
+
   async fetchAccount(accountId: string): Promise<AccountInfo> {
     const opts = await this.credsOpts(accountId);
     const res = await firstValueFrom(

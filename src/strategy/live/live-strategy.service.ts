@@ -637,10 +637,10 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
    *   - postOrderWithRetry → placeOrderForAccountWithRetry(accountId, body)
    *   - Trade.create data gets `accountId` field
    *
-   * Compensating closes (slippage, orphan, partial-fill rollback) still use
-   * the legacy `bestEffortClose` because BrokerHttpClient has no close endpoint
-   * yet — those close calls go to the legacy single-account execution path.
-   * Acceptable for v1 since multi-account close compensation lands in a later task.
+   * Compensating closes (slippage, orphan, partial-fill rollback) route through
+   * `bestEffortCloseForAccount` so each close hits the correct broker connection
+   * via BrokerHttpClient (rather than the env-bound singleton used by the legacy
+   * `bestEffortClose`).
    */
   private async placeOrderForAccount(
     signal: SmcLiveSignal,
@@ -686,7 +686,7 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
         this.logger.warn(
           `[${signal.symbol}] excessive slippage ${(slippageFrac * 100).toFixed(1)}% — closing ticket=${mt5Ticket} + writing audit row`,
         );
-        await this.bestEffortClose(mt5Ticket, 'emergency close (slippage)');
+        await this.bestEffortCloseForAccount(accountId, mt5Ticket, 'emergency close (slippage)');
         await this.writeAuditTradeRow(signal, leg, clientOrderId, mt5Ticket, fillPrice, 'EXCESSIVE_SLIPPAGE');
         continue;
       }
@@ -768,7 +768,7 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
         this.logger.error(
           `[${signal.symbol}] DB persist failed for ticket=${mt5Ticket}, closing orphan: ${(dbErr as Error).message}`,
         );
-        await this.bestEffortClose(mt5Ticket, 'orphan close (DB persist failed)');
+        await this.bestEffortCloseForAccount(accountId, mt5Ticket, 'orphan close (DB persist failed)');
         continue;
       }
 
@@ -782,7 +782,7 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
         `[${signal.symbol}] partial fill (${placed.length}/${signal.legs.length}) — rolling back successful legs`,
       );
       for (const p of placed) {
-        await this.bestEffortClose(p.mt5Ticket, 'partial-fill rollback');
+        await this.bestEffortCloseForAccount(accountId, p.mt5Ticket, 'partial-fill rollback');
         try {
           await this.prisma.trade.update({
             where: { id: p.tradeId },
@@ -1240,6 +1240,28 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
       );
     } catch (err) {
       this.logger.error(`${reason} failed for ticket=${mt5Ticket}: ${(err as Error).message}`);
+    }
+  }
+
+  /**
+   * Account-aware variant of bestEffortClose. Routes the close through
+   * BrokerHttpClient so it hits the correct broker connection.
+   * Used by placeOrderForAccount for partial-fill rollback / slippage closes.
+   * Mirrors bestEffortClose's swallow-errors semantics.
+   */
+  private async bestEffortCloseForAccount(
+    accountId: string,
+    mt5Ticket: number | undefined,
+    reason: string,
+  ): Promise<void> {
+    if (!mt5Ticket) return;
+    try {
+      await this.brokerHttp.closePosition(accountId, mt5Ticket);
+      this.logger.log(`[${accountId}] best-effort close ticket=${mt5Ticket} (${reason})`);
+    } catch (err) {
+      this.logger.warn(
+        `[${accountId}] best-effort close failed for ticket=${mt5Ticket} (${reason}): ${(err as Error).message}`,
+      );
     }
   }
 

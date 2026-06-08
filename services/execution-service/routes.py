@@ -260,6 +260,15 @@ async def get_account_info_for_account(
     return await client.get_account_info()
 
 
+@account_scoped_router.post("/{account_id}/positions/{ticket}/close", response_model=ClosePositionResponse)
+async def close_account_position(
+    account_id: str,
+    ticket: int,
+    client: Broker = Depends(resolve_client),
+):
+    return await client.close_position(ticket)
+
+
 @account_scoped_router.post("/{account_id}/disconnect")
 async def disconnect_account(account_id: str):
     await registry.remove(account_id)

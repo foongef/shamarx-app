@@ -71,4 +71,13 @@ describe('BrokerHttpClient', () => {
     expect(body).toEqual({});
     expect(opts?.headers?.['X-Broker-Creds']).toBeUndefined();
   });
+
+  it('closePosition POSTs to /accounts/:id/positions/:ticket/close with creds header', async () => {
+    http.post.mockReturnValue(of({ data: { ok: true } }));
+    await client.closePosition('a1', 12345);
+    const [url, body, opts] = http.post.mock.calls[0];
+    expect(url).toMatch(/\/accounts\/a1\/positions\/12345\/close$/);
+    expect(body).toEqual({});
+    expect(opts.headers['X-Broker-Creds']).toBeTruthy();
+  });
 });
