@@ -7,6 +7,8 @@ import { RedisService } from '@app/redis';
 import { SERVICE_URLS } from '@app/common';
 import { Public } from '../auth/guards/jwt-auth.guard';
 import { Roles } from '../auth/guards/roles.guard';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { AuthenticatedUser } from '../auth/auth.service';
 import { LiveStrategyService } from './live/live-strategy.service';
 import { PositionMonitorService } from './live/position-monitor.service';
 import { LiveControlService } from './live/live-control.service';
@@ -110,9 +112,12 @@ export class StrategyController {
 
   @Get('live/recent-trades')
   @ApiOperation({ summary: 'Last N closed live trades' })
-  async recentTrades(@Query('limit') limit = '20') {
+  async recentTrades(
+    @CurrentUser() me: AuthenticatedUser,
+    @Query('limit') limit = '20',
+  ) {
     const trades = await this.prisma.trade.findMany({
-      where: { clientOrderId: { not: null } },
+      where: { clientOrderId: { not: null }, account: { userId: me.id } },
       orderBy: { createdAt: 'desc' },
       take: parseInt(limit, 10),
     });
@@ -122,6 +127,7 @@ export class StrategyController {
   @Get('live/trades')
   @ApiOperation({ summary: 'Filterable, paginated live trade history' })
   async listTrades(
+    @CurrentUser() me: AuthenticatedUser,
     @Query('status') status?: 'OPEN' | 'CLOSED' | 'PENDING' | 'ALL',
     @Query('symbol') symbol?: string,
     @Query('from') from?: string,
@@ -130,6 +136,7 @@ export class StrategyController {
     @Query('offset') offset?: string,
   ) {
     return this.analytics.listTrades({
+      userId: me.id,
       status,
       symbol,
       from: from ? new Date(from) : undefined,
@@ -141,13 +148,17 @@ export class StrategyController {
 
   @Get('live/stats')
   @ApiOperation({ summary: 'Aggregate live trading stats over the last N days' })
-  async stats(@Query('days') days?: string) {
-    return this.analytics.stats({ days: days ? parseInt(days, 10) : 30 });
+  async stats(
+    @CurrentUser() me: AuthenticatedUser,
+    @Query('days') days?: string,
+  ) {
+    return this.analytics.stats({ userId: me.id, days: days ? parseInt(days, 10) : 30 });
   }
 
   @Get('live/equity-history')
   @ApiOperation({ summary: 'Equity curve points (1-min granularity)' })
   async equityHistory(
+    @CurrentUser() me: AuthenticatedUser,
     @Query('hours') hours?: string,
     @Query('sessionId') sessionId?: string,
     @Query('mode') mode?: 'mock' | 'metaapi',
@@ -157,6 +168,7 @@ export class StrategyController {
     const effectiveMode = mode ?? (sessionId ? undefined : (this.control.getConfig()?.mode ?? undefined));
     return {
       points: await this.analytics.equityHistory({
+        userId: me.id,
         hours: hours ? parseInt(hours, 10) : undefined,
         sessionId,
         mode: effectiveMode,
@@ -235,8 +247,12 @@ export class StrategyController {
 
   @Get('live/sessions')
   @ApiOperation({ summary: 'List live engine sessions (each Start→Stop)' })
-  async sessions(@Query('limit') limit?: string) {
+  async sessions(
+    @CurrentUser() me: AuthenticatedUser,
+    @Query('limit') limit?: string,
+  ) {
     const sessions = await this.analytics.listSessions({
+      userId: me.id,
       limit: limit ? parseInt(limit, 10) : 50,
     });
     return { sessions };
@@ -244,22 +260,31 @@ export class StrategyController {
 
   @Get('live/sessions/:id')
   @ApiOperation({ summary: 'Single session detail (with live-recomputed counters)' })
-  async getSession(@Param('id') id: string) {
-    const session = await this.analytics.getSession(id);
+  async getSession(
+    @CurrentUser() me: AuthenticatedUser,
+    @Param('id') id: string,
+  ) {
+    const session = await this.analytics.getSession(me.id, id);
     if (!session) return { session: null };
     return { session };
   }
 
   @Get('live/sessions/:id/trades')
   @ApiOperation({ summary: 'Trades for one session' })
-  async sessionTrades(@Param('id') id: string) {
-    return { trades: await this.analytics.sessionTrades(id) };
+  async sessionTrades(
+    @CurrentUser() me: AuthenticatedUser,
+    @Param('id') id: string,
+  ) {
+    return { trades: await this.analytics.sessionTrades(me.id, id) };
   }
 
   @Get('live/sessions/:id/stats')
   @ApiOperation({ summary: 'Aggregate stats for one session' })
-  async sessionStats(@Param('id') id: string) {
-    return this.analytics.sessionStats(id);
+  async sessionStats(
+    @CurrentUser() me: AuthenticatedUser,
+    @Param('id') id: string,
+  ) {
+    return this.analytics.sessionStats(me.id, id);
   }
 
   @Post('live/evaluate/:symbol')

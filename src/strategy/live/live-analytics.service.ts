@@ -43,6 +43,7 @@ export class LiveAnalyticsService {
 
   /** Fetch live trades with filters (for the history table). */
   async listTrades(opts: {
+    userId: string;
     status?: 'OPEN' | 'CLOSED' | 'PENDING' | 'ALL';
     symbol?: string;
     from?: Date;
@@ -50,7 +51,10 @@ export class LiveAnalyticsService {
     limit?: number;
     offset?: number;
   }) {
-    const where: Record<string, unknown> = { clientOrderId: { not: null } };
+    const where: Record<string, unknown> = {
+      clientOrderId: { not: null },
+      account: { userId: opts.userId },
+    };
     if (opts.status && opts.status !== 'ALL') where.status = opts.status;
     if (opts.symbol) where.symbol = opts.symbol;
     if (opts.from || opts.to) {
@@ -74,20 +78,25 @@ export class LiveAnalyticsService {
   }
 
   /** Compute aggregate stats over live trades in a time window. */
-  async stats(opts: { days?: number } = {}): Promise<LiveStats> {
+  async stats(opts: { userId: string; days?: number }): Promise<LiveStats> {
     const days = opts.days ?? 30;
     const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
     const trades = await this.prisma.trade.findMany({
-      where: { clientOrderId: { not: null }, createdAt: { gte: since } },
+      where: {
+        clientOrderId: { not: null },
+        createdAt: { gte: since },
+        account: { userId: opts.userId },
+      },
     });
     return this.compute(trades);
   }
 
   /** List all live sessions, newest first. Aggregates always recomputed
    *  from Trade rows so post-reconcile stats reflect the latest truth. */
-  async listSessions(opts: { limit?: number } = {}) {
+  async listSessions(opts: { userId: string; limit?: number }) {
     const limit = Math.min(opts.limit ?? 50, 200);
     const sessions = await this.prisma.liveSession.findMany({
+      where: { account: { userId: opts.userId } },
       orderBy: { startedAt: 'desc' },
       take: limit,
     });
@@ -118,23 +127,27 @@ export class LiveAnalyticsService {
   }
 
   /** Trades for a single session. */
-  async sessionTrades(sessionId: string) {
+  async sessionTrades(userId: string, sessionId: string) {
     return this.prisma.trade.findMany({
-      where: { sessionId },
+      where: { sessionId, account: { userId } },
       orderBy: { createdAt: 'desc' },
     });
   }
 
   /** Single session detail with live-recomputed counters from Trade rows. */
-  async getSession(sessionId: string) {
-    const s = await this.prisma.liveSession.findUnique({ where: { id: sessionId } });
+  async getSession(userId: string, sessionId: string) {
+    const s = await this.prisma.liveSession.findFirst({
+      where: { id: sessionId, account: { userId } },
+    });
     if (!s) return null;
     return this.recomputeSessionAggregates(s);
   }
 
   /** Aggregate stats across ALL sessions (or filtered). */
-  async sessionStats(sessionId: string): Promise<LiveStats> {
-    const trades = await this.prisma.trade.findMany({ where: { sessionId } });
+  async sessionStats(userId: string, sessionId: string): Promise<LiveStats> {
+    const trades = await this.prisma.trade.findMany({
+      where: { sessionId, account: { userId } },
+    });
     return this.compute(trades);
   }
 
@@ -144,16 +157,20 @@ export class LiveAnalyticsService {
    * don't pollute the metaapi arc (and vice versa).
    */
   async equityHistory(opts: {
+    userId: string;
     hours?: number;
     limit?: number;
     sessionId?: string;
     mode?: 'mock' | 'metaapi';
-  } = {}) {
-    const where: Record<string, unknown> = { source: 'live' };
+  }) {
+    const where: Record<string, unknown> = {
+      source: 'live',
+      account: { userId: opts.userId },
+    };
 
     if (opts.sessionId) {
-      const session = await this.prisma.liveSession.findUnique({
-        where: { id: opts.sessionId },
+      const session = await this.prisma.liveSession.findFirst({
+        where: { id: opts.sessionId, account: { userId: opts.userId } },
       });
       if (!session) return [];
       where.takenAt = {
