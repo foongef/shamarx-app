@@ -597,6 +597,13 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
       return null;
     }
     orchestrator.recordEntry(symbol, signal);
+    // Fire-and-forget email notification — matches legacy evaluatePair()
+    // behavior. Without this, the fan-out path silently skipped trade-opened
+    // emails. MailService handles its own errors; catch here just prevents
+    // an unhandled rejection from leaking out of evaluatePairForAccount.
+    this.notifyTradeOpened(signal, evalTs).catch((err) =>
+      this.logger.warn(`Trade-opened notify failed: ${(err as Error).message}`),
+    );
     return signal;
   }
 
