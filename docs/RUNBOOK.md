@@ -486,3 +486,50 @@ aws ssm send-command --profile shamarx-prod --region ap-southeast-5 \
 ```
 
 Idempotent — re-running skips already-assigned rows.
+
+---
+
+## Inviting a friend (Spec 2 — multi-tenant)
+
+1. Log in as SUPERADMIN at the web app.
+2. Sidebar → ADMIN → Invites.
+3. Enter friend's email + expiry (default 7 days) → click "+ New invite".
+4. The page shows the one-time `/join/<token>` link in a callout. The email also goes out via SMTP — share whichever channel you prefer.
+5. Friend opens the link, sets password + picks preset, lands on `/dashboard`.
+
+### Managing users
+
+- ADMIN → Users — toggle a user's Active status (revokes their refresh tokens) or Bot Enabled status.
+- ADMIN → Invites → Revoke — invalidates a pending invite immediately.
+- ADMIN → Sessions — shows active refresh tokens; revoke to force re-login on a specific device.
+- ADMIN → Engine → Type `PAUSE-ALL` → click "Pause everyone" — emergency stop for all USER bots. Reversible per-user from the Users page.
+
+## Production rollout for Spec 2
+
+Pre-flight (one-time, before any friend invite):
+
+1. Apply migrations to production DB. Push to main runs `prisma db push` automatically; manual migrations in `libs/prisma/migrations/` will be applied.
+2. Run the backfill on production:
+   ```bash
+   ssh ec2-user@<host>
+   docker exec trading-bot-app npx ts-node scripts/backfill-spec2.ts
+   ```
+   Expected: "Backfilled N DayNote rows" and "Ensured <your-email> has presetKey=BALANCED".
+3. Verify your account:
+   ```bash
+   docker exec trading-bot-db psql -U postgres -c \
+     'SELECT email, role, "botEnabled", "presetKey" FROM "User";'
+   ```
+   Expect: `role=SUPERADMIN, botEnabled=true, presetKey=BALANCED`.
+
+Smoke test (no friends yet):
+
+4. Log into the web app — dashboard should show your equity hero, status pill green ("Bot live · Balanced"), preset switcher in sidebar.
+5. Wait for the next M15 signal — verify a trade fires with no behavior change vs pre-Spec-2.
+6. Sidebar → ADMIN should be visible (SUPERADMIN gate).
+
+Inviting first friend:
+
+7. ADMIN → Invites → "+ New invite" with their email.
+8. They click the link, set password + preset, get redirected to their dashboard.
+9. ADMIN → Users — verify the new row, their `accountsTotal` is 0 until they add a broker account.
