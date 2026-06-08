@@ -274,4 +274,65 @@ export class JournalService {
     if (p < -0.5) return 'LOSS';
     return 'BE';
   }
+
+  async createJournalEntriesForSignal(
+    signal: any,
+    evalTimeIso: string,
+    ctx: {
+      d1Adx: number;
+      d1Bias: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+      killzone: 'LONDON' | 'NY' | 'ASIAN' | null;
+      h1Atr: number;
+      pendingQueueSize: number;
+      spread: number;
+      accountEquity: number;
+      openPositionsCount: number;
+      openDirections: Array<'BUY' | 'SELL'>;
+      anchorLevel: number | null;
+      anchorType: JournalEntryContext['anchorType'] | null;
+    },
+  ): Promise<void> {
+    // Pull the trades that were just created for this signal.
+    const trades = await this.prisma.trade.findMany({
+      where: {
+        symbol: signal.symbol,
+        side: signal.side,
+        sweepCandleTime: signal.smcContext?.sweepCandleTime
+          ? new Date(signal.smcContext.sweepCandleTime)
+          : undefined,
+        status: { not: 'CLOSED' },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 2,
+    });
+    if (trades.length === 0) return;
+
+    const entryContext: JournalEntryContext = {
+      evalTime: evalTimeIso,
+      d1Adx: ctx.d1Adx,
+      d1Bias: ctx.d1Bias,
+      h1Atr: ctx.h1Atr,
+      killzone: ctx.killzone,
+      pendingQueueSize: ctx.pendingQueueSize,
+      spread: ctx.spread,
+      accountEquity: ctx.accountEquity,
+      openPositionsCount: ctx.openPositionsCount,
+      openDirectionsForSymbol: ctx.openDirections,
+      anchorLevel: ctx.anchorLevel,
+      anchorType: ctx.anchorType,
+    };
+
+    const baseSummary = `${signal.mode} ${signal.side} on ${signal.symbol} — D1 ${ctx.d1Bias}, swept ${ctx.anchorType ?? 'level'} at ${ctx.anchorLevel ?? '—'}, ${ctx.killzone ?? '—'} session`;
+
+    await this.prisma.journalEntry.createMany({
+      data: trades.map((t: any, idx: number) => ({
+        tradeId: t.id,
+        setupSummary: `${baseSummary} — ${idx === 0 ? 'TP1 leg' : 'Runner leg'}`,
+        llmReasoning: '',
+        entryContext: entryContext as any,
+        tags: [],
+      })),
+      skipDuplicates: true,
+    });
+  }
 }

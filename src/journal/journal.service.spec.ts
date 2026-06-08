@@ -295,3 +295,62 @@ describe('JournalService.deriveOutcome', () => {
     expect(service.deriveOutcome(-10, 'FORCED_CLOSE')).toBe('FORCED_CLOSE');
   });
 });
+
+describe('JournalService.createJournalEntriesForSignal', () => {
+  let service: JournalService;
+  let prisma: any;
+
+  beforeEach(async () => {
+    prisma = {
+      trade: { findMany: jest.fn() },
+      journalEntry: { createMany: jest.fn() },
+    };
+    const moduleRef = await Test.createTestingModule({
+      providers: [
+        JournalService,
+        { provide: PrismaService, useValue: prisma },
+      ],
+    }).compile();
+    service = moduleRef.get(JournalService);
+  });
+
+  it('creates one JournalEntry per fired leg with shared entryContext', async () => {
+    prisma.trade.findMany.mockResolvedValue([
+      { id: 'T1' },
+      { id: 'T2' },
+    ]);
+    prisma.journalEntry.createMany.mockResolvedValue({ count: 2 });
+
+    const signal: any = {
+      symbol: 'EURUSD',
+      side: 'SELL',
+      mode: 'REVERSAL',
+      h1SweepTime: '2026-06-03T01:00Z',
+      smcContext: { sweptLevel: 1.16125, d1Bias: 'BEARISH', anchorType: 'PDH' },
+    };
+
+    await service.createJournalEntriesForSignal(signal, '2026-06-03T07:15:00.000Z', {
+      d1Adx: 24,
+      d1Bias: 'BEARISH',
+      killzone: 'LONDON',
+      h1Atr: 0.0009,
+      pendingQueueSize: 6,
+      spread: 0.8,
+      accountEquity: 991.96,
+      openPositionsCount: 2,
+      openDirections: ['SELL'] as any,
+      anchorLevel: 1.16125,
+      anchorType: 'PDH' as any,
+    });
+
+    expect(prisma.journalEntry.createMany).toHaveBeenCalledTimes(1);
+    const calls = (prisma.journalEntry.createMany as jest.Mock).mock.calls[0][0];
+    expect(calls.data).toHaveLength(2);
+    expect(calls.data[0].tradeId).toBe('T1');
+    expect(calls.data[1].tradeId).toBe('T2');
+    expect(calls.data[0].setupSummary).toContain('REVERSAL SELL on EURUSD');
+    expect(calls.data[0].entryContext.d1Adx).toBe(24);
+    expect(calls.data[0].entryContext.anchorType).toBe('PDH');
+    expect(calls.skipDuplicates).toBe(true);
+  });
+});
