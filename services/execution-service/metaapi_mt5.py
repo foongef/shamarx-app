@@ -34,6 +34,7 @@ def _is_reconnectable(exc: BaseException) -> bool:
         for kw in ("disconnect", "timeout", "not synchronized", "websocket", "connection reset", "broken pipe")
     )
 
+from broker_base import Broker
 from models import (
     OrderRequest,
     OrderResponse,
@@ -58,11 +59,15 @@ TIMEFRAME_MAP = {
 }
 
 
-class MetaApiMT5:
+class MetaApiMT5(Broker):
     # Standard symbols we support
     KNOWN_SYMBOLS = ["XAUUSD", "GBPUSD", "EURUSD", "USDJPY", "US30", "NAS100"]
 
-    def __init__(self):
+    def __init__(self, account_id: str = "", access_token: str = ""):
+        # Allow no-arg construction for legacy module-level singleton — falls
+        # through to env vars in that case (preserves backwards-compat).
+        self.account_id = account_id or os.getenv("METAAPI_ACCOUNT_ID_DEMO", "")
+        self.access_token = access_token or os.getenv("METAAPI_ACCESS_TOKEN", "")
         self._api: Optional[MetaApi] = None
         self._connection = None
         self._account = None
@@ -71,6 +76,10 @@ class MetaApiMT5:
         self._reverse_map: dict[str, str] = {}   # broker symbol -> our symbol
         self._init_lock = asyncio.Lock()
         self._keepalive_task: Optional[asyncio.Task] = None
+
+    @classmethod
+    def from_creds(cls, creds: dict) -> 'MetaApiMT5':
+        return cls(account_id=creds['accountId'], access_token=creds['accessToken'])
 
     async def initialize(self, force: bool = False):
         # Serialize initialization to prevent concurrent reconnects from racing.
@@ -88,8 +97,8 @@ class MetaApiMT5:
                     pass
                 self._connection = None
 
-            token = os.getenv("METAAPI_ACCESS_TOKEN")
-            account_id = os.getenv("METAAPI_ACCOUNT_ID_DEMO")
+            token = self.access_token
+            account_id = self.account_id
 
             if not token or not account_id:
                 raise RuntimeError("METAAPI_ACCESS_TOKEN and METAAPI_ACCOUNT_ID_DEMO must be set")
@@ -403,8 +412,8 @@ class MetaApiMT5:
         tf = TIMEFRAME_MAP.get(timeframe, "15m")
 
         # Use the REST API to get historical candles
-        token = os.getenv("METAAPI_ACCESS_TOKEN")
-        account_id = os.getenv("METAAPI_ACCOUNT_ID_DEMO")
+        token = self.access_token
+        account_id = self.account_id
         url = (
             f"https://mt-market-data-client-api-v1.london.agiliumtrade.ai"
             f"/users/current/accounts/{account_id}"
@@ -474,8 +483,8 @@ class MetaApiMT5:
 
         broker_symbol = self._broker_symbol(symbol)
         tf = TIMEFRAME_MAP.get(timeframe, "15m")
-        token = os.getenv("METAAPI_ACCESS_TOKEN")
-        account_id = os.getenv("METAAPI_ACCOUNT_ID_DEMO")
+        token = self.access_token
+        account_id = self.account_id
 
         base_url = (
             f"https://mt-market-data-client-api-v1.london.agiliumtrade.ai"
@@ -559,6 +568,27 @@ class MetaApiMT5:
 
         logger.info(f"Fetched {len(unique_candles)} {timeframe} candles for {symbol}")
         return unique_candles
+
+    async def close(self) -> None:
+        """Close any persistent connection (e.g. MetaApi WebSocket).
+        For the legacy singleton path this is a no-op; multi-account
+        registry teardown will call this to release the RPC connection.
+        """
+        # Cancel keepalive loop if running
+        if self._keepalive_task is not None:
+            try:
+                self._keepalive_task.cancel()
+            except Exception:
+                pass
+            self._keepalive_task = None
+        # Best-effort close of RPC connection
+        if self._connection is not None:
+            try:
+                await self._connection.close()
+            except Exception:
+                pass
+            self._connection = None
+        self._initialized = False
 
 
 # Singleton — lazy-initialized

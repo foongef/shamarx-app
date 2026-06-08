@@ -7,6 +7,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+from broker_base import Broker
 from models import (
     OrderRequest,
     OrderResponse,
@@ -19,7 +20,7 @@ from models import (
 )
 
 
-class MockMT5:
+class MockMT5(Broker):
     def __init__(self):
         self._balance = 10000.0
         self._equity = 10000.0
@@ -27,6 +28,14 @@ class MockMT5:
         self._next_ticket = 100001
         self._base_price = 2650.00  # Base XAUUSD price
         self._orders: dict[str, dict] = {}
+
+    async def initialize(self) -> None:
+        """No-op for the mock backend."""
+        return None
+
+    async def close(self) -> None:
+        """No-op for the mock backend."""
+        return None
 
     def reset(self, balance: float = 10000.0) -> dict:
         self._balance = float(balance)
