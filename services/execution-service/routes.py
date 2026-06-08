@@ -1,7 +1,8 @@
 import os
+import json
 import logging
 from typing import Optional
-from fastapi import APIRouter, Body, Query, HTTPException
+from fastapi import APIRouter, Body, Depends, Header, Query, HTTPException
 
 from models import (
     OrderRequest,
@@ -14,6 +15,8 @@ from models import (
     ClosePositionResponse,
 )
 from mock_mt5 import mock_mt5
+from registry import registry
+from broker_base import Broker
 
 _logger = logging.getLogger(__name__)
 _redis = None
@@ -167,6 +170,22 @@ async def reset_mock(payload: dict = Body(default={})):
     return get_mock().reset(balance)
 
 
+async def resolve_client(
+    account_id: str,
+    x_broker_creds: Optional[str] = Header(None),
+    x_broker_mode: str = Header('metaapi'),
+) -> Broker:
+    """Resolve the broker client for this account, lazy-initializing if needed.
+    Creds arrive as JSON in the X-Broker-Creds header (sent by NestJS)."""
+    if not x_broker_creds:
+        raise HTTPException(401, "X-Broker-Creds header required")
+    try:
+        creds = json.loads(x_broker_creds)
+    except json.JSONDecodeError:
+        raise HTTPException(400, "X-Broker-Creds must be valid JSON")
+    return await registry.get_or_create(account_id, creds, x_broker_mode)
+
+
 @candles_router.get("", response_model=list[CandleData])
 async def get_candles(
     symbol: str = Query(default="XAUUSD"),
@@ -182,3 +201,66 @@ async def get_candles(
         _logger.warning(f"get_candles failed for {symbol} {timeframe}: {e}")
         # Return empty list — calling code should preserve last-known data
         return []
+
+
+account_scoped_router = APIRouter()
+
+
+@account_scoped_router.get("/{account_id}/positions", response_model=list[Position])
+async def get_account_positions(
+    account_id: str,
+    client: Broker = Depends(resolve_client),
+    symbol: Optional[str] = Query(None),
+):
+    return await client.get_positions(symbol)
+
+
+@account_scoped_router.post("/{account_id}/orders", response_model=OrderResponse)
+async def place_account_order(
+    account_id: str,
+    request: OrderRequest,
+    client: Broker = Depends(resolve_client),
+):
+    try:
+        return await client.place_order(request)
+    except Exception as e:
+        _logger.error(f"place_order failed for account={account_id}: {e}")
+        return OrderResponse(
+            orderId="", mt5Ticket=None, status="REJECTED", message=f"execution error: {e}",
+        )
+
+
+@account_scoped_router.post("/{account_id}/positions/{ticket}/modify", response_model=ClosePositionResponse)
+async def modify_account_position(
+    account_id: str,
+    ticket: int,
+    body: ModifyPositionRequest,
+    client: Broker = Depends(resolve_client),
+):
+    return await client.modify_position(ticket, body.sl_price, body.tp_price)
+
+
+@account_scoped_router.get("/{account_id}/positions/{ticket}/history")
+async def get_account_position_history(
+    account_id: str,
+    ticket: int,
+    client: Broker = Depends(resolve_client),
+):
+    info = await client.get_position_close_info(ticket)
+    if info is None:
+        raise HTTPException(404, "Position history not found")
+    return info
+
+
+@account_scoped_router.get("/{account_id}/account-info", response_model=AccountInfo)
+async def get_account_info_for_account(
+    account_id: str,
+    client: Broker = Depends(resolve_client),
+):
+    return await client.get_account_info()
+
+
+@account_scoped_router.post("/{account_id}/disconnect")
+async def disconnect_account(account_id: str):
+    await registry.remove(account_id)
+    return {"ok": True}
