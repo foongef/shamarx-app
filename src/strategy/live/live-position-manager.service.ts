@@ -34,6 +34,8 @@ import { PrismaService } from '@app/prisma';
 import { RedisService, REDIS_CHANNELS } from '@app/redis';
 import { Timeframe, SERVICE_URLS } from '@app/common';
 import { LiveControlService } from './live-control.service';
+import { BrokerAccountsService } from '../../broker-accounts/broker-accounts.service';
+import { BrokerHttpClient } from './broker-http-client';
 import {
   BacktestCandle,
   RegimeTradeParams,
@@ -87,10 +89,16 @@ export class LivePositionManagerService implements OnModuleInit {
     private readonly config: ConfigService,
     @Inject(forwardRef(() => LiveControlService))
     private readonly liveControl: LiveControlService,
+    private readonly brokerAccounts: BrokerAccountsService,
+    private readonly brokerHttp: BrokerHttpClient,
   ) {
     this.liveMode = (this.config.get<string>('LIVE_MODE') || 'false').toLowerCase() === 'true';
     const pairsCsv = this.config.get<string>('STRATEGY_PAIRS') || 'XAUUSD,EURUSD,GBPUSD,USDJPY';
     this.pairs = pairsCsv.split(',').map((s) => s.trim().toUpperCase()).filter(Boolean);
+  }
+
+  private get fanOutEnabled(): boolean {
+    return (this.config.get<string>('ENABLE_MULTI_ACCOUNT_FANOUT') || 'false').toLowerCase() === 'true';
   }
 
   async onModuleInit() {
@@ -105,12 +113,21 @@ export class LivePositionManagerService implements OnModuleInit {
         if (data.timeframe !== Timeframe.M15) return;
         if (!this.liveControl.isRunning()) return;
         if (!this.pairs.includes(data.symbol)) return;
-        this.manageSymbol(data.symbol).catch((err) =>
-          this.logger.error(
-            `[${data.symbol}] manageSymbol failed: ${(err as Error).message}`,
-            (err as Error).stack,
-          ),
-        );
+        if (this.fanOutEnabled) {
+          this.manageSymbolAllAccounts(data.symbol).catch((err) =>
+            this.logger.error(
+              `[${data.symbol}] fan-out manage failed: ${(err as Error).message}`,
+              (err as Error).stack,
+            ),
+          );
+        } else {
+          this.manageSymbol(data.symbol).catch((err) =>
+            this.logger.error(
+              `[${data.symbol}] manageSymbol failed: ${(err as Error).message}`,
+              (err as Error).stack,
+            ),
+          );
+        }
       } catch {
         // ignore bad payloads
       }
@@ -192,6 +209,118 @@ export class LivePositionManagerService implements OnModuleInit {
           // Don't update DB state if broker rejected — we'd drift out of sync.
           this.logger.error(
             `[${symbol}] ticket=${trade.mt5Ticket} broker modify failed: ${(err as Error).message}`,
+          );
+          continue;
+        }
+      }
+
+      await this.prisma.trade.update({
+        where: { id: trade.id },
+        data: {
+          slPrice: updated.slPrice,
+          tpPrice: updated.tpPrice ?? trade.tpPrice, // never persist null tpPrice
+          managementState: newState as any,
+        },
+      });
+    }
+  }
+
+  /**
+   * Fan-out variant: run management against ALL enabled BrokerAccount rows
+   * in parallel. Each account's open trades are scoped by accountId.
+   */
+  async manageSymbolAllAccounts(symbol: string): Promise<void> {
+    const accounts = await this.brokerAccounts.findEnabled();
+    if (accounts.length === 0) return;
+    await Promise.all(
+      accounts.map((acct: any) =>
+        this.manageSymbolForAccount(symbol, acct).catch((err) =>
+          this.logger.error(
+            `[${acct.name}/${symbol}] manageSymbol failed: ${(err as Error).message}`,
+          ),
+        ),
+      ),
+    );
+  }
+
+  /**
+   * Per-account version of manageSymbol. Open trades queried with
+   * accountId scope; broker calls routed via BrokerHttpClient.
+   */
+  async manageSymbolForAccount(symbol: string, account: { id: string; name?: string }): Promise<void> {
+    const open = await this.prisma.trade.findMany({
+      where: { symbol, status: 'OPEN', mt5Ticket: { not: null }, accountId: account.id },
+    });
+    if (open.length === 0) return;
+
+    const brokerPositions = await this.brokerHttp.fetchOpenPositions(account.id, symbol);
+    const byTicket = new Map(brokerPositions.map((p) => [p.ticket, p]));
+
+    const latestM15 = await this.fetchLatestM15(symbol);
+    if (!latestM15) {
+      this.logger.warn(`[${account.name ?? account.id}/${symbol}] no recent M15 candle — skipping management`);
+      return;
+    }
+    const spread = getSpread(symbol, latestM15.openTime);
+
+    for (const trade of open) {
+      const broker = byTicket.get(trade.mt5Ticket!);
+      if (!broker) {
+        // Reconciler will pick this up on the next pass — broker side has
+        // closed but our DB is still OPEN.
+        continue;
+      }
+
+      const state = this.parseState(trade, broker);
+      const trailConfig: RegimeTradeParams = state.trailKey === 'TP1' ? SMC_TP1_TRAIL : SMC_RUNNER_TRAIL;
+
+      const pos: SimulatedPosition = {
+        side: trade.side as 'BUY' | 'SELL',
+        entryPrice: trade.entryPrice,
+        slPrice: broker.sl > 0 ? broker.sl : trade.slPrice, // broker is truth
+        originalSlPrice: state.originalSlPrice,
+        tpPrice: broker.tp > 0 ? broker.tp : trade.tpPrice,
+        breakevenActivated: state.breakevenActivated,
+        peakFavorablePrice: state.peakFavorablePrice,
+        lotSize: trade.lotSize,
+        entryTime: trade.createdAt.toISOString(),
+        entryIndex: 0,
+        setupTags: state.trailKey === 'TP1' ? ['SMC', 'TP1'] : ['SMC', 'RUNNER'],
+        h1Bias: trade.side === 'BUY' ? 'BULLISH' : 'BEARISH',
+        rsiAtEntry: 50,
+        atrAtEntry: 0,
+        trailConfig,
+        regimeAtEntry: 'WEAK_TREND',
+      };
+
+      const updated = updatePositionManagement(pos, latestM15, spread);
+      if (updated === pos) continue; // nothing changed
+
+      const newState: ManagementState = {
+        breakevenActivated: updated.breakevenActivated,
+        peakFavorablePrice: updated.peakFavorablePrice,
+        originalSlPrice: state.originalSlPrice,
+        trailKey: state.trailKey,
+      };
+
+      // Decide if we need to call broker. Broker calls are expensive and
+      // each is a network round-trip — skip if SL change is below the
+      // pip-scale threshold for this symbol.
+      const slChanged = Math.abs(updated.slPrice - pos.slPrice) >= (this.minSlChangeAbs[symbol] ?? 0.0001);
+      const tpRemoved = pos.tpPrice !== null && updated.tpPrice === null;
+      const tpChanged = updated.tpPrice !== null && pos.tpPrice !== null
+        && Math.abs(updated.tpPrice - pos.tpPrice) >= (this.minSlChangeAbs[symbol] ?? 0.0001);
+
+      if (slChanged || tpRemoved || tpChanged) {
+        try {
+          await this.brokerHttp.modify(account.id, trade.mt5Ticket!, updated.slPrice, updated.tpPrice ?? 0);
+          this.logger.log(
+            `[${account.name ?? account.id}/${symbol}] ticket=${trade.mt5Ticket} BE=${updated.breakevenActivated} SL ${pos.slPrice.toFixed(5)}→${updated.slPrice.toFixed(5)}${tpRemoved ? ' (TP removed)' : ''}`,
+          );
+        } catch (err) {
+          // Don't update DB state if broker rejected — we'd drift out of sync.
+          this.logger.error(
+            `[${account.name ?? account.id}/${symbol}] ticket=${trade.mt5Ticket} broker modify failed: ${(err as Error).message}`,
           );
           continue;
         }

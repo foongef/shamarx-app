@@ -403,3 +403,86 @@ ssm 'docker compose -f /opt/trading-bot/repo/docker/docker-compose.yml restart t
    doesn't respond — re-run the latest deploy run as a clean reset
    (it's idempotent: `git reset --hard origin/main` + `docker compose up
    -d --build`)
+
+## Multi-Account Broker Operations
+
+### Master encryption key (production = AWS Secrets Manager)
+
+`CryptoService` uses **dual-mode** key sourcing:
+
+| Env set | Behavior |
+|---|---|
+| `BROKER_CREDS_SECRET_ID` | Fetch key from AWS Secrets Manager at boot (production) |
+| `BROKER_CREDS_KEY` | Use as 32-byte hex directly (local dev) |
+
+The Terraform module `envs/prod` creates an empty Secrets Manager resource at:
+
+```
+shamarx-prod-broker-creds-master-key
+```
+
+EC2 role is granted `secretsmanager:GetSecretValue` on its ARN.
+The secret VALUE is **not** managed by Terraform — set it once after
+`terraform apply`:
+
+```bash
+aws secretsmanager put-secret-value \
+  --profile shamarx-prod \
+  --region ap-southeast-5 \
+  --secret-id shamarx-prod-broker-creds-master-key \
+  --secret-string "$(openssl rand -hex 32)"
+```
+
+This keeps the key off your laptop and out of git. Lost key = all
+encrypted creds become unrecoverable; users must re-enter broker creds
+via the UI.
+
+### Rotating the master key
+
+1. Pick a downtime window.
+2. Fetch the current key:
+   ```bash
+   OLD_KEY=$(aws secretsmanager get-secret-value \
+     --profile shamarx-prod --region ap-southeast-5 \
+     --secret-id shamarx-prod-broker-creds-master-key \
+     --query SecretString --output text)
+   ```
+3. SSH onto the app server. For each `BrokerAccount` row, decrypt
+   `encryptedCreds` with `$OLD_KEY`, re-encrypt with a new key,
+   `UPDATE BrokerAccount SET encryptedCreds = ..., credsIv = ..., credsAuthTag = ...`.
+4. `put-secret-value` the new key into Secrets Manager (uses `Pending`
+   stage automatically; promote to `Current` after verifying).
+5. Restart the app container — picks up the new key.
+6. Verify with a no-op order on a mock account.
+
+No automated rotation tool in v1. The above is manual; expect SOC2 to
+push this onto a quarterly cadence eventually.
+
+### Enabling fan-out
+
+After the schema migration deploys and `scripts/backfill-broker-accounts.ts`
+runs successfully, set `ENABLE_MULTI_ACCOUNT_FANOUT=true` in production
+`.env` and restart the app container.
+
+To roll back: set to `false` and restart. The strategy engine reverts
+to legacy single-account behavior using the env-driven MetaApi creds.
+
+### Soft cap
+
+`MULTI_ACCOUNT_SOFT_CAP` defaults to 5. To raise it, set the env var
+and restart. Higher caps mean more concurrent broker connections —
+monitor MetaApi rate limits per account.
+
+### Running the backfill script
+
+After schema deploys (auto-applied by `prisma db push` in
+`deploy-backend.yml`):
+
+```bash
+aws ssm send-command --profile shamarx-prod --region ap-southeast-5 \
+  --instance-ids i-0da17ad488fa32c8a \
+  --document-name AWS-RunShellScript \
+  --parameters 'commands=["cd /opt/trading-bot/repo && docker compose -f docker/docker-compose.yml exec -T trading-bot pnpm ts-node -P tsconfig.build.json --transpile-only scripts/backfill-broker-accounts.ts"]'
+```
+
+Idempotent — re-running skips already-assigned rows.

@@ -4,7 +4,13 @@ from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
 
-from routes import orders_router, positions_router, account_router, candles_router
+from routes import (
+    orders_router,
+    positions_router,
+    account_router,
+    candles_router,
+    account_scoped_router,
+)
 from historical_data import historical_router
 
 load_dotenv()
@@ -16,6 +22,7 @@ app.include_router(positions_router, prefix="/positions", tags=["positions"])
 app.include_router(account_router, prefix="/account", tags=["account"])
 app.include_router(candles_router, prefix="/candles", tags=["candles"])
 app.include_router(historical_router, prefix="/historical-candles", tags=["historical"])
+app.include_router(account_scoped_router, prefix="/accounts", tags=["accounts"])
 
 
 # Liveness watchdog. Any successful (2xx) response on a non-/health route

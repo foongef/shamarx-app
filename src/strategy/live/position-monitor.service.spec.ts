@@ -7,6 +7,9 @@ import { RedisService } from '@app/redis';
 import { PositionMonitorService } from './position-monitor.service';
 import { LiveControlService } from './live-control.service';
 import { LiveSmcOrchestrator } from './live-smc-orchestrator';
+import { JournalService } from '../../journal/journal.service';
+import { BrokerAccountsService } from '../../broker-accounts/broker-accounts.service';
+import { BrokerHttpClient } from './broker-http-client';
 
 describe('PositionMonitorService.maybeTriggerSisterRunnerBe', () => {
   let service: PositionMonitorService;
@@ -61,6 +64,9 @@ describe('PositionMonitorService.maybeTriggerSisterRunnerBe', () => {
         { provide: ConfigService, useValue: { get: () => 'false' } },
         { provide: LiveControlService, useValue: { isRunning: () => false } },
         { provide: LiveSmcOrchestrator, useValue: {} },
+        { provide: JournalService, useValue: { enrichJournalOnExit: jest.fn().mockResolvedValue(undefined) } },
+        { provide: BrokerAccountsService, useValue: { findEnabled: jest.fn().mockResolvedValue([]) } },
+        { provide: BrokerHttpClient, useValue: { fetchOpenPositions: jest.fn(), modify: jest.fn() } },
       ],
     }).compile();
 
@@ -148,5 +154,21 @@ describe('PositionMonitorService.maybeTriggerSisterRunnerBe', () => {
     await (service as any).maybeTriggerSisterRunnerBe('tp1-id');
 
     expect(prisma.trade.update).not.toHaveBeenCalled();
+  });
+
+  it('scopes sister Runner lookup by accountId', async () => {
+    const tp1WithAcct = { ...tp1Trade, accountId: 'acct-1' };
+    prisma.trade.findUnique.mockResolvedValue(tp1WithAcct);
+    prisma.trade.findFirst.mockResolvedValue({ ...runnerSister, accountId: 'acct-1' });
+    http.post.mockReturnValue(of({ data: {} }));
+    prisma.trade.update.mockResolvedValue({});
+
+    await (service as any).maybeTriggerSisterRunnerBe('tp1-id');
+
+    expect(prisma.trade.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ accountId: 'acct-1' }),
+      }),
+    );
   });
 });

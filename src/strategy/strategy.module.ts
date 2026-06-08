@@ -1,10 +1,13 @@
 import { Module } from '@nestjs/common';
 import { HttpModule } from '@nestjs/axios';
+import { RedisService } from '@app/redis';
 import { MarketDataModule } from '../market-data/market-data.module';
 import { RiskModule } from '../risk/risk.module';
 import { LlmFilterModule } from '../llm-filter/llm-filter.module';
 import { MailModule } from '../mail/mail.module';
 import { JournalModule } from '../journal/journal.module';
+import { BrokerAccountsModule } from '../broker-accounts/broker-accounts.module';
+import { CryptoModule } from '../crypto/crypto.module';
 import { StrategyController } from './strategy.controller';
 import { StrategyService } from './strategy.service';
 import { PatternDetector } from './pattern-detector';
@@ -17,9 +20,11 @@ import { LiveSmcOrchestrator } from './live/live-smc-orchestrator';
 import { LiveControlService } from './live/live-control.service';
 import { EquitySnapshotService } from './live/equity-snapshot.service';
 import { LiveAnalyticsService } from './live/live-analytics.service';
+import { BrokerHttpClient } from './live/broker-http-client';
+import { LiveSmcOrchestratorRegistry } from './live/live-smc-orchestrator-registry';
 
 @Module({
-  imports: [HttpModule, MarketDataModule, RiskModule, LlmFilterModule, MailModule, JournalModule],
+  imports: [HttpModule, MarketDataModule, RiskModule, LlmFilterModule, MailModule, JournalModule, BrokerAccountsModule, CryptoModule],
   controllers: [StrategyController],
   providers: [
     StrategyService,
@@ -33,6 +38,13 @@ import { LiveAnalyticsService } from './live/live-analytics.service';
     LivePositionManagerService,
     EquitySnapshotService,
     LiveAnalyticsService,
+    BrokerHttpClient,
+    LiveSmcOrchestratorRegistry,
+    {
+      provide: 'ORCHESTRATOR_FACTORY',
+      useFactory: (redis: RedisService) => () => new LiveSmcOrchestrator(redis),
+      inject: [RedisService],
+    },
   ],
   exports: [
     LiveStrategyService,

@@ -29,6 +29,9 @@ import { LiveControlService } from './live-control.service';
 import { BacktestCandle } from '../../backtest/engine/types';
 import { MailService, TradeOpenedPayload } from '../../mail/mail.service';
 import { JournalService } from '../../journal/journal.service';
+import { BrokerAccountsService } from '../../broker-accounts/broker-accounts.service';
+import { BrokerHttpClient } from './broker-http-client';
+import { LiveSmcOrchestratorRegistry } from './live-smc-orchestrator-registry';
 
 const M15_BUFFER = 100;
 const H1_BUFFER = 500;
@@ -105,6 +108,10 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
   private persistDebounceTimer: NodeJS.Timeout | null = null;
   private persistIntervalTimer: NodeJS.Timeout | null = null;
   private persistInFlight = false;
+
+  private get fanOutEnabled(): boolean {
+    return (this.config.get<string>('ENABLE_MULTI_ACCOUNT_FANOUT') || 'false').toLowerCase() === 'true';
+  }
 
   private markPersistDirty(): void {
     this.persistDirty = true;
@@ -250,6 +257,9 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
     private readonly orchestrator: LiveSmcOrchestrator,
     private readonly mail: MailService,
     private readonly journal: JournalService,
+    private readonly brokerAccounts: BrokerAccountsService,
+    private readonly brokerHttp: BrokerHttpClient,
+    private readonly orchestratorRegistry: LiveSmcOrchestratorRegistry,
   ) {
     this.liveMode = (this.config.get<string>('LIVE_MODE') || 'false').toLowerCase() === 'true';
     const pairsCsv = this.config.get<string>('STRATEGY_PAIRS') || 'XAUUSD,EURUSD,GBPUSD,USDJPY';
@@ -339,9 +349,15 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
         // Runtime gate: skip evaluation when the engine is "paused" via the
         // dashboard Start/Stop button, even when LIVE_MODE=true.
         if (!this.liveControl.isRunning()) return;
-        this.evaluatePair(symbol).catch((err) =>
-          this.logger.error(`Live eval failed for ${symbol}: ${err.message}`, err.stack),
-        );
+        if (this.fanOutEnabled) {
+          this.evaluatePairAllAccounts(symbol).catch((err) =>
+            this.logger.error(`[${symbol}] fan-out eval failed: ${(err as Error).message}`, (err as Error).stack),
+          );
+        } else {
+          this.evaluatePair(symbol).catch((err) =>
+            this.logger.error(`Live eval failed for ${symbol}: ${err.message}`, err.stack),
+          );
+        }
       } catch (err) {
         this.logger.warn(`Bad CANDLE_STORED payload: ${(err as Error).message}`);
       }
@@ -511,6 +527,275 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
       this.logger.warn(`Trade-opened notify failed: ${(err as Error).message}`),
     );
     return signal;
+  }
+
+  /**
+   * Fan-out variant: evaluate this M15 candle against ALL enabled BrokerAccount
+   * rows in parallel. Failure on one account does not block others. Used when
+   * ENABLE_MULTI_ACCOUNT_FANOUT=true; otherwise the legacy single-account
+   * evaluatePair() runs.
+   */
+  async evaluatePairAllAccounts(symbol: string): Promise<void> {
+    const accounts = await this.brokerAccounts.findEnabled();
+    if (accounts.length === 0) {
+      this.logger.debug(`[${symbol}] no enabled accounts — skipping`);
+      return;
+    }
+    await Promise.all(
+      accounts.map((acct: any) =>
+        this.evaluatePairForAccount(symbol, acct).catch((err) =>
+          this.logger.error(
+            `[${acct.name}/${symbol}] evaluate failed: ${(err as Error).message}`,
+          ),
+        ),
+      ),
+    );
+  }
+
+  /**
+   * Per-account version of evaluatePair. Same strategy logic; broker
+   * calls routed through BrokerHttpClient by accountId; orchestrator
+   * state held by LiveSmcOrchestratorRegistry per account.
+   */
+  async evaluatePairForAccount(
+    symbol: string,
+    account: { id: string; name: string },
+  ): Promise<SmcLiveSignal | null> {
+    const [m15, h1, d1, openPositions, allOpenPositions, accountInfo] = await Promise.all([
+      this.fetchCandles(symbol, Timeframe.M15, M15_BUFFER),
+      this.fetchCandles(symbol, Timeframe.H1, H1_BUFFER),
+      this.fetchCandles(symbol, Timeframe.D1, D1_BUFFER),
+      this.brokerHttp.fetchOpenPositions(account.id, symbol),
+      this.brokerHttp.fetchOpenPositions(account.id),
+      this.brokerHttp.fetchAccount(account.id),
+    ]);
+
+    const evalTs = m15[m15.length - 1]?.openTime ?? new Date().toISOString();
+    const orchestrator = this.orchestratorRegistry.getOrCreate(account.id);
+
+    const signal = orchestrator.evaluate(symbol, m15, h1, d1, {
+      accountEquity: accountInfo.equity,
+      openDirections: new Set(openPositions.map((p: any) => p.side as 'BUY' | 'SELL')),
+      totalOpenPositions: allOpenPositions.length,
+      riskPercent: this.liveControl.getRiskPercent(),
+      nowIso: evalTs,
+      maxOpenPositions: 4,
+    });
+
+    if (!signal) {
+      this.logger.debug(`[${account.name}/${symbol}] no signal`);
+      return null;
+    }
+
+    this.logger.log(`[${account.name}/${symbol}] signal → ${signal.reason}`);
+
+    const placeResult = await this.placeOrderForAccount(signal, account.id);
+    if (placeResult.successfulLegs === 0) {
+      this.logger.warn(
+        `[${account.name}/${symbol}] placeOrder produced 0 successful legs — sweep stays in pending for retry`,
+      );
+      return null;
+    }
+    orchestrator.recordEntry(symbol, signal);
+    return signal;
+  }
+
+  /**
+   * Per-account retry wrapper for brokerHttp.placeOrder — mirrors
+   * postOrderWithRetry semantics (3 attempts, 4xx fail-fast, linear backoff).
+   */
+  private async placeOrderForAccountWithRetry(
+    accountId: string,
+    body: Record<string, unknown>,
+  ): Promise<{ mt5Ticket?: number | null; entryPrice?: number; status?: string; orderId?: string }> {
+    const MAX_ATTEMPTS = 3;
+    let lastErr: unknown = null;
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      try {
+        return await this.brokerHttp.placeOrder(accountId, body);
+      } catch (err) {
+        lastErr = err;
+        const status = (err as any)?.response?.status as number | undefined;
+        if (status && status >= 400 && status < 500) throw err;
+        if (attempt < MAX_ATTEMPTS) {
+          const delay = attempt * 500;
+          this.logger.warn(
+            `order placement attempt ${attempt} failed (${(err as Error).message}); retrying in ${delay}ms`,
+          );
+          await new Promise((r) => setTimeout(r, delay));
+        }
+      }
+    }
+    throw lastErr;
+  }
+
+  /**
+   * Per-account variant of placeOrder. Routes broker calls via BrokerHttpClient.
+   * Stamps accountId on the created Trade row(s) so downstream queries can scope.
+   *
+   * Mirrors the legacy placeOrder body exactly with two substitutions:
+   *   - postOrderWithRetry → placeOrderForAccountWithRetry(accountId, body)
+   *   - Trade.create data gets `accountId` field
+   *
+   * Compensating closes (slippage, orphan, partial-fill rollback) route through
+   * `bestEffortCloseForAccount` so each close hits the correct broker connection
+   * via BrokerHttpClient (rather than the env-bound singleton used by the legacy
+   * `bestEffortClose`).
+   */
+  private async placeOrderForAccount(
+    signal: SmcLiveSignal,
+    accountId: string,
+  ): Promise<{ successfulLegs: number }> {
+    const slPoints = Math.abs(signal.entryPrice - signal.slPrice);
+    const MAX_SLIPPAGE_FRACTION = 0.30;
+
+    const placed: Array<{ mt5Ticket: number; tradeId: string }> = [];
+
+    for (const leg of signal.legs) {
+      const clientOrderId = randomUUID();
+      const dupe = await this.prisma.trade.findUnique({ where: { clientOrderId } });
+      if (dupe) continue;
+
+      let brokerOrder: { mt5Ticket?: number | null; entryPrice?: number } | null = null;
+      try {
+        brokerOrder = await this.placeOrderForAccountWithRetry(accountId, {
+          symbol: signal.symbol,
+          side: signal.side,
+          lotSize: leg.lotSize,
+          entryPrice: signal.entryPrice,
+          slPrice: signal.slPrice,
+          tpPrice: leg.tpPrice,
+          comment: `SMC:${clientOrderId.slice(0, 8)}`,
+        });
+      } catch (err) {
+        this.logger.error(
+          `[${signal.symbol}] order failed for leg ${JSON.stringify(leg)}: ${(err as Error).message}`,
+        );
+        continue;
+      }
+
+      const order = brokerOrder!;
+      const mt5Ticket = order.mt5Ticket ?? undefined;
+      const fillPrice = typeof order.entryPrice === 'number' && order.entryPrice > 0
+        ? order.entryPrice
+        : signal.entryPrice;
+      const slippage = Math.abs(fillPrice - signal.entryPrice);
+      const slippageFrac = slPoints > 0 ? slippage / slPoints : 0;
+
+      if (slippageFrac > MAX_SLIPPAGE_FRACTION) {
+        this.logger.warn(
+          `[${signal.symbol}] excessive slippage ${(slippageFrac * 100).toFixed(1)}% — closing ticket=${mt5Ticket} + writing audit row`,
+        );
+        await this.bestEffortCloseForAccount(accountId, mt5Ticket, 'emergency close (slippage)');
+        await this.writeAuditTradeRow(signal, leg, clientOrderId, mt5Ticket, fillPrice, 'EXCESSIVE_SLIPPAGE');
+        continue;
+      }
+
+      let tradeId: string;
+      try {
+        const candidate = await this.prisma.candidateTrade.create({
+          data: {
+            symbol: signal.symbol,
+            side: signal.side,
+            entryPrice: signal.entryPrice,
+            slPrice: signal.slPrice,
+            tpPrice: leg.tpPrice,
+            slPoints: Math.abs(signal.entryPrice - signal.slPrice),
+            tpPoints: Math.abs(leg.tpPrice - signal.entryPrice),
+            setupTags: leg.setupTags,
+            h1Bias: signal.side === 'BUY' ? 'BULLISH' : 'BEARISH',
+            rsiValue: 0,
+            atrValue: 0,
+            spreadAtDetection: 0,
+            timeframe: 'M15',
+            status: 'APPROVED',
+          },
+        });
+
+        const trailKey: 'TP1' | 'RUNNER' = leg.setupTags.includes('TP1') ? 'TP1' : 'RUNNER';
+        const trade = await this.prisma.trade.create({
+          data: {
+            candidateId: candidate.id,
+            clientOrderId,
+            mt5Ticket: mt5Ticket ?? null,
+            sessionId: this.liveControl.getCurrentSessionId(),
+            accountId,
+            symbol: signal.symbol,
+            side: signal.side,
+            lotSize: leg.lotSize,
+            entryPrice: signal.entryPrice,
+            slPrice: signal.slPrice,
+            tpPrice: leg.tpPrice,
+            status: 'OPEN',
+            statusHistory: [
+              { status: 'PENDING', timestamp: new Date().toISOString() },
+              { status: 'OPEN', timestamp: new Date().toISOString(), ticket: mt5Ticket },
+            ],
+            managementState: {
+              breakevenActivated: false,
+              peakFavorablePrice: signal.entryPrice,
+              originalSlPrice: signal.slPrice,
+              trailKey,
+            } as any,
+            sweptLevel: signal.smcContext?.sweptLevel ?? null,
+            sweptHigh: signal.smcContext?.sweptHigh ?? null,
+            sweptLow: signal.smcContext?.sweptLow ?? null,
+            sweepCandleTime: signal.smcContext?.sweepCandleTime
+              ? new Date(signal.smcContext.sweepCandleTime)
+              : null,
+            d1Bias: signal.smcContext?.d1Bias ?? null,
+            originalSlPrice: signal.slPrice,
+            strategyName: 'stop-hunt',
+          },
+        });
+        tradeId = trade.id;
+
+        await this.redis.publish(REDIS_CHANNELS.TRADE_OPENED, {
+          candidateId: candidate.id,
+          clientOrderId,
+          symbol: signal.symbol,
+          side: signal.side,
+          lotSize: leg.lotSize,
+          entryPrice: signal.entryPrice,
+          mt5Ticket,
+          accountId,
+        });
+
+        this.logger.log(
+          `[${signal.symbol}] OPENED ${signal.side} ${leg.lotSize} lot @${signal.entryPrice} SL=${signal.slPrice} TP=${leg.tpPrice} ticket=${mt5Ticket} account=${accountId}`,
+        );
+      } catch (dbErr) {
+        this.logger.error(
+          `[${signal.symbol}] DB persist failed for ticket=${mt5Ticket}, closing orphan: ${(dbErr as Error).message}`,
+        );
+        await this.bestEffortCloseForAccount(accountId, mt5Ticket, 'orphan close (DB persist failed)');
+        continue;
+      }
+
+      if (typeof mt5Ticket === 'number') {
+        placed.push({ mt5Ticket, tradeId });
+      }
+    }
+
+    if (placed.length > 0 && placed.length < signal.legs.length) {
+      this.logger.warn(
+        `[${signal.symbol}] partial fill (${placed.length}/${signal.legs.length}) — rolling back successful legs`,
+      );
+      for (const p of placed) {
+        await this.bestEffortCloseForAccount(accountId, p.mt5Ticket, 'partial-fill rollback');
+        try {
+          await this.prisma.trade.update({
+            where: { id: p.tradeId },
+            data: { status: 'CLOSED', exitReason: 'PARTIAL_FILL_ROLLBACK', closedAt: new Date() },
+          });
+        } catch (e) {
+          this.logger.error(`failed to mark trade ${p.tradeId} as rolled-back: ${(e as Error).message}`);
+        }
+      }
+      return { successfulLegs: 0 };
+    }
+
+    return { successfulLegs: placed.length };
   }
 
   private classifyKillzone(symbol: string, iso: string): 'LONDON' | 'NY' | 'ASIAN' | null {
@@ -955,6 +1240,28 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
       );
     } catch (err) {
       this.logger.error(`${reason} failed for ticket=${mt5Ticket}: ${(err as Error).message}`);
+    }
+  }
+
+  /**
+   * Account-aware variant of bestEffortClose. Routes the close through
+   * BrokerHttpClient so it hits the correct broker connection.
+   * Used by placeOrderForAccount for partial-fill rollback / slippage closes.
+   * Mirrors bestEffortClose's swallow-errors semantics.
+   */
+  private async bestEffortCloseForAccount(
+    accountId: string,
+    mt5Ticket: number | undefined,
+    reason: string,
+  ): Promise<void> {
+    if (!mt5Ticket) return;
+    try {
+      await this.brokerHttp.closePosition(accountId, mt5Ticket);
+      this.logger.log(`[${accountId}] best-effort close ticket=${mt5Ticket} (${reason})`);
+    } catch (err) {
+      this.logger.warn(
+        `[${accountId}] best-effort close failed for ticket=${mt5Ticket} (${reason}): ${(err as Error).message}`,
+      );
     }
   }
 

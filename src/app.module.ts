@@ -13,6 +13,7 @@ import { BacktestModule } from './backtest/backtest.module';
 import { LiveReplayModule } from './backtest/live-replay/live-replay.module';
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
+import { BrokerAccountsModule } from './broker-accounts/broker-accounts.module';
 
 @Module({
   imports: [
@@ -23,6 +24,7 @@ import { UsersModule } from './users/users.module';
     RedisModule,
     UsersModule,
     AuthModule,
+    BrokerAccountsModule,
     MarketDataModule,
     StrategyModule,
     RiskModule,
