@@ -35,6 +35,7 @@ model User {
   brokerAccounts      BrokerAccount[]
   refreshTokens       RefreshToken[]
   invitesCreated      Invite[]             @relation("InviteCreator")
+  dayNotes            DayNote[]
 
   @@index([email])
 }
@@ -437,12 +438,15 @@ model BacktestTrade {
 
 model DayNote {
   id        String   @id @default(uuid())
-  date      DateTime @unique @db.Date
+  date      DateTime @db.Date
   note      String
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@index([date])
+  @@unique([userId, date])
+  @@index([userId])
 }
 
 model BrokerAccount {

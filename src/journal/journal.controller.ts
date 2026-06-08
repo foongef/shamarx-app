@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Req, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { JournalService } from './journal.service';
@@ -31,8 +31,8 @@ export class JournalController {
 
   @Get('day/:yyyymmdd')
   @ApiOperation({ summary: 'Trades + journal entries + dayNote for a day' })
-  day(@Param('yyyymmdd') yyyymmdd: string) {
-    return this.journal.getDay(yyyymmdd);
+  day(@Req() req: any, @Param('yyyymmdd') yyyymmdd: string) {
+    return this.journal.getDay(req.user.id, yyyymmdd);
   }
 
   @Patch('trade/:tradeId')
@@ -47,9 +47,10 @@ export class JournalController {
   @Patch('day/:yyyymmdd')
   @ApiOperation({ summary: 'Upsert day note (empty string clears)' })
   updateDay(
+    @Req() req: any,
     @Param('yyyymmdd') yyyymmdd: string,
     @Body() body: UpdateDayNoteDto,
   ) {
-    return this.journal.upsertDayNote(yyyymmdd, body.note);
+    return this.journal.upsertDayNote(req.user.id, yyyymmdd, body.note);
   }
 }

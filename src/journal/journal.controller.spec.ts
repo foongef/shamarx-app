@@ -36,8 +36,8 @@ describe('JournalController routing', () => {
   });
 
   it('routes GET /day/:yyyymmdd to service', async () => {
-    await controller.day('2026-06-05');
-    expect(service.getDay).toHaveBeenCalledWith('2026-06-05');
+    await controller.day({ user: { id: 'user-1' } }, '2026-06-05');
+    expect(service.getDay).toHaveBeenCalledWith('user-1', '2026-06-05');
   });
 
   it('routes PATCH /trade/:tradeId with body', async () => {
@@ -46,7 +46,7 @@ describe('JournalController routing', () => {
   });
 
   it('routes PATCH /day/:yyyymmdd with note', async () => {
-    await controller.updateDay('2026-06-05', { note: 'hi' } as any);
-    expect(service.upsertDayNote).toHaveBeenCalledWith('2026-06-05', 'hi');
+    await controller.updateDay({ user: { id: 'user-1' } }, '2026-06-05', { note: 'hi' } as any);
+    expect(service.upsertDayNote).toHaveBeenCalledWith('user-1', '2026-06-05', 'hi');
   });
 });

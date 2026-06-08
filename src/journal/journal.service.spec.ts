@@ -25,10 +25,10 @@ describe('JournalService.upsertDayNote', () => {
 
   it('creates a day note for a past date', async () => {
     prisma.dayNote.upsert.mockResolvedValue({ id: '1', date: new Date('2026-06-05'), note: 'hi' });
-    const result = await service.upsertDayNote('2026-06-05', 'hi');
+    const result = await service.upsertDayNote('user-1', '2026-06-05', 'hi');
     expect(prisma.dayNote.upsert).toHaveBeenCalledWith({
-      where: { date: new Date('2026-06-05') },
-      create: { date: new Date('2026-06-05'), note: 'hi' },
+      where: { userId_date: { userId: 'user-1', date: new Date('2026-06-05') } },
+      create: { userId: 'user-1', date: new Date('2026-06-05'), note: 'hi' },
       update: { note: 'hi' },
     });
     expect(result).toEqual({ date: '2026-06-05', note: 'hi' });
@@ -36,22 +36,22 @@ describe('JournalService.upsertDayNote', () => {
 
   it('deletes the day note when given empty string', async () => {
     prisma.dayNote.delete.mockResolvedValue({});
-    const result = await service.upsertDayNote('2026-06-05', '');
+    const result = await service.upsertDayNote('user-1', '2026-06-05', '');
     expect(prisma.dayNote.delete).toHaveBeenCalledWith({
-      where: { date: new Date('2026-06-05') },
+      where: { userId_date: { userId: 'user-1', date: new Date('2026-06-05') } },
     });
     expect(result).toEqual({ date: '2026-06-05', note: null });
   });
 
   it('swallows P2025 (delete non-existing) as no-op', async () => {
     prisma.dayNote.delete.mockRejectedValue({ code: 'P2025' });
-    const result = await service.upsertDayNote('2026-06-05', '');
+    const result = await service.upsertDayNote('user-1', '2026-06-05', '');
     expect(result).toEqual({ date: '2026-06-05', note: null });
   });
 
   it('rejects future dates with 422', async () => {
     const future = new Date(Date.now() + 86400000 * 30).toISOString().slice(0, 10);
-    await expect(service.upsertDayNote(future, 'x')).rejects.toBeInstanceOf(UnprocessableEntityException);
+    await expect(service.upsertDayNote('user-1', future, 'x')).rejects.toBeInstanceOf(UnprocessableEntityException);
   });
 });
 
@@ -154,7 +154,7 @@ describe('JournalService.getDay', () => {
     ]);
     prisma.dayNote.findUnique.mockResolvedValue({ note: 'caught by news' });
 
-    const result = await service.getDay('2026-06-05');
+    const result = await service.getDay('user-1', '2026-06-05');
 
     expect(result.date).toBe('2026-06-05');
     expect(result.dayNote).toBe('caught by news');
@@ -173,7 +173,7 @@ describe('JournalService.getDay', () => {
   it('returns null dayNote when no row exists', async () => {
     prisma.trade.findMany.mockResolvedValue([]);
     prisma.dayNote.findUnique.mockResolvedValue(null);
-    const result = await service.getDay('2026-06-05');
+    const result = await service.getDay('user-1', '2026-06-05');
     expect(result.dayNote).toBeNull();
     expect(result.trades).toEqual([]);
   });
@@ -186,7 +186,7 @@ describe('JournalService.getDay', () => {
     ]);
     prisma.dayNote.findUnique.mockResolvedValue(null);
 
-    const result = await service.getDay('2026-06-05');
+    const result = await service.getDay('user-1', '2026-06-05');
 
     expect(result.dayTotals).toEqual({
       tradesCount: 3,
