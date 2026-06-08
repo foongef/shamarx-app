@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { HttpModule } from '@nestjs/axios';
+import { RedisService } from '@app/redis';
 import { MarketDataModule } from '../market-data/market-data.module';
 import { RiskModule } from '../risk/risk.module';
 import { LlmFilterModule } from '../llm-filter/llm-filter.module';
@@ -41,7 +42,8 @@ import { LiveSmcOrchestratorRegistry } from './live/live-smc-orchestrator-regist
     LiveSmcOrchestratorRegistry,
     {
       provide: 'ORCHESTRATOR_FACTORY',
-      useFactory: () => () => new LiveSmcOrchestrator(),
+      useFactory: (redis: RedisService) => () => new LiveSmcOrchestrator(redis),
+      inject: [RedisService],
     },
   ],
   exports: [
