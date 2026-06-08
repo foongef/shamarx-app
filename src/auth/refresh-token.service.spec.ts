@@ -52,7 +52,7 @@ describe('RefreshTokenService', () => {
     const user = await makeUser();
     const a = await svc.issue(user.id, 'agent');
     const b = await svc.rotate(a.token, 'agent');
-    await expect(svc.rotate(a.token, 'agent')).rejects.toThrow(/reuse/i);
+    await expect(svc.rotate(a.token, 'agent')).rejects.toThrow(/Invalid or expired/i);
     const bRow = await prisma.refreshToken.findFirst({ where: { id: b.id } });
     expect(bRow?.revokedAt).not.toBeNull();
   });
@@ -64,7 +64,7 @@ describe('RefreshTokenService', () => {
       where: { id },
       data: { expiresAt: new Date(Date.now() - 1000) },
     });
-    await expect(svc.rotate(token, 'agent')).rejects.toThrow(/expired/i);
+    await expect(svc.rotate(token, 'agent')).rejects.toThrow(/Invalid or expired/i);
   });
 
   it('revokeAllForUser() marks every active row as revoked', async () => {
