@@ -15,10 +15,29 @@ import * as crypto from 'node:crypto';
 
 const DEFAULT_NAME = process.env.BACKFILL_ACCOUNT_NAME || 'Pepperstone Demo';
 
+async function loadMasterKey(): Promise<string> {
+  const secretId = process.env.BROKER_CREDS_SECRET_ID;
+  const envKey = process.env.BROKER_CREDS_KEY;
+  if (secretId) {
+    const { SecretsManagerClient, GetSecretValueCommand } = await import('@aws-sdk/client-secrets-manager');
+    const region = process.env.AWS_REGION || 'ap-southeast-5';
+    const client = new SecretsManagerClient({ region });
+    try {
+      const res = await client.send(new GetSecretValueCommand({ SecretId: secretId }));
+      if (!res.SecretString) throw new Error(`Secrets Manager returned no SecretString for ${secretId}`);
+      return res.SecretString.trim();
+    } finally {
+      client.destroy();
+    }
+  }
+  if (envKey) return envKey;
+  throw new Error('Neither BROKER_CREDS_SECRET_ID nor BROKER_CREDS_KEY is set');
+}
+
 async function main() {
-  const key = process.env.BROKER_CREDS_KEY;
-  if (!key || key.length !== 64) {
-    throw new Error('BROKER_CREDS_KEY env var (32-byte hex) is required');
+  const key = await loadMasterKey();
+  if (key.length !== 64) {
+    throw new Error('Master key must be 32 bytes (64 hex chars)');
   }
   const accountId = process.env.METAAPI_ACCOUNT_ID_DEMO;
   const accessToken = process.env.METAAPI_ACCESS_TOKEN;
