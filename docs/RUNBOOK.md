@@ -406,29 +406,57 @@ ssm 'docker compose -f /opt/trading-bot/repo/docker/docker-compose.yml restart t
 
 ## Multi-Account Broker Operations
 
-### Generating BROKER_CREDS_KEY
+### Master encryption key (production = AWS Secrets Manager)
 
-```bash
-openssl rand -hex 32
+`CryptoService` uses **dual-mode** key sourcing:
+
+| Env set | Behavior |
+|---|---|
+| `BROKER_CREDS_SECRET_ID` | Fetch key from AWS Secrets Manager at boot (production) |
+| `BROKER_CREDS_KEY` | Use as 32-byte hex directly (local dev) |
+
+The Terraform module `envs/prod` creates an empty Secrets Manager resource at:
+
+```
+shamarx-prod-broker-creds-master-key
 ```
 
-Place the output in production `.env` as `BROKER_CREDS_KEY=...`. Lost
-key = all encrypted creds become unrecoverable; users must re-enter
-broker creds via the UI.
+EC2 role is granted `secretsmanager:GetSecretValue` on its ARN.
+The secret VALUE is **not** managed by Terraform — set it once after
+`terraform apply`:
 
-### Rotating BROKER_CREDS_KEY
+```bash
+aws secretsmanager put-secret-value \
+  --profile shamarx-prod \
+  --region ap-southeast-5 \
+  --secret-id shamarx-prod-broker-creds-master-key \
+  --secret-string "$(openssl rand -hex 32)"
+```
+
+This keeps the key off your laptop and out of git. Lost key = all
+encrypted creds become unrecoverable; users must re-enter broker creds
+via the UI.
+
+### Rotating the master key
 
 1. Pick a downtime window.
-2. SSH into the app server. Decrypt the encrypted creds for each
-   BrokerAccount with the old key.
-3. Re-encrypt with the new key.
-4. Update each `BrokerAccount` row's `encryptedCreds`, `credsIv`,
-   `credsAuthTag`.
-5. Swap the env var. Restart the app.
-6. Verify by triggering a no-op order on a mock account — should
-   succeed.
+2. Fetch the current key:
+   ```bash
+   OLD_KEY=$(aws secretsmanager get-secret-value \
+     --profile shamarx-prod --region ap-southeast-5 \
+     --secret-id shamarx-prod-broker-creds-master-key \
+     --query SecretString --output text)
+   ```
+3. SSH onto the app server. For each `BrokerAccount` row, decrypt
+   `encryptedCreds` with `$OLD_KEY`, re-encrypt with a new key,
+   `UPDATE BrokerAccount SET encryptedCreds = ..., credsIv = ..., credsAuthTag = ...`.
+4. `put-secret-value` the new key into Secrets Manager (uses `Pending`
+   stage automatically; promote to `Current` after verifying).
+5. Restart the app container — picks up the new key.
+6. Verify with a no-op order on a mock account.
 
-No automated rotation tool in v1. The above is manual.
+No automated rotation tool in v1. The above is manual; expect SOC2 to
+push this onto a quarterly cadence eventually.
 
 ### Enabling fan-out
 
