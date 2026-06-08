@@ -8,3 +8,5 @@ asyncpg==0.30.0
 pandas==2.2.3
 tqdm==4.67.1
 redis==5.2.1
+pytest>=8
+pytest-asyncio>=0.21
