@@ -76,6 +76,7 @@ export class BrokerAccountsService {
     const value = await this.prisma.brokerAccount.findMany({
       where: { isEnabled: true },
       orderBy: [{ sortIndex: 'asc' }, { createdAt: 'asc' }],
+      include: { user: true },
     });
     this.cache = { value, expiresAt: Date.now() + TTL_MS };
     return value;

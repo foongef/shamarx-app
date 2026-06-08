@@ -32,6 +32,10 @@ import { JournalService } from '../../journal/journal.service';
 import { BrokerAccountsService } from '../../broker-accounts/broker-accounts.service';
 import { BrokerHttpClient } from './broker-http-client';
 import { LiveSmcOrchestratorRegistry } from './live-smc-orchestrator-registry';
+import { getPreset, StrategyPreset } from '../presets';
+import type { BrokerAccount, User } from '@prisma/client';
+
+type BrokerAccountWithUser = BrokerAccount & { user: User };
 
 const M15_BUFFER = 100;
 const H1_BUFFER = 500;
@@ -553,13 +557,39 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
+   * Public fan-out entry point. Gates evaluation on per-user flags and
+   * the preset's pair list before delegating to the internal evaluator.
+   */
+  async evaluatePairForAccount(
+    symbol: string,
+    account: BrokerAccountWithUser,
+  ): Promise<SmcLiveSignal | null> {
+    if (!account.user) {
+      this.logger.warn(`account=${account.id} has no user — skipping`);
+      return null;
+    }
+    if (!account.user.botEnabled || !account.user.isActive) {
+      return null;
+    }
+    if (!account.isEnabled) {
+      return null;
+    }
+    const preset = getPreset(account.user.presetKey);
+    if (!preset.pairs.includes(symbol)) {
+      return null;
+    }
+    return this.evaluatePairForAccountInternal(symbol, account, preset);
+  }
+
+  /**
    * Per-account version of evaluatePair. Same strategy logic; broker
    * calls routed through BrokerHttpClient by accountId; orchestrator
    * state held by LiveSmcOrchestratorRegistry per account.
    */
-  async evaluatePairForAccount(
+  private async evaluatePairForAccountInternal(
     symbol: string,
     account: { id: string; name: string },
+    preset: StrategyPreset,
   ): Promise<SmcLiveSignal | null> {
     const [m15, h1, d1, openPositions, allOpenPositions, accountInfo] = await Promise.all([
       this.fetchCandles(symbol, Timeframe.M15, M15_BUFFER),
@@ -577,9 +607,9 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
       accountEquity: accountInfo.equity,
       openDirections: new Set(openPositions.map((p: any) => p.side as 'BUY' | 'SELL')),
       totalOpenPositions: allOpenPositions.length,
-      riskPercent: this.liveControl.getRiskPercent(),
+      riskPercent: preset.riskPercent,
       nowIso: evalTs,
-      maxOpenPositions: 4,
+      maxOpenPositions: preset.maxOpenPositions,
     });
 
     if (!signal) {
