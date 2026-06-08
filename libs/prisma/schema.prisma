@@ -24,6 +24,7 @@ model User {
   updatedAt    DateTime  @updatedAt
 
   passwordResetTokens PasswordResetToken[]
+  brokerAccounts      BrokerAccount[]
 
   @@index([email])
 }
@@ -53,7 +54,11 @@ model EquitySnapshot {
   freeMargin    Float    @default(0)
   openPositions Int      @default(0)
 
+  accountId String?
+  account   BrokerAccount? @relation(fields: [accountId], references: [id], onDelete: Restrict)
+
   @@index([source, takenAt])
+  @@index([accountId, takenAt])
 }
 
 model Candle {
@@ -209,9 +214,13 @@ model Trade {
 
   journalEntry JournalEntry?
 
+  accountId String?
+  account   BrokerAccount? @relation(fields: [accountId], references: [id], onDelete: Restrict)
+
   @@index([status])
   @@index([symbol, createdAt])
   @@index([sessionId])
+  @@index([accountId, createdAt])
 }
 
 model LiveSession {
@@ -235,7 +244,11 @@ model LiveSession {
 
   trades Trade[]
 
+  accountId String?
+  account   BrokerAccount? @relation(fields: [accountId], references: [id], onDelete: Restrict)
+
   @@index([status, startedAt])
+  @@index([accountId, startedAt])
 }
 
 // Live-replay backtest: drives the SAME live SMC evaluator across all 4 pairs
@@ -314,7 +327,7 @@ model LiveReplayTrade {
 
 model RiskState {
   id                      String   @id @default(uuid())
-  date                    DateTime @unique @db.Date
+  date                    DateTime @db.Date
   dailyPnl                Float    @default(0)
   consecutiveLosses       Int      @default(0)
   openPositionCount       Int      @default(0)
@@ -322,6 +335,11 @@ model RiskState {
   consecutiveLossLimitHit Boolean  @default(false)
   createdAt               DateTime @default(now())
   updatedAt               DateTime @updatedAt
+
+  accountId String?
+  account   BrokerAccount? @relation(fields: [accountId], references: [id], onDelete: Restrict)
+
+  @@unique([accountId, date])
 }
 
 model RiskConfig {
@@ -415,4 +433,37 @@ model DayNote {
   updatedAt DateTime @updatedAt
 
   @@index([date])
+}
+
+model BrokerAccount {
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  name           String
+  /// 'METAAPI' | 'MOCK' | 'MOOMOO' (future)
+  broker         String
+  /// AES-256-GCM ciphertext of broker-specific creds JSON.
+  encryptedCreds Bytes
+  /// 12-byte initialization vector (random per encryption).
+  credsIv        Bytes
+  /// 16-byte GCM authentication tag.
+  credsAuthTag   Bytes
+
+  isEnabled       Boolean   @default(false)
+  sortIndex       Int       @default(0)
+  /// 'metaapi' | 'mock'
+  mode            String    @default("metaapi")
+  lastConnectedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  trades          Trade[]
+  sessions        LiveSession[]
+  equitySnapshots EquitySnapshot[]
+  riskStates      RiskState[]
+
+  @@unique([userId, name])
+  @@index([userId, isEnabled])
 }

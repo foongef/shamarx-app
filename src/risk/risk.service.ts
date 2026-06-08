@@ -61,17 +61,20 @@ export class RiskService implements OnModuleInit {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    // Get or create today's risk state
-    let riskState = await this.prisma.riskState.findUnique({
-      where: { date: today },
+    // Get or create today's risk state. NOTE: `date` is no longer a
+    // standalone unique — the unique key is now (accountId, date). For v1
+    // (pre-multi-account) all rows have accountId=null, so findFirst with
+    // both fields preserves the prior single-row-per-day semantics.
+    let riskState = await this.prisma.riskState.findFirst({
+      where: { date: today, accountId: null },
     });
 
     if (!riskState) {
       // Carry over consecutive losses from previous day
       const yesterday = new Date(today);
       yesterday.setDate(yesterday.getDate() - 1);
-      const prevState = await this.prisma.riskState.findUnique({
-        where: { date: yesterday },
+      const prevState = await this.prisma.riskState.findFirst({
+        where: { date: yesterday, accountId: null },
       });
 
       riskState = await this.prisma.riskState.create({
@@ -163,8 +166,8 @@ export class RiskService implements OnModuleInit {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    let riskState = await this.prisma.riskState.findUnique({
-      where: { date: today },
+    let riskState = await this.prisma.riskState.findFirst({
+      where: { date: today, accountId: null },
     });
 
     if (!riskState) {
