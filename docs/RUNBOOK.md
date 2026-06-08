@@ -403,3 +403,58 @@ ssm 'docker compose -f /opt/trading-bot/repo/docker/docker-compose.yml restart t
    doesn't respond — re-run the latest deploy run as a clean reset
    (it's idempotent: `git reset --hard origin/main` + `docker compose up
    -d --build`)
+
+## Multi-Account Broker Operations
+
+### Generating BROKER_CREDS_KEY
+
+```bash
+openssl rand -hex 32
+```
+
+Place the output in production `.env` as `BROKER_CREDS_KEY=...`. Lost
+key = all encrypted creds become unrecoverable; users must re-enter
+broker creds via the UI.
+
+### Rotating BROKER_CREDS_KEY
+
+1. Pick a downtime window.
+2. SSH into the app server. Decrypt the encrypted creds for each
+   BrokerAccount with the old key.
+3. Re-encrypt with the new key.
+4. Update each `BrokerAccount` row's `encryptedCreds`, `credsIv`,
+   `credsAuthTag`.
+5. Swap the env var. Restart the app.
+6. Verify by triggering a no-op order on a mock account — should
+   succeed.
+
+No automated rotation tool in v1. The above is manual.
+
+### Enabling fan-out
+
+After the schema migration deploys and `scripts/backfill-broker-accounts.ts`
+runs successfully, set `ENABLE_MULTI_ACCOUNT_FANOUT=true` in production
+`.env` and restart the app container.
+
+To roll back: set to `false` and restart. The strategy engine reverts
+to legacy single-account behavior using the env-driven MetaApi creds.
+
+### Soft cap
+
+`MULTI_ACCOUNT_SOFT_CAP` defaults to 5. To raise it, set the env var
+and restart. Higher caps mean more concurrent broker connections —
+monitor MetaApi rate limits per account.
+
+### Running the backfill script
+
+After schema deploys (auto-applied by `prisma db push` in
+`deploy-backend.yml`):
+
+```bash
+aws ssm send-command --profile shamarx-prod --region ap-southeast-5 \
+  --instance-ids i-0da17ad488fa32c8a \
+  --document-name AWS-RunShellScript \
+  --parameters 'commands=["cd /opt/trading-bot/repo && docker compose -f docker/docker-compose.yml exec -T trading-bot pnpm ts-node -P tsconfig.build.json --transpile-only scripts/backfill-broker-accounts.ts"]'
+```
+
+Idempotent — re-running skips already-assigned rows.
