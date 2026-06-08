@@ -497,8 +497,8 @@ model Invite {
   id          String    @id @default(uuid())
   email       String
   tokenHash   String    @unique
-  createdById String
-  createdBy   User      @relation("InviteCreator", fields: [createdById], references: [id])
+  createdById String?
+  createdBy   User?     @relation("InviteCreator", fields: [createdById], references: [id], onDelete: SetNull)
   expiresAt   DateTime
   acceptedAt  DateTime?
   createdAt   DateTime  @default(now())

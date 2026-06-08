@@ -24,7 +24,7 @@ CREATE TABLE "Invite" (
     "id" TEXT NOT NULL,
     "email" TEXT NOT NULL,
     "tokenHash" TEXT NOT NULL,
-    "createdById" TEXT NOT NULL,
+    "createdById" TEXT,
     "expiresAt" TIMESTAMP(3) NOT NULL,
     "acceptedAt" TIMESTAMP(3),
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -54,4 +54,4 @@ CREATE INDEX "Invite_expiresAt_idx" ON "Invite"("expiresAt");
 ALTER TABLE "RefreshToken" ADD CONSTRAINT "RefreshToken_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "Invite" ADD CONSTRAINT "Invite_createdById_fkey" FOREIGN KEY ("createdById") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "Invite" ADD CONSTRAINT "Invite_createdById_fkey" FOREIGN KEY ("createdById") REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE;
