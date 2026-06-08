@@ -63,6 +63,17 @@ class MetaApiMT5(Broker):
     # Standard symbols we support
     KNOWN_SYMBOLS = ["XAUUSD", "GBPUSD", "EURUSD", "USDJPY", "US30", "NAS100"]
 
+    # Circuit-breaker tuning. After CB_THRESHOLD consecutive init failures we
+    # back off exponentially (BASE × 2^n, capped at MAX) before allowing
+    # another attempt. Prevents the 429-spiral observed in production where
+    # rapid retries by us (and by the SDK's internal reconnect logic) get
+    # rate-limited by MetaApi, which causes more failures, which causes more
+    # retries — a death loop that needs a manual container restart to escape.
+    CB_THRESHOLD = 3       # failures before the breaker opens
+    CB_BASE_SLEEP_S = 30   # first backoff window after threshold
+    CB_MAX_SLEEP_S = 600   # cap at 10 minutes
+    MIN_FORCED_REINIT_INTERVAL_S = 5  # min gap between consecutive force=True attempts
+
     def __init__(self, account_id: str = "", access_token: str = ""):
         # Allow no-arg construction for legacy module-level singleton — falls
         # through to env vars in that case (preserves backwards-compat).
@@ -77,16 +88,44 @@ class MetaApiMT5(Broker):
         self._init_lock = asyncio.Lock()
         self._keepalive_task: Optional[asyncio.Task] = None
 
+        # Circuit-breaker state
+        self._consecutive_failures = 0
+        self._circuit_breaker_until: Optional[float] = None  # event-loop time
+        self._last_forced_init_at: float = 0.0
+
     @classmethod
     def from_creds(cls, creds: dict) -> 'MetaApiMT5':
         return cls(account_id=creds['accountId'], access_token=creds['accessToken'])
 
     async def initialize(self, force: bool = False):
+        loop = asyncio.get_event_loop()
+        now = loop.time()
+
+        # Circuit breaker — refuse to initialize while the cooldown window is open.
+        # Raises a clear exception that callers catch in _with_reconnect; they
+        # surface the failure instead of looping back into another instant retry.
+        if self._circuit_breaker_until is not None and now < self._circuit_breaker_until:
+            wait_s = self._circuit_breaker_until - now
+            raise RuntimeError(
+                f"MetaAPI circuit breaker open — refusing to reconnect for "
+                f"{wait_s:.0f}s (consecutive failures: {self._consecutive_failures})"
+            )
+
+        # Throttle forced re-init: if a force=True call arrives within the
+        # MIN_FORCED_REINIT_INTERVAL_S of the previous one, sleep first.
+        # This dampens cascading reconnect storms when many in-flight ops all
+        # see a single disconnect and stampede into initialize(force=True).
+        if force and (now - self._last_forced_init_at) < self.MIN_FORCED_REINIT_INTERVAL_S:
+            wait_s = self.MIN_FORCED_REINIT_INTERVAL_S - (now - self._last_forced_init_at)
+            logger.info(f"Throttling forced re-init by {wait_s:.1f}s")
+            await asyncio.sleep(wait_s)
+
         # Serialize initialization to prevent concurrent reconnects from racing.
         async with self._init_lock:
             if self._initialized and not force:
                 return
             if force:
+                self._last_forced_init_at = loop.time()
                 logger.warning("Forcing MetaAPI re-initialization")
                 self._initialized = False
                 # Best-effort close of stale connection
@@ -97,40 +136,64 @@ class MetaApiMT5(Broker):
                     pass
                 self._connection = None
 
-            token = self.access_token
-            account_id = self.account_id
+            try:
+                token = self.access_token
+                account_id = self.account_id
 
-            if not token or not account_id:
-                raise RuntimeError("METAAPI_ACCESS_TOKEN and METAAPI_ACCOUNT_ID_DEMO must be set")
+                if not token or not account_id:
+                    raise RuntimeError("METAAPI_ACCESS_TOKEN and METAAPI_ACCOUNT_ID_DEMO must be set")
 
-            self._api = MetaApi(token)
-            self._account = await self._api.metatrader_account_api.get_account(account_id)
+                self._api = MetaApi(token)
+                self._account = await self._api.metatrader_account_api.get_account(account_id)
 
-            if self._account.state != "DEPLOYED":
-                logger.info("Deploying MetaAPI account...")
-                await self._account.deploy()
-                await self._account.wait_deployed()
+                if self._account.state != "DEPLOYED":
+                    logger.info("Deploying MetaAPI account...")
+                    await self._account.deploy()
+                    await self._account.wait_deployed()
 
-            self._connection = self._account.get_rpc_connection()
-            await self._connection.connect()
-            await self._connection.wait_synchronized()
+                self._connection = self._account.get_rpc_connection()
+                await self._connection.connect()
+                await self._connection.wait_synchronized()
 
-            # Build symbol map by matching broker symbols to our known symbols
-            broker_symbols = await self._connection.get_symbols()
-            for our_symbol in self.KNOWN_SYMBOLS:
-                for bs in broker_symbols:
-                    if bs.startswith(our_symbol):
-                        self._symbol_map[our_symbol] = bs
-                        self._reverse_map[bs] = our_symbol
-                        break
+                # Build symbol map by matching broker symbols to our known symbols
+                broker_symbols = await self._connection.get_symbols()
+                for our_symbol in self.KNOWN_SYMBOLS:
+                    for bs in broker_symbols:
+                        if bs.startswith(our_symbol):
+                            self._symbol_map[our_symbol] = bs
+                            self._reverse_map[bs] = our_symbol
+                            break
 
-            self._initialized = True
-            logger.info(f"MetaAPI connected. Symbol map: {self._symbol_map}")
+                self._initialized = True
+                # Success — reset the circuit breaker.
+                self._consecutive_failures = 0
+                self._circuit_breaker_until = None
+                logger.info(f"MetaAPI connected. Symbol map: {self._symbol_map}")
 
-            # Start keepalive after first successful init to prevent the websocket
-            # from going stale during quiet periods (~50min idle = silent disconnect).
-            if self._keepalive_task is None or self._keepalive_task.done():
-                self._keepalive_task = asyncio.create_task(self._keepalive_loop())
+                # Start keepalive after first successful init to prevent the websocket
+                # from going stale during quiet periods (~50min idle = silent disconnect).
+                if self._keepalive_task is None or self._keepalive_task.done():
+                    self._keepalive_task = asyncio.create_task(self._keepalive_loop())
+            except Exception:
+                self._consecutive_failures += 1
+                if self._consecutive_failures >= self.CB_THRESHOLD:
+                    # Exponential backoff: 30 → 60 → 120 → 240 → 480 → 600 (cap).
+                    excess = self._consecutive_failures - self.CB_THRESHOLD
+                    backoff_s = min(self.CB_BASE_SLEEP_S * (2 ** excess), self.CB_MAX_SLEEP_S)
+                    self._circuit_breaker_until = loop.time() + backoff_s
+                    logger.error(
+                        f"MetaAPI init failed {self._consecutive_failures}× consecutively — "
+                        f"opening circuit breaker for {backoff_s}s. Tearing down SDK client "
+                        f"to halt internal reconnect spam."
+                    )
+                    # Tear down the MetaApi SDK instance entirely so its
+                    # internal reconnect background tasks stop hammering
+                    # the broker. Next attempt rebuilds from scratch.
+                    self._api = None
+                    self._account = None
+                    self._connection = None
+                    self._initialized = False
+                raise
 
     async def _keepalive_loop(self):
         """Ping the MetaAPI account every 5 minutes to prevent idle disconnect."""
