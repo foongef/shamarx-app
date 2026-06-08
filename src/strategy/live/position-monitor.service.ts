@@ -81,6 +81,24 @@ export class PositionMonitorService implements OnModuleInit {
         this.logger.error(`[${symbol}] reconcile error: ${(err as Error).message}`);
       }
     }
+
+    // Safety net: catch any closed trades that lost their JournalEntry
+    // due to a failed Hook 2. Idempotent — only touches rows with no
+    // journalEntry yet.
+    try {
+      const orphans = await this.prisma.trade.findMany({
+        where: { status: 'CLOSED', journalEntry: null },
+        select: { id: true },
+      });
+      for (const o of orphans) {
+        await this.journal.enrichJournalOnExit(o.id);
+      }
+      if (orphans.length > 0) {
+        this.logger.log(`Journal safety net: enriched ${orphans.length} orphan trade(s)`);
+      }
+    } catch (err) {
+      this.logger.warn(`Journal safety net failed: ${(err as Error).message}`);
+    }
   }
 
   private async reconcilePair(symbol: string): Promise<void> {
