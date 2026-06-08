@@ -17,6 +17,8 @@ import { Timeframe, SERVICE_URLS } from '@app/common';
 import { LiveControlService } from './live-control.service';
 import { LiveSmcOrchestrator } from './live-smc-orchestrator';
 import { JournalService } from '../../journal/journal.service';
+import { BrokerAccountsService } from '../../broker-accounts/broker-accounts.service';
+import { BrokerHttpClient } from './broker-http-client';
 
 interface BrokerPosition {
   ticket: number;
@@ -46,10 +48,16 @@ export class PositionMonitorService implements OnModuleInit {
     private readonly liveControl: LiveControlService,
     private readonly orchestrator: LiveSmcOrchestrator,
     private readonly journal: JournalService,
+    private readonly brokerAccounts: BrokerAccountsService,
+    private readonly brokerHttp: BrokerHttpClient,
   ) {
     this.liveMode = (this.config.get<string>('LIVE_MODE') || 'false').toLowerCase() === 'true';
     const pairsCsv = this.config.get<string>('STRATEGY_PAIRS') || 'XAUUSD,EURUSD,GBPUSD,USDJPY';
     this.pairs = pairsCsv.split(',').map((s) => s.trim().toUpperCase()).filter(Boolean);
+  }
+
+  private get fanOutEnabled(): boolean {
+    return (this.config.get<string>('ENABLE_MULTI_ACCOUNT_FANOUT') || 'false').toLowerCase() === 'true';
   }
 
   async onModuleInit() {
@@ -74,11 +82,24 @@ export class PositionMonitorService implements OnModuleInit {
 
   /** Public entrypoint — useful for manual reconciliation triggers */
   async reconcileAll(): Promise<void> {
-    for (const symbol of this.pairs) {
-      try {
-        await this.reconcilePair(symbol);
-      } catch (err) {
-        this.logger.error(`[${symbol}] reconcile error: ${(err as Error).message}`);
+    if (this.fanOutEnabled) {
+      const accounts = await this.brokerAccounts.findEnabled();
+      for (const account of accounts) {
+        for (const symbol of this.pairs) {
+          try {
+            await this.reconcilePairForAccount(symbol, account);
+          } catch (err) {
+            this.logger.error(`[${(account as any).name}/${symbol}] reconcile error: ${(err as Error).message}`);
+          }
+        }
+      }
+    } else {
+      for (const symbol of this.pairs) {
+        try {
+          await this.reconcilePair(symbol);
+        } catch (err) {
+          this.logger.error(`[${symbol}] reconcile error: ${(err as Error).message}`);
+        }
       }
     }
 
@@ -107,6 +128,37 @@ export class PositionMonitorService implements OnModuleInit {
 
     const dbOpenTrades = await this.prisma.trade.findMany({
       where: { symbol, status: 'OPEN', mt5Ticket: { not: null } },
+    });
+
+    for (const trade of dbOpenTrades) {
+      if (trade.mt5Ticket && brokerTicketSet.has(trade.mt5Ticket)) {
+        // Still open at broker — leave alone (broker manages SL/TP).
+        continue;
+      }
+      // Position no longer at broker → it was closed (SL, TP, or manual).
+      await this.finalizeClosedTrade(
+        trade.id,
+        trade.mt5Ticket!,
+        symbol,
+        trade.side as 'BUY' | 'SELL',
+        trade.lotSize,
+        trade.entryPrice,
+        trade.slPrice,
+        trade.tpPrice,
+      );
+    }
+  }
+
+  /**
+   * Per-account version of reconcilePair. Open trades queried with
+   * accountId scope; broker calls routed via BrokerHttpClient.
+   */
+  private async reconcilePairForAccount(symbol: string, account: { id: string }): Promise<void> {
+    const brokerPositions = await this.brokerHttp.fetchOpenPositions(account.id, symbol);
+    const brokerTicketSet = new Set(brokerPositions.map((p) => p.ticket));
+
+    const dbOpenTrades = await this.prisma.trade.findMany({
+      where: { symbol, status: 'OPEN', mt5Ticket: { not: null }, accountId: account.id },
     });
 
     for (const trade of dbOpenTrades) {
@@ -271,6 +323,7 @@ export class PositionMonitorService implements OnModuleInit {
         status: 'OPEN',
         mt5Ticket: { not: null },
         id: { not: closed.id },
+        accountId: (closed as any).accountId,
         createdAt: { gte: lower, lte: upper },
       },
     });
@@ -293,12 +346,18 @@ export class PositionMonitorService implements OnModuleInit {
       : sister.entryPrice - buffer;
 
     try {
-      await firstValueFrom(
-        this.httpService.post(
-          `${SERVICE_URLS.EXECUTION}/positions/${sister.mt5Ticket}/modify`,
-          { slPrice: newSl, tpPrice: sister.tpPrice ?? 0 },
-        ),
-      );
+      const sisterAcctId = (sister as any).accountId as string | null | undefined;
+      if (sisterAcctId) {
+        await this.brokerHttp.modify(sisterAcctId, sister.mt5Ticket!, newSl, sister.tpPrice ?? 0);
+      } else {
+        // Legacy fallback: trade has no accountId (pre-backfill).
+        await firstValueFrom(
+          this.httpService.post(
+            `${SERVICE_URLS.EXECUTION}/positions/${sister.mt5Ticket}/modify`,
+            { slPrice: newSl, tpPrice: sister.tpPrice ?? 0 },
+          ),
+        );
+      }
     } catch (err) {
       this.logger.warn(
         `[${sister.symbol}] sister BE broker modify failed for ticket=${sister.mt5Ticket}: ${(err as Error).message}`,
