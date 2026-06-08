@@ -16,7 +16,8 @@
  * State is held per-symbol in memory; we expose serialize()/restore() so
  * the live engine can survive container restarts via Redis.
  */
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
+import { RedisService } from '@app/redis';
 import { computeIndicators } from '../../backtest/engine/indicator-calculator';
 import { getInstrumentConfig } from '../../backtest/engine/instrument-config';
 import { RiskManager } from '../../backtest/engine/risk-manager';
@@ -101,6 +102,15 @@ export class LiveSmcOrchestrator {
   private readonly logger = new Logger(LiveSmcOrchestrator.name);
   private readonly states = new Map<string, OrchestratorState>();
 
+  /**
+   * RedisService is optional so the replay path (`new LiveSmcOrchestrator()`
+   * in replay-worker.ts) can still construct without DI. When omitted,
+   * `restoreFromRedis` / `persistToRedis` / `migrateLegacyKeyOnce` are no-ops.
+   */
+  constructor(
+    @Optional() @Inject(RedisService) private readonly redis?: RedisService,
+  ) {}
+
   /** Reset state for a symbol — call when starting a fresh session. */
   reset(symbol: string): void {
     this.states.delete(symbol);
@@ -168,6 +178,63 @@ export class LiveSmcOrchestrator {
         actionedSweeps: new Set(raw.actionedSweeps ?? []),
         riskManager,
       });
+    }
+  }
+
+  /**
+   * Read account-scoped snapshot from Redis and restore in-memory state.
+   * When accountId is omitted, reads the legacy unsuffixed key (preserves
+   * single-account behavior during multi-account rollout).
+   * No-op when this orchestrator was instantiated without RedisService
+   * (e.g. in the replay-worker code path).
+   */
+  async restoreFromRedis(accountId?: string): Promise<void> {
+    if (!this.redis) return;
+    const key = accountId
+      ? `live:orchestrator:state:${accountId}`
+      : 'live:orchestrator:state';
+    try {
+      const raw = await this.redis.get(key);
+      if (raw) {
+        this.restore(JSON.parse(raw));
+      }
+    } catch (err) {
+      this.logger.warn(`restoreFromRedis(${key}) failed: ${(err as Error).message}`);
+    }
+  }
+
+  /**
+   * Serialize in-memory state and write to Redis under the account-scoped key.
+   */
+  async persistToRedis(accountId?: string): Promise<void> {
+    if (!this.redis) return;
+    const key = accountId
+      ? `live:orchestrator:state:${accountId}`
+      : 'live:orchestrator:state';
+    try {
+      await this.redis.set(key, JSON.stringify(this.serialize()));
+    } catch (err) {
+      this.logger.warn(`persistToRedis(${key}) failed: ${(err as Error).message}`);
+    }
+  }
+
+  /**
+   * One-shot: if a legacy unsuffixed key exists in Redis, copy its
+   * contents to the default-account suffixed key. Idempotent — does
+   * nothing if the suffixed key already exists or legacy is empty.
+   */
+  async migrateLegacyKeyOnce(defaultAccountId: string): Promise<void> {
+    if (!this.redis) return;
+    const suffixed = `live:orchestrator:state:${defaultAccountId}`;
+    try {
+      const exists = await this.redis.get(suffixed);
+      if (exists) return;
+      const legacy = await this.redis.get('live:orchestrator:state');
+      if (!legacy) return;
+      await this.redis.set(suffixed, legacy);
+      this.logger.log(`Migrated Redis key live:orchestrator:state → ${suffixed}`);
+    } catch (err) {
+      this.logger.warn(`migrateLegacyKeyOnce failed: ${(err as Error).message}`);
     }
   }
 

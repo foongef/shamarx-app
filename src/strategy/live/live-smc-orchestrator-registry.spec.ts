@@ -7,8 +7,8 @@ describe('LiveSmcOrchestratorRegistry', () => {
 
   beforeEach(async () => {
     factory = jest.fn(() => ({
-      restore: jest.fn().mockResolvedValue(undefined),
-      persistNow: jest.fn().mockResolvedValue(undefined),
+      restoreFromRedis: jest.fn().mockResolvedValue(undefined),
+      persistToRedis: jest.fn().mockResolvedValue(undefined),
     } as any));
     const moduleRef = await Test.createTestingModule({
       providers: [
@@ -33,14 +33,14 @@ describe('LiveSmcOrchestratorRegistry', () => {
     expect(factory).toHaveBeenCalledTimes(2);
   });
 
-  it('calls restore on first creation', () => {
+  it('calls restoreFromRedis on first creation', () => {
     const inst = registry.getOrCreate('acct-1') as any;
-    expect(inst.restore).toHaveBeenCalledWith('acct-1');
+    expect(inst.restoreFromRedis).toHaveBeenCalledWith('acct-1');
   });
 
-  it('removeIfDisabled persists state', async () => {
+  it('removeIfDisabled calls persistToRedis', async () => {
     const inst = registry.getOrCreate('acct-1') as any;
     await registry.removeIfDisabled('acct-1');
-    expect(inst.persistNow).toHaveBeenCalledWith('acct-1');
+    expect(inst.persistToRedis).toHaveBeenCalledWith('acct-1');
   });
 });

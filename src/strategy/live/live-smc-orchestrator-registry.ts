@@ -35,7 +35,7 @@ export class LiveSmcOrchestratorRegistry {
       return inst;
     }
     inst = this.factory();
-    void (inst as any).restore(accountId);
+    void inst.restoreFromRedis(accountId);
     this.instances.set(accountId, inst);
     return inst;
   }
@@ -43,7 +43,7 @@ export class LiveSmcOrchestratorRegistry {
   async removeIfDisabled(accountId: string): Promise<void> {
     const inst = this.instances.get(accountId);
     if (!inst) return;
-    await (inst as any).persistNow(accountId);
+    await inst.persistToRedis(accountId);
     const timer = setTimeout(() => {
       this.instances.delete(accountId);
       this.evictTimers.delete(accountId);
