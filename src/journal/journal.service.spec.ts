@@ -354,3 +354,77 @@ describe('JournalService.createJournalEntriesForSignal', () => {
     expect(calls.skipDuplicates).toBe(true);
   });
 });
+
+describe('JournalService.enrichJournalOnExit', () => {
+  let service: JournalService;
+  let prisma: any;
+
+  beforeEach(async () => {
+    prisma = {
+      trade: { findUnique: jest.fn() },
+      journalEntry: { upsert: jest.fn() },
+      candle: { findMany: jest.fn() },
+    };
+    const moduleRef = await Test.createTestingModule({
+      providers: [
+        JournalService,
+        { provide: PrismaService, useValue: prisma },
+      ],
+    }).compile();
+    service = moduleRef.get(JournalService);
+  });
+
+  it('writes exitContext + outcome for a closed trade', async () => {
+    prisma.trade.findUnique.mockResolvedValue({
+      id: 'T1', symbol: 'EURUSD', side: 'SELL',
+      entryPrice: 1.16, slPrice: 1.165, originalSlPrice: 1.165,
+      tpPrice: 1.155, pnl: 2.0, exitReason: 'TP',
+      closePrice: 1.158, closedAt: new Date('2026-06-03T09:48Z'),
+      createdAt: new Date('2026-06-03T07:15Z'),
+      candidate: { rsiValue: 0 },
+    });
+    prisma.candle.findMany.mockResolvedValue([
+      { high: 1.161, low: 1.157 },
+      { high: 1.160, low: 1.155 },
+    ]);
+    prisma.journalEntry.upsert.mockResolvedValue({});
+
+    await service.enrichJournalOnExit('T1');
+
+    expect(prisma.journalEntry.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      where: { tradeId: 'T1' },
+      update: expect.objectContaining({
+        outcome: 'WIN',
+        exitContext: expect.objectContaining({
+          exitReason: 'TP',
+          holdMinutes: 153,
+          exitPrice: 1.158,
+        }),
+      }),
+    }));
+  });
+
+  it('stores mfeMaePips=null when candle data is missing', async () => {
+    prisma.trade.findUnique.mockResolvedValue({
+      id: 'T1', symbol: 'EURUSD', side: 'SELL',
+      entryPrice: 1.16, slPrice: 1.165, originalSlPrice: 1.165,
+      tpPrice: 1.155, pnl: -3.0, exitReason: 'SL',
+      closePrice: 1.165, closedAt: new Date('2026-06-03T09:48Z'),
+      createdAt: new Date('2026-06-03T07:15Z'),
+    });
+    prisma.candle.findMany.mockResolvedValue([]);
+    prisma.journalEntry.upsert.mockResolvedValue({});
+
+    await service.enrichJournalOnExit('T1');
+
+    const call = (prisma.journalEntry.upsert as jest.Mock).mock.calls[0][0];
+    expect(call.update.exitContext.mfeMaePips).toBeNull();
+    expect(call.update.outcome).toBe('LOSS');
+  });
+
+  it('is a no-op when trade is not yet closed', async () => {
+    prisma.trade.findUnique.mockResolvedValue({ id: 'T1', closedAt: null });
+    await service.enrichJournalOnExit('T1');
+    expect(prisma.journalEntry.upsert).not.toHaveBeenCalled();
+  });
+});

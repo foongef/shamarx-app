@@ -335,4 +335,76 @@ export class JournalService {
       skipDuplicates: true,
     });
   }
+
+  async enrichJournalOnExit(tradeId: string): Promise<void> {
+    const trade = await this.prisma.trade.findUnique({
+      where: { id: tradeId },
+    });
+    if (!trade || !trade.closedAt) return;
+
+    const holdMinutes = Math.round(
+      (trade.closedAt.getTime() - trade.createdAt.getTime()) / 60_000,
+    );
+
+    let mfeMaePips: { mfe: number; mae: number } | null = null;
+    try {
+      const candles = await this.prisma.candle.findMany({
+        where: {
+          symbol: trade.symbol,
+          timeframe: 'M15',
+          openTime: { gte: trade.createdAt, lte: trade.closedAt },
+        },
+        select: { high: true, low: true },
+      });
+      if (candles.length > 0) {
+        const pipSize = trade.symbol === 'XAUUSD' ? 0.1
+          : trade.symbol.endsWith('JPY') ? 0.01
+          : 0.0001;
+        const isBuy = trade.side === 'BUY';
+        let mfeRaw = 0, maeRaw = 0;
+        for (const c of candles) {
+          const favorable = isBuy ? c.high - trade.entryPrice : trade.entryPrice - c.low;
+          const adverse  = isBuy ? c.low - trade.entryPrice : trade.entryPrice - c.high;
+          if (favorable > mfeRaw) mfeRaw = favorable;
+          if (adverse  < maeRaw)  maeRaw  = adverse;
+        }
+        mfeMaePips = {
+          mfe: Math.round((mfeRaw / pipSize) * 10) / 10,
+          mae: Math.round((maeRaw / pipSize) * 10) / 10,
+        };
+      }
+    } catch (err) {
+      this.logger.warn(`MFE/MAE calc failed for ${tradeId}: ${(err as Error).message}`);
+      mfeMaePips = null;
+    }
+
+    const exitContext: JournalExitContext = {
+      closedAt: trade.closedAt.toISOString(),
+      exitReason: (trade.exitReason as JournalExitContext['exitReason']) ?? 'SL',
+      holdMinutes,
+      exitPrice: trade.closePrice ?? 0,
+      mfeMaePips,
+      trailedSlAtClose: trade.slPrice,
+      originalSlPrice: trade.originalSlPrice,
+      beActivated: trade.originalSlPrice !== null && trade.slPrice !== trade.originalSlPrice,
+    };
+
+    const outcome = this.deriveOutcome(trade.pnl, trade.exitReason);
+
+    await this.prisma.journalEntry.upsert({
+      where: { tradeId },
+      create: {
+        tradeId,
+        setupSummary: '',
+        llmReasoning: '',
+        exitContext: exitContext as any,
+        outcome,
+        tags: [],
+      } as any,
+      update: {
+        exitContext: exitContext as any,
+        outcome,
+      },
+    });
+  }
 }
