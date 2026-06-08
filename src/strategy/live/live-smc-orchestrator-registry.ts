@@ -1,4 +1,5 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Cron, CronExpression } from '@nestjs/schedule';
 import { LiveSmcOrchestrator } from './live-smc-orchestrator';
 
 const EVICT_AFTER_MS = 5 * 60_000;
@@ -50,5 +51,56 @@ export class LiveSmcOrchestratorRegistry {
       this.logger.log(`Evicted orchestrator instance for account=${accountId}`);
     }, EVICT_AFTER_MS);
     this.evictTimers.set(accountId, timer);
+  }
+
+  /**
+   * Persist every in-memory orchestrator to its account-scoped Redis key.
+   *
+   * Returns the count of accounts persisted so the caller (and tests)
+   * can verify the loop iterated. Failures on individual accounts are
+   * isolated — one bad account doesn't block the others.
+   *
+   * Accounts that haven't been touched since the last persist still get
+   * re-written. That's intentional: the cost is small (one Redis SET per
+   * account) and it keeps the read path simple — `restoreFromRedis` only
+   * has to look at the suffixed key, never the legacy unsuffixed one.
+   */
+  async persistAll(): Promise<number> {
+    const entries = Array.from(this.instances.entries());
+    let persisted = 0;
+    for (const [accountId, inst] of entries) {
+      try {
+        await inst.persistToRedis(accountId);
+        persisted++;
+      } catch (err) {
+        this.logger.warn(
+          `persistAll: failed for account=${accountId}: ${(err as Error).message}`,
+        );
+      }
+    }
+    return persisted;
+  }
+
+  /**
+   * 5-minute periodic persistence. Runs in-process via @nestjs/schedule.
+   *
+   * Rationale: per-account orchestrator state (pending queues, cooldowns,
+   * RiskManager) lives only in memory between `getOrCreate` and the
+   * eventual `removeIfDisabled`. Without this cron, a hard restart
+   * (container kill, OOM, deploy) wipes that state and every enabled
+   * account resets — losing actionedSweeps dedup, daily-loss counters,
+   * and cooldown timers. Cheap to write; expensive to lose.
+   *
+   * The interval is tunable via the @Cron expression; 5 min is chosen
+   * because:
+   *   - Per-account state mutates at most once per M15 (~every 15 min)
+   *   - On a worst-case crash, we lose ≤ 5 min of state per account
+   *   - 5 min × N accounts × 1 SET = trivial Redis load
+   */
+  @Cron(CronExpression.EVERY_5_MINUTES)
+  async persistAllScheduled(): Promise<void> {
+    if (this.instances.size === 0) return;
+    const count = await this.persistAll();
+    this.logger.debug(`persistAllScheduled: persisted ${count} orchestrator(s)`);
   }
 }
