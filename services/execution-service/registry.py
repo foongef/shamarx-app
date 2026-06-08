@@ -1,0 +1,55 @@
+"""
+Per-account broker client registry. Replaces the module-level
+metaapi_mt5 / mock_mt5 singletons. One client per accountId; lazy
+initialized; thread-safe init via per-key asyncio.Lock.
+"""
+import asyncio
+import logging
+from typing import Callable, Dict, Optional
+from broker_base import Broker
+
+_logger = logging.getLogger(__name__)
+
+
+def _default_factory(creds: dict, mode: str) -> Broker:
+    if mode == 'mock':
+        from mock_mt5 import MockMT5
+        return MockMT5()
+    from metaapi_mt5 import MetaApiMT5
+    return MetaApiMT5.from_creds(creds)
+
+
+class BrokerClientRegistry:
+    def __init__(self, factory: Optional[Callable[[dict, str], Broker]] = None):
+        self._clients: Dict[str, Broker] = {}
+        self._init_locks: Dict[str, asyncio.Lock] = {}
+        self._factory = factory or _default_factory
+
+    async def get_or_create(self, account_id: str, creds: dict, mode: str) -> Broker:
+        if account_id in self._clients:
+            return self._clients[account_id]
+        lock = self._init_locks.setdefault(account_id, asyncio.Lock())
+        async with lock:
+            if account_id in self._clients:
+                return self._clients[account_id]
+            client = self._factory(creds, mode)
+            await client.initialize()
+            self._clients[account_id] = client
+            _logger.info(f'BrokerClientRegistry: created client for account={account_id} mode={mode}')
+            return client
+
+    async def remove(self, account_id: str) -> None:
+        client = self._clients.pop(account_id, None)
+        if client:
+            try:
+                await client.close()
+            except Exception as e:
+                _logger.warning(f'Error closing client for account={account_id}: {e}')
+        self._init_locks.pop(account_id, None)
+
+    def known_accounts(self) -> list:
+        return list(self._clients.keys())
+
+
+# Module-level singleton — main.py / routes.py imports this.
+registry = BrokerClientRegistry()
