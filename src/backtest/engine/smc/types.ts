@@ -24,6 +24,9 @@ export interface PendingSetup {
    *  to the right bar at the moment of creation. Used by the orchestrator
    *  to identify and dedup setups after they've been added to pending. */
   sweepTime: string;
+  /** Which anchor was swept (PDH/PDL/etc) — only populated when
+   *  cfg.useAnchorSweeps. null/undefined for legacy swing-sweeps. */
+  anchorType?: 'PDH' | 'PDL' | 'ASIAN_H' | 'ASIAN_L' | 'WEEKLY_H' | 'WEEKLY_L';
 }
 
 /**

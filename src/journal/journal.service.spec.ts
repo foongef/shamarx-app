@@ -1,0 +1,466 @@
+import { Test } from '@nestjs/testing';
+import { PrismaService } from '@app/prisma';
+import { JournalService } from './journal.service';
+import { UnprocessableEntityException } from '@nestjs/common';
+
+describe('JournalService.upsertDayNote', () => {
+  let service: JournalService;
+  let prisma: { dayNote: { upsert: jest.Mock; delete: jest.Mock } };
+
+  beforeEach(async () => {
+    prisma = {
+      dayNote: {
+        upsert: jest.fn(),
+        delete: jest.fn(),
+      },
+    };
+    const moduleRef = await Test.createTestingModule({
+      providers: [
+        JournalService,
+        { provide: PrismaService, useValue: prisma },
+      ],
+    }).compile();
+    service = moduleRef.get(JournalService);
+  });
+
+  it('creates a day note for a past date', async () => {
+    prisma.dayNote.upsert.mockResolvedValue({ id: '1', date: new Date('2026-06-05'), note: 'hi' });
+    const result = await service.upsertDayNote('2026-06-05', 'hi');
+    expect(prisma.dayNote.upsert).toHaveBeenCalledWith({
+      where: { date: new Date('2026-06-05') },
+      create: { date: new Date('2026-06-05'), note: 'hi' },
+      update: { note: 'hi' },
+    });
+    expect(result).toEqual({ date: '2026-06-05', note: 'hi' });
+  });
+
+  it('deletes the day note when given empty string', async () => {
+    prisma.dayNote.delete.mockResolvedValue({});
+    const result = await service.upsertDayNote('2026-06-05', '');
+    expect(prisma.dayNote.delete).toHaveBeenCalledWith({
+      where: { date: new Date('2026-06-05') },
+    });
+    expect(result).toEqual({ date: '2026-06-05', note: null });
+  });
+
+  it('swallows P2025 (delete non-existing) as no-op', async () => {
+    prisma.dayNote.delete.mockRejectedValue({ code: 'P2025' });
+    const result = await service.upsertDayNote('2026-06-05', '');
+    expect(result).toEqual({ date: '2026-06-05', note: null });
+  });
+
+  it('rejects future dates with 422', async () => {
+    const future = new Date(Date.now() + 86400000 * 30).toISOString().slice(0, 10);
+    await expect(service.upsertDayNote(future, 'x')).rejects.toBeInstanceOf(UnprocessableEntityException);
+  });
+});
+
+describe('JournalService.updateTradeJournal', () => {
+  let service: JournalService;
+  let prisma: any;
+
+  beforeEach(async () => {
+    prisma = {
+      trade: { findUnique: jest.fn() },
+      journalEntry: { upsert: jest.fn(), findUnique: jest.fn() },
+    };
+    const moduleRef = await Test.createTestingModule({
+      providers: [
+        JournalService,
+        { provide: PrismaService, useValue: prisma },
+      ],
+    }).compile();
+    service = moduleRef.get(JournalService);
+  });
+
+  it('replaces tags array (not merge)', async () => {
+    prisma.trade.findUnique.mockResolvedValue({ id: 't1', sessionId: 'live-1' });
+    prisma.journalEntry.upsert.mockResolvedValue({
+      tags: ['News spike'], reflectionNote: null, entryContext: null, exitContext: null, setupSummary: '',
+    });
+    const result = await service.updateTradeJournal('t1', { tags: ['News spike'] });
+    expect(prisma.journalEntry.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      update: { tags: ['News spike'] },
+    }));
+    expect(result.tags).toEqual(['News spike']);
+  });
+
+  it('updates reflectionNote independently from tags', async () => {
+    prisma.trade.findUnique.mockResolvedValue({ id: 't1', sessionId: 'live-1' });
+    prisma.journalEntry.upsert.mockResolvedValue({ tags: [], reflectionNote: 'note', entryContext: null, exitContext: null, setupSummary: '' });
+    await service.updateTradeJournal('t1', { reflectionNote: 'note' });
+    expect(prisma.journalEntry.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      update: { reflectionNote: 'note' },
+    }));
+  });
+
+  it('clears reflectionNote when given null', async () => {
+    prisma.trade.findUnique.mockResolvedValue({ id: 't1', sessionId: 'live-1' });
+    prisma.journalEntry.upsert.mockResolvedValue({ tags: [], reflectionNote: null, entryContext: null, exitContext: null, setupSummary: '' });
+    await service.updateTradeJournal('t1', { reflectionNote: null });
+    expect(prisma.journalEntry.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      update: { reflectionNote: null },
+    }));
+  });
+
+  it('throws 404 when trade does not exist', async () => {
+    prisma.trade.findUnique.mockResolvedValue(null);
+    await expect(service.updateTradeJournal('missing', { tags: [] })).rejects.toMatchObject({ status: 404 });
+  });
+});
+
+describe('JournalService.getDay', () => {
+  let service: JournalService;
+  let prisma: any;
+
+  beforeEach(async () => {
+    prisma = {
+      trade: { findMany: jest.fn() },
+      dayNote: { findUnique: jest.fn() },
+    };
+    const moduleRef = await Test.createTestingModule({
+      providers: [
+        JournalService,
+        { provide: PrismaService, useValue: prisma },
+      ],
+    }).compile();
+    service = moduleRef.get(JournalService);
+  });
+
+  it('returns trades + dayNote + dayTotals for a date', async () => {
+    prisma.trade.findMany.mockResolvedValue([
+      {
+        id: 'T1', symbol: 'EURUSD', side: 'SELL', lotSize: 0.01,
+        entryPrice: 1.16, closePrice: 1.158, slPrice: 1.165, originalSlPrice: 1.165,
+        tpPrice: 1.155, pnl: 2.0, exitReason: 'TP', status: 'CLOSED',
+        createdAt: new Date('2026-06-05T07:15Z'), closedAt: new Date('2026-06-05T09:48Z'),
+        sweptLevel: 1.161, sweepCandleTime: new Date('2026-06-05T06:00Z'), d1Bias: 'BEARISH',
+        candidate: { setupTags: ['REVERSAL'] },
+        journalEntry: {
+          tags: ['Setup looked good'], reflectionNote: null,
+          entryContext: { d1Adx: 24 }, exitContext: { holdMinutes: 153 },
+          setupSummary: 'REVERSAL SELL on EURUSD', outcome: 'WIN',
+        },
+      },
+      {
+        id: 'T2', symbol: 'GBPUSD', side: 'SELL', lotSize: 0.01,
+        entryPrice: 1.275, closePrice: null, slPrice: 1.280, originalSlPrice: 1.280,
+        tpPrice: 1.270, pnl: null, exitReason: null, status: 'OPEN',
+        createdAt: new Date('2026-06-05T08:00Z'), closedAt: null,
+        sweptLevel: null, sweepCandleTime: null, d1Bias: 'BEARISH',
+        candidate: { setupTags: [] },
+        journalEntry: null,
+      },
+    ]);
+    prisma.dayNote.findUnique.mockResolvedValue({ note: 'caught by news' });
+
+    const result = await service.getDay('2026-06-05');
+
+    expect(result.date).toBe('2026-06-05');
+    expect(result.dayNote).toBe('caught by news');
+    expect(result.trades).toHaveLength(2);
+    expect(result.trades[0].id).toBe('T1');
+    expect(result.trades[0].journal.outcome).toBe('WIN');
+    expect(result.trades[1].journal.outcome).toBeNull();
+    expect(result.dayTotals).toEqual({
+      tradesCount: 2,
+      realizedPnl: 2.0,
+      winsCount: 1,
+      lossesCount: 0,
+    });
+  });
+
+  it('returns null dayNote when no row exists', async () => {
+    prisma.trade.findMany.mockResolvedValue([]);
+    prisma.dayNote.findUnique.mockResolvedValue(null);
+    const result = await service.getDay('2026-06-05');
+    expect(result.dayNote).toBeNull();
+    expect(result.trades).toEqual([]);
+  });
+
+  it('excludes FORCED_CLOSE trades from wins/losses', async () => {
+    prisma.trade.findMany.mockResolvedValue([
+      { id: 'A', symbol: 'EURUSD', side: 'BUY', lotSize: 0.01, entryPrice: 1.16, closePrice: 1.165, slPrice: 1.155, originalSlPrice: 1.155, tpPrice: 1.17, pnl: 5, exitReason: 'TP', status: 'CLOSED', createdAt: new Date('2026-06-05T07:00Z'), closedAt: new Date('2026-06-05T08:00Z'), sweptLevel: null, sweepCandleTime: null, d1Bias: null, candidate: { setupTags: [] }, journalEntry: null },
+      { id: 'B', symbol: 'EURUSD', side: 'BUY', lotSize: 0.01, entryPrice: 1.16, closePrice: 1.162, slPrice: 1.155, originalSlPrice: 1.155, tpPrice: 1.17, pnl: 3, exitReason: 'FORCED_CLOSE', status: 'CLOSED', createdAt: new Date('2026-06-05T09:00Z'), closedAt: new Date('2026-06-05T10:00Z'), sweptLevel: null, sweepCandleTime: null, d1Bias: null, candidate: { setupTags: [] }, journalEntry: null },
+      { id: 'C', symbol: 'EURUSD', side: 'SELL', lotSize: 0.01, entryPrice: 1.16, closePrice: 1.158, slPrice: 1.165, originalSlPrice: 1.165, tpPrice: 1.15, pnl: -2, exitReason: 'FORCED_CLOSE', status: 'CLOSED', createdAt: new Date('2026-06-05T11:00Z'), closedAt: new Date('2026-06-05T12:00Z'), sweptLevel: null, sweepCandleTime: null, d1Bias: null, candidate: { setupTags: [] }, journalEntry: null },
+    ]);
+    prisma.dayNote.findUnique.mockResolvedValue(null);
+
+    const result = await service.getDay('2026-06-05');
+
+    expect(result.dayTotals).toEqual({
+      tradesCount: 3,
+      realizedPnl: 6, // 5 + 3 + -2
+      winsCount: 1,   // only A (FORCED_CLOSE B excluded despite +pnl)
+      lossesCount: 0, // FORCED_CLOSE C excluded despite -pnl
+    });
+  });
+});
+
+describe('JournalService.getMonthAggregate', () => {
+  let service: JournalService;
+  let prisma: any;
+
+  beforeEach(async () => {
+    prisma = {
+      trade: { findMany: jest.fn() },
+      dayNote: { findMany: jest.fn() },
+      journalEntry: { findMany: jest.fn() },
+    };
+    const moduleRef = await Test.createTestingModule({
+      providers: [
+        JournalService,
+        { provide: PrismaService, useValue: prisma },
+      ],
+    }).compile();
+    service = moduleRef.get(JournalService);
+  });
+
+  it('aggregates trades per day with month + weekly totals', async () => {
+    prisma.trade.findMany.mockResolvedValue([
+      { id: 'A', createdAt: new Date('2026-06-02T10:00Z'), pnl: -22, status: 'CLOSED', journalEntry: { tags: [], reflectionNote: null } },
+      { id: 'B', createdAt: new Date('2026-06-02T14:00Z'), pnl: 0, status: 'CLOSED', journalEntry: { tags: [], reflectionNote: null } },
+      { id: 'C', createdAt: new Date('2026-06-03T09:00Z'), pnl: 12, status: 'CLOSED', journalEntry: { tags: ['Setup looked good'], reflectionNote: null } },
+      { id: 'D', createdAt: new Date('2026-06-03T11:00Z'), pnl: 36, status: 'CLOSED', journalEntry: { tags: [], reflectionNote: 'good' } },
+      { id: 'E', createdAt: new Date('2026-06-08T08:00Z'), pnl: null, status: 'OPEN', journalEntry: null },
+    ]);
+    prisma.dayNote.findMany.mockResolvedValue([
+      { date: new Date('2026-06-03') },
+    ]);
+
+    const result = await service.getMonthAggregate('2026-06');
+
+    expect(result.month).toBe('2026-06');
+    expect(result.monthTotals.tradesCount).toBe(5);
+    expect(result.monthTotals.realizedPnl).toBe(26);
+    expect(result.monthTotals.winsCount).toBe(2);
+    expect(result.monthTotals.lossesCount).toBe(1);
+    expect(result.monthTotals.winRatePct).toBe(67);
+    const jun3 = result.days.find((d) => d.date === '2026-06-03')!;
+    expect(jun3.tradesCount).toBe(2);
+    expect(jun3.realizedPnl).toBe(48);
+    expect(jun3.hasDayNote).toBe(true);
+    expect(jun3.hasReflections).toBe(true);
+    const jun8 = result.days.find((d) => d.date === '2026-06-08')!;
+    expect(jun8.hasOpenTrades).toBe(true);
+    const wk1 = result.weeklyTotals.find((w) => w.weekStart === '2026-06-01');
+    expect(wk1?.tradesCount).toBe(4);
+    expect(wk1?.realizedPnl).toBe(26);
+  });
+
+  it('handles a month with zero trades', async () => {
+    prisma.trade.findMany.mockResolvedValue([]);
+    prisma.dayNote.findMany.mockResolvedValue([]);
+    const result = await service.getMonthAggregate('2025-01');
+    expect(result.monthTotals.tradesCount).toBe(0);
+    expect(result.days).toHaveLength(31);
+    expect(result.days.every((d) => d.tradesCount === 0)).toBe(true);
+  });
+
+  it('excludes FORCED_CLOSE trades from wins/losses but keeps them in tradesCount + realizedPnl', async () => {
+    prisma.trade.findMany.mockResolvedValue([
+      { id: 'A', createdAt: new Date('2026-06-02T10:00Z'), pnl: 5, status: 'CLOSED', exitReason: 'TP', journalEntry: null },
+      { id: 'B', createdAt: new Date('2026-06-02T11:00Z'), pnl: 8, status: 'CLOSED', exitReason: 'FORCED_CLOSE', journalEntry: null },
+      { id: 'C', createdAt: new Date('2026-06-02T12:00Z'), pnl: -3, status: 'CLOSED', exitReason: 'FORCED_CLOSE', journalEntry: null },
+      { id: 'D', createdAt: new Date('2026-06-02T13:00Z'), pnl: -7, status: 'CLOSED', exitReason: 'SL', journalEntry: null },
+    ]);
+    prisma.dayNote.findMany.mockResolvedValue([]);
+
+    const result = await service.getMonthAggregate('2026-06');
+
+    expect(result.monthTotals.tradesCount).toBe(4);
+    expect(result.monthTotals.realizedPnl).toBe(3);  // 5 + 8 + -3 + -7
+    expect(result.monthTotals.winsCount).toBe(1);    // only A (FORCED_CLOSE B excluded despite +pnl)
+    expect(result.monthTotals.lossesCount).toBe(1);  // only D (FORCED_CLOSE C excluded despite -pnl)
+    expect(result.monthTotals.winRatePct).toBe(50);  // 1/(1+1)
+  });
+});
+
+describe('JournalService.getAvailableMonths', () => {
+  let service: JournalService;
+  let prisma: any;
+
+  beforeEach(async () => {
+    prisma = { trade: { aggregate: jest.fn(), groupBy: jest.fn() } };
+    const moduleRef = await Test.createTestingModule({
+      providers: [
+        JournalService,
+        { provide: PrismaService, useValue: prisma },
+      ],
+    }).compile();
+    service = moduleRef.get(JournalService);
+  });
+
+  it('returns descending list of months with trades + bounds', async () => {
+    prisma.trade.aggregate.mockResolvedValue({ _min: { createdAt: new Date('2026-04-12T08:00Z') }, _max: { createdAt: new Date('2026-06-05T20:00Z') } });
+    const result = await service.getAvailableMonths();
+    expect(result.months).toEqual(['2026-06', '2026-05', '2026-04']);
+    expect(result.earliestTradeDate).toBe('2026-04-12');
+    expect(result.latestTradeDate).toBe('2026-06-05');
+  });
+
+  it('returns empty list when no trades exist', async () => {
+    prisma.trade.aggregate.mockResolvedValue({ _min: { createdAt: null }, _max: { createdAt: null } });
+    const result = await service.getAvailableMonths();
+    expect(result.months).toEqual([]);
+    expect(result.earliestTradeDate).toBeNull();
+  });
+});
+
+describe('JournalService.deriveOutcome', () => {
+  let service: JournalService;
+  beforeEach(async () => {
+    const moduleRef = await Test.createTestingModule({
+      providers: [JournalService, { provide: PrismaService, useValue: {} }],
+    }).compile();
+    service = moduleRef.get(JournalService);
+  });
+
+  it('returns WIN for positive pnl above $0.50 threshold', () => {
+    expect(service.deriveOutcome(2.5, 'TP')).toBe('WIN');
+  });
+  it('returns LOSS for negative pnl below -$0.50', () => {
+    expect(service.deriveOutcome(-5.0, 'SL')).toBe('LOSS');
+  });
+  it('returns BE within ±$0.50', () => {
+    expect(service.deriveOutcome(0.3, 'BREAKEVEN')).toBe('BE');
+    expect(service.deriveOutcome(-0.4, 'TP')).toBe('BE');
+  });
+  it('returns FORCED_CLOSE regardless of pnl when exitReason is FORCED_CLOSE', () => {
+    expect(service.deriveOutcome(10, 'FORCED_CLOSE')).toBe('FORCED_CLOSE');
+    expect(service.deriveOutcome(-10, 'FORCED_CLOSE')).toBe('FORCED_CLOSE');
+  });
+});
+
+describe('JournalService.createJournalEntriesForSignal', () => {
+  let service: JournalService;
+  let prisma: any;
+
+  beforeEach(async () => {
+    prisma = {
+      trade: { findMany: jest.fn() },
+      journalEntry: { createMany: jest.fn() },
+    };
+    const moduleRef = await Test.createTestingModule({
+      providers: [
+        JournalService,
+        { provide: PrismaService, useValue: prisma },
+      ],
+    }).compile();
+    service = moduleRef.get(JournalService);
+  });
+
+  it('creates one JournalEntry per fired leg with shared entryContext', async () => {
+    prisma.trade.findMany.mockResolvedValue([
+      { id: 'T1' },
+      { id: 'T2' },
+    ]);
+    prisma.journalEntry.createMany.mockResolvedValue({ count: 2 });
+
+    const signal: any = {
+      symbol: 'EURUSD',
+      side: 'SELL',
+      mode: 'REVERSAL',
+      h1SweepTime: '2026-06-03T01:00Z',
+      smcContext: { sweptLevel: 1.16125, d1Bias: 'BEARISH', anchorType: 'PDH' },
+    };
+
+    await service.createJournalEntriesForSignal(signal, '2026-06-03T07:15:00.000Z', {
+      d1Adx: 24,
+      d1Bias: 'BEARISH',
+      killzone: 'LONDON',
+      h1Atr: 0.0009,
+      pendingQueueSize: 6,
+      spread: 0.8,
+      accountEquity: 991.96,
+      openPositionsCount: 2,
+      openDirections: ['SELL'] as any,
+      anchorLevel: 1.16125,
+      anchorType: 'PDH' as any,
+    });
+
+    expect(prisma.journalEntry.createMany).toHaveBeenCalledTimes(1);
+    const calls = (prisma.journalEntry.createMany as jest.Mock).mock.calls[0][0];
+    expect(calls.data).toHaveLength(2);
+    expect(calls.data[0].tradeId).toBe('T1');
+    expect(calls.data[1].tradeId).toBe('T2');
+    expect(calls.data[0].setupSummary).toContain('REVERSAL SELL on EURUSD');
+    expect(calls.data[0].entryContext.d1Adx).toBe(24);
+    expect(calls.data[0].entryContext.anchorType).toBe('PDH');
+    expect(calls.skipDuplicates).toBe(true);
+  });
+});
+
+describe('JournalService.enrichJournalOnExit', () => {
+  let service: JournalService;
+  let prisma: any;
+
+  beforeEach(async () => {
+    prisma = {
+      trade: { findUnique: jest.fn() },
+      journalEntry: { upsert: jest.fn() },
+      candle: { findMany: jest.fn() },
+    };
+    const moduleRef = await Test.createTestingModule({
+      providers: [
+        JournalService,
+        { provide: PrismaService, useValue: prisma },
+      ],
+    }).compile();
+    service = moduleRef.get(JournalService);
+  });
+
+  it('writes exitContext + outcome for a closed trade', async () => {
+    prisma.trade.findUnique.mockResolvedValue({
+      id: 'T1', symbol: 'EURUSD', side: 'SELL',
+      entryPrice: 1.16, slPrice: 1.165, originalSlPrice: 1.165,
+      tpPrice: 1.155, pnl: 2.0, exitReason: 'TP',
+      closePrice: 1.158, closedAt: new Date('2026-06-03T09:48Z'),
+      createdAt: new Date('2026-06-03T07:15Z'),
+      candidate: { rsiValue: 0 },
+    });
+    prisma.candle.findMany.mockResolvedValue([
+      { high: 1.161, low: 1.157 },
+      { high: 1.160, low: 1.155 },
+    ]);
+    prisma.journalEntry.upsert.mockResolvedValue({});
+
+    await service.enrichJournalOnExit('T1');
+
+    expect(prisma.journalEntry.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      where: { tradeId: 'T1' },
+      update: expect.objectContaining({
+        outcome: 'WIN',
+        exitContext: expect.objectContaining({
+          exitReason: 'TP',
+          holdMinutes: 153,
+          exitPrice: 1.158,
+        }),
+      }),
+    }));
+  });
+
+  it('stores mfeMaePips=null when candle data is missing', async () => {
+    prisma.trade.findUnique.mockResolvedValue({
+      id: 'T1', symbol: 'EURUSD', side: 'SELL',
+      entryPrice: 1.16, slPrice: 1.165, originalSlPrice: 1.165,
+      tpPrice: 1.155, pnl: -3.0, exitReason: 'SL',
+      closePrice: 1.165, closedAt: new Date('2026-06-03T09:48Z'),
+      createdAt: new Date('2026-06-03T07:15Z'),
+    });
+    prisma.candle.findMany.mockResolvedValue([]);
+    prisma.journalEntry.upsert.mockResolvedValue({});
+
+    await service.enrichJournalOnExit('T1');
+
+    const call = (prisma.journalEntry.upsert as jest.Mock).mock.calls[0][0];
+    expect(call.update.exitContext.mfeMaePips).toBeNull();
+    expect(call.update.outcome).toBe('LOSS');
+  });
+
+  it('is a no-op when trade is not yet closed', async () => {
+    prisma.trade.findUnique.mockResolvedValue({ id: 'T1', closedAt: null });
+    await service.enrichJournalOnExit('T1');
+    expect(prisma.journalEntry.upsert).not.toHaveBeenCalled();
+  });
+});

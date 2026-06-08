@@ -16,6 +16,7 @@ import { RedisService, REDIS_CHANNELS } from '@app/redis';
 import { Timeframe, SERVICE_URLS } from '@app/common';
 import { LiveControlService } from './live-control.service';
 import { LiveSmcOrchestrator } from './live-smc-orchestrator';
+import { JournalService } from '../../journal/journal.service';
 
 interface BrokerPosition {
   ticket: number;
@@ -44,6 +45,7 @@ export class PositionMonitorService implements OnModuleInit {
     @Inject(forwardRef(() => LiveControlService))
     private readonly liveControl: LiveControlService,
     private readonly orchestrator: LiveSmcOrchestrator,
+    private readonly journal: JournalService,
   ) {
     this.liveMode = (this.config.get<string>('LIVE_MODE') || 'false').toLowerCase() === 'true';
     const pairsCsv = this.config.get<string>('STRATEGY_PAIRS') || 'XAUUSD,EURUSD,GBPUSD,USDJPY';
@@ -78,6 +80,24 @@ export class PositionMonitorService implements OnModuleInit {
       } catch (err) {
         this.logger.error(`[${symbol}] reconcile error: ${(err as Error).message}`);
       }
+    }
+
+    // Safety net: catch any closed trades that lost their JournalEntry
+    // due to a failed Hook 2. Idempotent — only touches rows with no
+    // journalEntry yet.
+    try {
+      const orphans = await this.prisma.trade.findMany({
+        where: { status: 'CLOSED', journalEntry: null },
+        select: { id: true },
+      });
+      for (const o of orphans) {
+        await this.journal.enrichJournalOnExit(o.id);
+      }
+      if (orphans.length > 0) {
+        this.logger.log(`Journal safety net: enriched ${orphans.length} orphan trade(s)`);
+      }
+    } catch (err) {
+      this.logger.warn(`Journal safety net failed: ${(err as Error).message}`);
     }
   }
 
@@ -179,6 +199,10 @@ export class PositionMonitorService implements OnModuleInit {
           closedAt,
         },
       });
+
+      this.journal.enrichJournalOnExit(tradeId).catch((err) =>
+        this.logger.warn(`enrichJournalOnExit failed for ${tradeId}: ${(err as Error).message}`),
+      );
 
       await this.redis.publish(REDIS_CHANNELS.TRADE_CLOSED, {
         tradeId,
