@@ -676,6 +676,22 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
 
       const order = brokerOrder!;
       const mt5Ticket = order.mt5Ticket ?? undefined;
+
+      // Broker rejection check. Execution-service returns HTTP 200 with
+      // status='REJECTED' and mt5Ticket=null when the broker refuses the
+      // order (margin too small, account-state issue, market closed, etc).
+      // Without this guard we'd persist a Trade row with mt5Ticket=NULL —
+      // a "zombie" that position-monitor's reconciler skips (its filter is
+      // `mt5Ticket: { not: null }`), so the row stays OPEN forever. Skip
+      // the leg cleanly here so the sweep stays in the pending queue and
+      // retries on the next M15 close (same contract as PR #31's intent).
+      if (typeof mt5Ticket !== 'number' || mt5Ticket <= 0) {
+        this.logger.warn(
+          `[${accountId}/${signal.symbol}] broker rejected leg (mt5Ticket=${mt5Ticket}) — skipping, sweep stays pending`,
+        );
+        continue;
+      }
+
       const fillPrice = typeof order.entryPrice === 'number' && order.entryPrice > 0
         ? order.entryPrice
         : signal.entryPrice;
@@ -1095,6 +1111,17 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
 
       const order = brokerOrder!;
       const mt5Ticket = order.mt5Ticket;
+
+      // Broker rejection check — see placeOrderForAccount for full rationale.
+      // Prevents "zombie" Trade rows (mt5Ticket=NULL, status=OPEN) that the
+      // reconciler can't clean up because its filter requires `mt5Ticket: { not: null }`.
+      if (typeof mt5Ticket !== 'number' || mt5Ticket <= 0) {
+        this.logger.warn(
+          `[${signal.symbol}] broker rejected leg (mt5Ticket=${mt5Ticket}) — skipping, sweep stays pending`,
+        );
+        continue;
+      }
+
       const fillPrice = typeof order.entryPrice === 'number' && order.entryPrice > 0
         ? order.entryPrice
         : signal.entryPrice;
