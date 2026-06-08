@@ -6,6 +6,7 @@ import { User, UserRole } from '@prisma/client';
 import { UsersService } from '../users/users.service';
 import { PrismaService } from '@app/prisma';
 import { MailService } from '../mail/mail.service';
+import { RefreshTokenService } from './refresh-token.service';
 
 export interface JwtPayload {
   sub: string;
@@ -31,6 +32,7 @@ export class AuthService {
     private readonly jwt: JwtService,
     private readonly prisma: PrismaService,
     private readonly mail: MailService,
+    private readonly refreshTokens: RefreshTokenService,
   ) {}
 
   async validateCredentials(email: string, password: string): Promise<User> {
@@ -53,45 +55,35 @@ export class AuthService {
     });
   }
 
-  signRefreshToken(user: Pick<User, 'id' | 'email' | 'role'>): string {
-    const payload: JwtPayload = { sub: user.id, email: user.email, role: user.role };
-    return this.jwt.sign(payload, {
-      secret: process.env.JWT_REFRESH_SECRET,
-      expiresIn: (process.env.JWT_REFRESH_TTL || '7d') as `${number}${'s' | 'm' | 'h' | 'd'}`,
-    });
-  }
-
-  verifyRefreshToken(token: string): JwtPayload {
-    try {
-      return this.jwt.verify<JwtPayload>(token, {
-        secret: process.env.JWT_REFRESH_SECRET,
-      });
-    } catch {
-      throw new UnauthorizedException('Invalid refresh token');
-    }
-  }
-
-  async login(email: string, password: string) {
+  async login(email: string, password: string, userAgent?: string) {
     const user = await this.validateCredentials(email, password);
     await this.users.recordLogin(user.id);
+    const { token: refreshToken } = await this.refreshTokens.issue(user.id, userAgent);
     return {
       user: { id: user.id, email: user.email, role: user.role },
       accessToken: this.signAccessToken(user),
-      refreshToken: this.signRefreshToken(user),
+      refreshToken,
     };
   }
 
-  async refresh(refreshToken: string) {
-    const payload = this.verifyRefreshToken(refreshToken);
-    const user = await this.users.findById(payload.sub);
+  async refresh(presentedRefreshToken: string, userAgent?: string) {
+    const rotated = await this.refreshTokens.rotate(presentedRefreshToken, userAgent);
+    const user = await this.users.findById(rotated.userId);
     if (!user || !user.isActive) {
+      await this.refreshTokens.revokeAllForUser(rotated.userId);
       throw new UnauthorizedException('User no longer valid');
     }
     return {
       user: { id: user.id, email: user.email, role: user.role },
       accessToken: this.signAccessToken(user),
-      refreshToken: this.signRefreshToken(user),
+      refreshToken: rotated.token,
     };
+  }
+
+  async logout(refreshToken?: string) {
+    if (refreshToken) {
+      await this.refreshTokens.revoke(refreshToken);
+    }
   }
 
   /**

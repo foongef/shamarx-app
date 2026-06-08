@@ -8,7 +8,7 @@ export class JournalService {
 
   constructor(private readonly prisma: PrismaService) {}
 
-  async upsertDayNote(yyyymmdd: string, note: string): Promise<{ date: string; note: string | null }> {
+  async upsertDayNote(userId: string, yyyymmdd: string, note: string): Promise<{ date: string; note: string | null }> {
     const date = new Date(yyyymmdd);
     if (Number.isNaN(date.getTime())) {
       throw new UnprocessableEntityException(`Invalid date: ${yyyymmdd}`);
@@ -21,7 +21,7 @@ export class JournalService {
 
     if (note === '') {
       try {
-        await this.prisma.dayNote.delete({ where: { date } });
+        await this.prisma.dayNote.delete({ where: { userId_date: { userId, date } } });
       } catch (err: any) {
         if (err?.code !== 'P2025') throw err;
       }
@@ -29,8 +29,8 @@ export class JournalService {
     }
 
     await this.prisma.dayNote.upsert({
-      where: { date },
-      create: { date, note },
+      where: { userId_date: { userId, date } },
+      create: { userId, date, note },
       update: { note },
     });
     return { date: yyyymmdd, note };
@@ -70,7 +70,7 @@ export class JournalService {
     };
   }
 
-  async getDay(yyyymmdd: string): Promise<{
+  async getDay(userId: string, yyyymmdd: string): Promise<{
     date: string;
     dayNote: string | null;
     trades: any[];
@@ -85,11 +85,11 @@ export class JournalService {
 
     const [trades, dayNote] = await Promise.all([
       this.prisma.trade.findMany({
-        where: { createdAt: { gte: dayStart, lt: dayEnd } },
+        where: { createdAt: { gte: dayStart, lt: dayEnd }, account: { userId } },
         include: { journalEntry: true, candidate: true },
         orderBy: { createdAt: 'asc' },
       }),
-      this.prisma.dayNote.findUnique({ where: { date: dayStart } }),
+      this.prisma.dayNote.findUnique({ where: { userId_date: { userId, date: dayStart } } }),
     ]);
 
     const tradeRows = trades.map((t: any) => ({
@@ -140,7 +140,7 @@ export class JournalService {
     };
   }
 
-  async getMonthAggregate(yyyymm: string): Promise<{
+  async getMonthAggregate(userId: string, yyyymm: string): Promise<{
     month: string;
     days: Array<{ date: string; tradesCount: number; realizedPnl: number; winsCount: number; lossesCount: number; hasDayNote: boolean; hasReflections: boolean; hasOpenTrades: boolean }>;
     monthTotals: { tradesCount: number; realizedPnl: number; winsCount: number; lossesCount: number; winRatePct: number };
@@ -156,12 +156,12 @@ export class JournalService {
 
     const [trades, dayNotes] = await Promise.all([
       this.prisma.trade.findMany({
-        where: { createdAt: { gte: monthStart, lt: monthEnd } },
+        where: { createdAt: { gte: monthStart, lt: monthEnd }, account: { userId } },
         include: { journalEntry: true },
         orderBy: { createdAt: 'asc' },
       }),
       this.prisma.dayNote.findMany({
-        where: { date: { gte: monthStart, lt: monthEnd } },
+        where: { date: { gte: monthStart, lt: monthEnd }, userId },
         select: { date: true },
       }),
     ]);
@@ -246,8 +246,9 @@ export class JournalService {
     };
   }
 
-  async getAvailableMonths(): Promise<{ months: string[]; earliestTradeDate: string | null; latestTradeDate: string | null }> {
+  async getAvailableMonths(userId: string): Promise<{ months: string[]; earliestTradeDate: string | null; latestTradeDate: string | null }> {
     const bounds = await this.prisma.trade.aggregate({
+      where: { account: { userId } },
       _min: { createdAt: true },
       _max: { createdAt: true },
     });

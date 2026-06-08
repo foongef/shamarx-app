@@ -14,6 +14,9 @@ import { LiveReplayModule } from './backtest/live-replay/live-replay.module';
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
 import { BrokerAccountsModule } from './broker-accounts/broker-accounts.module';
+import { InviteModule } from './invites/invite.module';
+import { MeModule } from './me/me.module';
+import { AdminModule } from './admin/admin.module';
 
 @Module({
   imports: [
@@ -25,6 +28,8 @@ import { BrokerAccountsModule } from './broker-accounts/broker-accounts.module';
     UsersModule,
     AuthModule,
     BrokerAccountsModule,
+    InviteModule,
+    MeModule,
     MarketDataModule,
     StrategyModule,
     RiskModule,
@@ -32,6 +37,7 @@ import { BrokerAccountsModule } from './broker-accounts/broker-accounts.module';
     JournalModule,
     BacktestModule,
     LiveReplayModule,
+    AdminModule,
   ],
 })
 export class AppModule {}

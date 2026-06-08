@@ -31,8 +31,9 @@ export class AuthController {
   @Public()
   @Post('login')
   @HttpCode(200)
-  async login(@Body() dto: LoginDto, @Res({ passthrough: true }) res: Response) {
-    const result = await this.auth.login(dto.email, dto.password);
+  async login(@Body() dto: LoginDto, @Req() req: Request, @Res({ passthrough: true }) res: Response) {
+    const ua = req.headers['user-agent'] ?? undefined;
+    const result = await this.auth.login(dto.email, dto.password, ua);
     res.cookie(ACCESS_COOKIE, result.accessToken, cookieOpts(ACCESS_MAX_AGE_MS));
     res.cookie(REFRESH_COOKIE, result.refreshToken, cookieOpts(REFRESH_MAX_AGE_MS));
     return { user: result.user };
@@ -44,7 +45,8 @@ export class AuthController {
   async refresh(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
     const token = req.cookies?.[REFRESH_COOKIE];
     if (!token) return { user: null };
-    const result = await this.auth.refresh(token);
+    const ua = req.headers['user-agent'] ?? undefined;
+    const result = await this.auth.refresh(token, ua);
     res.cookie(ACCESS_COOKIE, result.accessToken, cookieOpts(ACCESS_MAX_AGE_MS));
     res.cookie(REFRESH_COOKIE, result.refreshToken, cookieOpts(REFRESH_MAX_AGE_MS));
     return { user: result.user };
@@ -52,7 +54,9 @@ export class AuthController {
 
   @Post('logout')
   @HttpCode(200)
-  logout(@Res({ passthrough: true }) res: Response) {
+  async logout(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
+    const token = req.cookies?.[REFRESH_COOKIE];
+    await this.auth.logout(token);
     res.clearCookie(ACCESS_COOKIE, { path: '/' });
     res.clearCookie(REFRESH_COOKIE, { path: '/' });
     return { ok: true };
