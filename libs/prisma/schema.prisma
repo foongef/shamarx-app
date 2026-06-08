@@ -13,18 +13,28 @@ enum UserRole {
   USER
 }
 
+enum PresetKey {
+  CONSERVATIVE
+  BALANCED
+  AGGRESSIVE
+}
+
 model User {
   id           String    @id @default(uuid())
   email        String    @unique
   passwordHash String
   role         UserRole  @default(USER)
   isActive     Boolean   @default(true)
+  botEnabled   Boolean   @default(true)
+  presetKey    PresetKey @default(BALANCED)
   lastLoginAt  DateTime?
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
   passwordResetTokens PasswordResetToken[]
   brokerAccounts      BrokerAccount[]
+  refreshTokens       RefreshToken[]
+  invitesCreated      Invite[]             @relation("InviteCreator")
 
   @@index([email])
 }
@@ -466,4 +476,33 @@ model BrokerAccount {
 
   @@unique([userId, name])
   @@index([userId, isEnabled])
+}
+
+model RefreshToken {
+  id           String    @id @default(uuid())
+  userId       String
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash    String    @unique
+  expiresAt    DateTime
+  revokedAt    DateTime?
+  replacedById String?
+  userAgent    String?
+  createdAt    DateTime  @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model Invite {
+  id          String    @id @default(uuid())
+  email       String
+  tokenHash   String    @unique
+  createdById String
+  createdBy   User      @relation("InviteCreator", fields: [createdById], references: [id])
+  expiresAt   DateTime
+  acceptedAt  DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([email])
+  @@index([expiresAt])
 }
