@@ -13,15 +13,18 @@ async function main() {
     console.log(`Promoted ${me.email} to SUPERADMIN`);
   }
 
-  // Script runs in the transient state between migration 20260609000001
-  // (userId nullable) and 20260609000002 (userId NOT NULL). Prisma's final-
-  // state types treat userId as non-nullable, so the null filter needs a
-  // narrow cast — at runtime, the column is still nullable.
-  const updated = await prisma.dayNote.updateMany({
-    where: { userId: null as unknown as string },
-    data: { userId: me.id },
-  });
-  console.log(`Backfilled ${updated.count} DayNote rows with userId=${me.id}`);
+  // Raw SQL so the script works in BOTH deploy states:
+  //   (a) two-phase migration — userId temporarily nullable between
+  //       20260609000001 and 20260609000002; rows with NULL get backfilled.
+  //   (b) `prisma db push` — schema applied directly to NOT NULL; this UPDATE
+  //       matches 0 rows and is a safe no-op.
+  // Prisma's typed client rejects `where: { userId: null }` against the
+  // final-state schema at validation time, so raw SQL is the only portable shape.
+  const updated = await prisma.$executeRawUnsafe(
+    `UPDATE "DayNote" SET "userId" = $1 WHERE "userId" IS NULL`,
+    me.id,
+  );
+  console.log(`Backfilled ${updated} DayNote rows with userId=${me.id}`);
 
   await prisma.user.update({
     where: { id: me.id },
