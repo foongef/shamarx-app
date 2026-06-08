@@ -177,6 +177,24 @@ describe('JournalService.getDay', () => {
     expect(result.dayNote).toBeNull();
     expect(result.trades).toEqual([]);
   });
+
+  it('excludes FORCED_CLOSE trades from wins/losses', async () => {
+    prisma.trade.findMany.mockResolvedValue([
+      { id: 'A', symbol: 'EURUSD', side: 'BUY', lotSize: 0.01, entryPrice: 1.16, closePrice: 1.165, slPrice: 1.155, originalSlPrice: 1.155, tpPrice: 1.17, pnl: 5, exitReason: 'TP', status: 'CLOSED', createdAt: new Date('2026-06-05T07:00Z'), closedAt: new Date('2026-06-05T08:00Z'), sweptLevel: null, sweepCandleTime: null, d1Bias: null, candidate: { setupTags: [] }, journalEntry: null },
+      { id: 'B', symbol: 'EURUSD', side: 'BUY', lotSize: 0.01, entryPrice: 1.16, closePrice: 1.162, slPrice: 1.155, originalSlPrice: 1.155, tpPrice: 1.17, pnl: 3, exitReason: 'FORCED_CLOSE', status: 'CLOSED', createdAt: new Date('2026-06-05T09:00Z'), closedAt: new Date('2026-06-05T10:00Z'), sweptLevel: null, sweepCandleTime: null, d1Bias: null, candidate: { setupTags: [] }, journalEntry: null },
+      { id: 'C', symbol: 'EURUSD', side: 'SELL', lotSize: 0.01, entryPrice: 1.16, closePrice: 1.158, slPrice: 1.165, originalSlPrice: 1.165, tpPrice: 1.15, pnl: -2, exitReason: 'FORCED_CLOSE', status: 'CLOSED', createdAt: new Date('2026-06-05T11:00Z'), closedAt: new Date('2026-06-05T12:00Z'), sweptLevel: null, sweepCandleTime: null, d1Bias: null, candidate: { setupTags: [] }, journalEntry: null },
+    ]);
+    prisma.dayNote.findUnique.mockResolvedValue(null);
+
+    const result = await service.getDay('2026-06-05');
+
+    expect(result.dayTotals).toEqual({
+      tradesCount: 3,
+      realizedPnl: 6, // 5 + 3 + -2
+      winsCount: 1,   // only A (FORCED_CLOSE B excluded despite +pnl)
+      lossesCount: 0, // FORCED_CLOSE C excluded despite -pnl
+    });
+  });
 });
 
 describe('JournalService.getMonthAggregate', () => {
@@ -237,6 +255,24 @@ describe('JournalService.getMonthAggregate', () => {
     expect(result.monthTotals.tradesCount).toBe(0);
     expect(result.days).toHaveLength(31);
     expect(result.days.every((d) => d.tradesCount === 0)).toBe(true);
+  });
+
+  it('excludes FORCED_CLOSE trades from wins/losses but keeps them in tradesCount + realizedPnl', async () => {
+    prisma.trade.findMany.mockResolvedValue([
+      { id: 'A', createdAt: new Date('2026-06-02T10:00Z'), pnl: 5, status: 'CLOSED', exitReason: 'TP', journalEntry: null },
+      { id: 'B', createdAt: new Date('2026-06-02T11:00Z'), pnl: 8, status: 'CLOSED', exitReason: 'FORCED_CLOSE', journalEntry: null },
+      { id: 'C', createdAt: new Date('2026-06-02T12:00Z'), pnl: -3, status: 'CLOSED', exitReason: 'FORCED_CLOSE', journalEntry: null },
+      { id: 'D', createdAt: new Date('2026-06-02T13:00Z'), pnl: -7, status: 'CLOSED', exitReason: 'SL', journalEntry: null },
+    ]);
+    prisma.dayNote.findMany.mockResolvedValue([]);
+
+    const result = await service.getMonthAggregate('2026-06');
+
+    expect(result.monthTotals.tradesCount).toBe(4);
+    expect(result.monthTotals.realizedPnl).toBe(3);  // 5 + 8 + -3 + -7
+    expect(result.monthTotals.winsCount).toBe(1);    // only A (FORCED_CLOSE B excluded despite +pnl)
+    expect(result.monthTotals.lossesCount).toBe(1);  // only D (FORCED_CLOSE C excluded despite -pnl)
+    expect(result.monthTotals.winRatePct).toBe(50);  // 1/(1+1)
   });
 });
 

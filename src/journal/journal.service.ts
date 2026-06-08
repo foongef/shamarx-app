@@ -122,8 +122,10 @@ export class JournalService {
     }));
 
     const realized = tradeRows.reduce((s, t) => s + (t.pnl ?? 0), 0);
-    const wins = tradeRows.filter((t) => (t.pnl ?? 0) > 0.5).length;
-    const losses = tradeRows.filter((t) => (t.pnl ?? 0) < -0.5).length;
+    // FORCED_CLOSE trades are a third bucket — counted toward tradesCount +
+    // realizedPnl but NOT toward wins/losses. Keeps Win Rate honest.
+    const wins = tradeRows.filter((t) => (t.pnl ?? 0) > 0.5 && t.exitReason !== 'FORCED_CLOSE').length;
+    const losses = tradeRows.filter((t) => (t.pnl ?? 0) < -0.5 && t.exitReason !== 'FORCED_CLOSE').length;
 
     return {
       date: yyyymmdd,
@@ -190,8 +192,12 @@ export class JournalService {
       const p = t.pnl ?? 0;
       d.realizedPnl += p;
       if (t.status !== 'CLOSED') d.hasOpenTrades = true;
-      if (p > 0.5) d.winsCount++;
-      else if (p < -0.5) d.lossesCount++;
+      // Exclude FORCED_CLOSE from W/L — counted in tradesCount + realizedPnl
+      // but not in the displayed Win Rate (third bucket).
+      if (t.exitReason !== 'FORCED_CLOSE') {
+        if (p > 0.5) d.winsCount++;
+        else if (p < -0.5) d.lossesCount++;
+      }
       const j = t.journalEntry;
       if (j && ((j.tags?.length ?? 0) > 0 || j.reflectionNote)) {
         d.hasReflections = true;
