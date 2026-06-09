@@ -2,16 +2,22 @@ import {
   Body, Controller, Delete, Get, Param, Patch, Post, Query, Req, UseGuards,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiQuery } from '@nestjs/swagger';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { JwtAuthGuard, Public } from '../auth/guards/jwt-auth.guard';
 import { BrokerAccountsService } from './broker-accounts.service';
 import { CreateBrokerAccountDto } from './dto/create-broker-account.dto';
 import { UpdateBrokerAccountDto } from './dto/update-broker-account.dto';
+import { BrokerOAuthService } from './oauth/broker-oauth.service';
+import { OAuthTokensDto } from './oauth/dto/oauth-tokens.dto';
+import { InternalIpGuard } from './oauth/guards/internal-ip.guard';
 
 @ApiTags('Broker Accounts')
 @Controller('api/accounts')
 @UseGuards(JwtAuthGuard)
 export class BrokerAccountsController {
-  constructor(private readonly accounts: BrokerAccountsService) {}
+  constructor(
+    private readonly accounts: BrokerAccountsService,
+    private readonly oauth: BrokerOAuthService,
+  ) {}
 
   @Get()
   @ApiOperation({ summary: 'List broker accounts for the current user' })
@@ -42,5 +48,17 @@ export class BrokerAccountsController {
   @ApiQuery({ name: 'force', required: false, type: Boolean })
   delete(@Req() req: any, @Param('id') id: string, @Query('force') force?: string) {
     return this.accounts.delete(req.user.id, id, force === 'true');
+  }
+
+  /** Internal — called by the Python execution-service when CTraderClient lazily
+   *  refreshes its OAuth tokens. JWT is bypassed via @Public(); the InternalIpGuard
+   *  restricts callers to the docker bridge subnets + loopback. */
+  @Patch(':id/oauth-tokens')
+  @Public()
+  @UseGuards(InternalIpGuard)
+  @ApiOperation({ summary: 'Internal: persist refreshed cTrader OAuth tokens' })
+  async updateOAuthTokens(@Param('id') id: string, @Body() dto: OAuthTokensDto) {
+    await this.oauth.storeRefreshedTokens(id, dto);
+    return { ok: true };
   }
 }
