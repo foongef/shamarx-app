@@ -533,3 +533,31 @@ Inviting first friend:
 7. ADMIN → Invites → "+ New invite" with their email.
 8. They click the link, set password + preset, get redirected to their dashboard.
 9. ADMIN → Users — verify the new row, their `accountsTotal` is 0 until they add a broker account.
+
+## Spec 2.5 — Dashboard analytics rollout
+
+Pre-flight (one-time, after merge):
+
+1. Backend PR merges → `prisma db push` on EC2 applies the 3 schema additions (`userId` on `BacktestRun` + `LiveReplaySession`; `pausedAt` on `User`).
+2. Run backfill via SSM:
+   ```bash
+   docker exec trading-bot-app npx ts-node scripts/backfill-spec2-5.ts
+   ```
+   Expected output: "Backfilled N BacktestRun rows" + "Backfilled N LiveReplaySession rows".
+3. Verify scoping:
+   ```bash
+   docker exec trading-bot-postgres psql -U trading shamarx -c \
+     'SELECT COUNT(*) AS total, COUNT("userId") AS scoped FROM "BacktestRun";'
+   ```
+   total should equal scoped.
+
+Smoke after web deploys:
+
+4. Visit /dashboard → see Spacious layout. Live status panel (left) + Performance hero (right). Full-width equity curve. Snapshot tiles + Today's trades. SUPERADMIN: house view appended below.
+5. Sidebar shows Backtest + Replay in WORKSPACE; ADMIN section has "All Backtests".
+6. Open /admin/backtest → see all historical runs attributed to you.
+7. Open /admin/users/<id> for any user → see Snapshot drill-in.
+
+Rollback:
+- Backend: redeploy previous main; nullable columns linger harmlessly.
+- Web: redeploy previous Amplify build.

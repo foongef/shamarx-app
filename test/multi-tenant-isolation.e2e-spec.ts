@@ -11,6 +11,7 @@ describe('Multi-tenant isolation (e2e)', () => {
   let prisma: PrismaService;
   let aliceCookie: string;
   let bobCookie: string;
+  let adminCookie: string;
   let aliceId: string;
   let bobId: string;
 
@@ -34,6 +35,9 @@ describe('Multi-tenant isolation (e2e)', () => {
     });
     const bob = await prisma.user.create({
       data: { email: 'bob@test', passwordHash: pw, role: 'USER' },
+    });
+    await prisma.user.create({
+      data: { email: 'admin@test', passwordHash: pw, role: 'SUPERADMIN' },
     });
     aliceId = alice.id;
     bobId = bob.id;
@@ -59,6 +63,13 @@ describe('Multi-tenant isolation (e2e)', () => {
     const rawBob = bobLogin.headers['set-cookie'] as string | string[] | undefined;
     const bobCookies: string[] = Array.isArray(rawBob) ? rawBob : rawBob ? [rawBob] : [];
     bobCookie = bobCookies.find((c) => c.startsWith('auth_token='))!.split(';')[0];
+
+    const adminLogin = await request(app.getHttpServer())
+      .post('/api/auth/login')
+      .send({ email: 'admin@test', password: 'alice-pass' });
+    const rawAdmin = adminLogin.headers['set-cookie'] as string | string[] | undefined;
+    const adminCookies: string[] = Array.isArray(rawAdmin) ? rawAdmin : rawAdmin ? [rawAdmin] : [];
+    adminCookie = adminCookies.find((c) => c.startsWith('auth_token='))!.split(';')[0];
   });
 
   afterAll(async () => app.close());
@@ -91,5 +102,20 @@ describe('Multi-tenant isolation (e2e)', () => {
     const res = await request(app.getHttpServer())
       .get('/api/journal/day/2026-06-01');
     expect(res.status).toBe(401);
+  });
+
+  it('alice gets 403 on /api/admin/analytics/aggregate', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/api/admin/analytics/aggregate')
+      .set('Cookie', aliceCookie);
+    expect(res.status).toBe(403);
+  });
+
+  it('admin sees aggregate', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/api/admin/analytics/aggregate')
+      .set('Cookie', adminCookie);
+    expect(res.status).toBe(200);
+    expect(res.body.totalUsers).toBeGreaterThanOrEqual(1);
   });
 });
