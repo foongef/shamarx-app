@@ -6,7 +6,7 @@ import { firstValueFrom } from 'rxjs';
 import { randomBytes } from 'crypto';
 import { BrokerAccountsService } from '../broker-accounts.service';
 
-interface SpotwareAccount {
+export interface SpotwareAccount {
   ctidTraderAccountId: number;
   accountNumber: string | number;
   live: boolean;
