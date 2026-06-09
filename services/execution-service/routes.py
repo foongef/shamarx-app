@@ -174,16 +174,18 @@ async def resolve_client(
     account_id: str,
     x_broker_creds: Optional[str] = Header(None),
     x_broker_mode: str = Header('metaapi'),
+    x_broker: str = Header('METAAPI'),
 ) -> Broker:
     """Resolve the broker client for this account, lazy-initializing if needed.
-    Creds arrive as JSON in the X-Broker-Creds header (sent by NestJS)."""
+    Creds arrive as JSON in the X-Broker-Creds header (sent by NestJS).
+    Broker dispatch is by the X-Broker header (METAAPI | CTRADER | MOCK)."""
     if not x_broker_creds:
         raise HTTPException(401, "X-Broker-Creds header required")
     try:
         creds = json.loads(x_broker_creds)
     except json.JSONDecodeError:
         raise HTTPException(400, "X-Broker-Creds must be valid JSON")
-    return await registry.get_or_create(account_id, creds, x_broker_mode)
+    return await registry.get_or_create(account_id, creds, x_broker, x_broker_mode)
 
 
 @candles_router.get("", response_model=list[CandleData])
