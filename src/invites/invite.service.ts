@@ -28,6 +28,16 @@ export class InviteService {
 
   async create(email: string, createdById: string, expiresInDays = DEFAULT_EXPIRY_DAYS): Promise<{ invite: Invite; token: string }> {
     const normalized = email.toLowerCase().trim();
+
+    // Refuse to invite emails that already have an account. The accept path
+    // (line 60-61) already throws ConflictException for this case, but failing
+    // at create time saves the admin from sending a doomed email and avoids
+    // surprising the recipient with an error after they type a password.
+    const existingUser = await this.prisma.user.findUnique({ where: { email: normalized } });
+    if (existingUser) {
+      throw new ConflictException(`A Shamarx account already exists for ${normalized}`);
+    }
+
     const token = generateToken();
     const tokenHash = await argon2.hash(token, { type: argon2.argon2id });
     const expiresAt = new Date(Date.now() + expiresInDays * 24 * 60 * 60 * 1000);
@@ -48,6 +58,11 @@ export class InviteService {
     if (!invite) return null;
     if (invite.acceptedAt) return null;
     if (invite.expiresAt < new Date()) return null;
+    // If a user got created with this email after the invite was issued (e.g.
+    // a stale invite from before they signed up via another path), don't show
+    // the join form — accept would throw ConflictException anyway.
+    const existingUser = await this.prisma.user.findUnique({ where: { email: invite.email } });
+    if (existingUser) return null;
     return { email: invite.email, expiresAt: invite.expiresAt };
   }
 

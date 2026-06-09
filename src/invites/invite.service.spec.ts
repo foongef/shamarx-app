@@ -54,6 +54,34 @@ describe('InviteService', () => {
     expect(mailMock.sendInvite).toHaveBeenCalledWith('alice@example.com', expect.stringContaining(token));
   });
 
+  it('create() refuses if email already belongs to a user', async () => {
+    const admin = await makeAdmin();
+    await prisma.user.create({
+      data: { email: 'taken@example.com', passwordHash: 'x', role: 'USER' },
+    });
+    await expect(svc.create('taken@example.com', admin.id, 7)).rejects.toThrow(/already exists/);
+    expect(mailMock.sendInvite).not.toHaveBeenCalled();
+  });
+
+  it('create() normalises email casing and refuses case-mismatched duplicates', async () => {
+    const admin = await makeAdmin();
+    await prisma.user.create({
+      data: { email: 'mixed@example.com', passwordHash: 'x', role: 'USER' },
+    });
+    await expect(svc.create('Mixed@Example.COM', admin.id, 7)).rejects.toThrow(/already exists/);
+  });
+
+  it('preview() returns null when a user was created with the email AFTER the invite was issued', async () => {
+    const admin = await makeAdmin();
+    const { token } = await svc.create('bob@example.com', admin.id, 7);
+    // Simulate the user being created via some other path while the invite sits idle
+    await prisma.user.create({
+      data: { email: 'bob@example.com', passwordHash: 'x', role: 'USER' },
+    });
+    const preview = await svc.preview(token);
+    expect(preview).toBeNull();
+  });
+
   it('preview() returns invite when valid', async () => {
     const admin = await makeAdmin();
     const { token } = await svc.create('alice@example.com', admin.id, 7);
