@@ -28,6 +28,7 @@ model User {
   botEnabled   Boolean   @default(true)
   presetKey    PresetKey @default(BALANCED)
   lastLoginAt  DateTime?
+  pausedAt     DateTime?
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
@@ -36,6 +37,8 @@ model User {
   refreshTokens       RefreshToken[]
   invitesCreated      Invite[]             @relation("InviteCreator")
   dayNotes            DayNote[]
+  backtestRuns        BacktestRun[]
+  liveReplaySessions  LiveReplaySession[]
 
   @@index([email])
 }
@@ -292,9 +295,13 @@ model LiveReplaySession {
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
   trades LiveReplayTrade[]
 
   @@index([status, startedAt])
+  @@index([userId])
 }
 
 model LiveReplayTrade {
@@ -408,9 +415,13 @@ model BacktestRun {
   errorMessage    String?
   createdAt       DateTime        @default(now())
   completedAt     DateTime?
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
   trades          BacktestTrade[]
 
   @@index([status, createdAt])
+  @@index([userId])
 }
 
 model BacktestTrade {
