@@ -16,8 +16,14 @@ def _default_factory(creds: dict, broker: str, mode: str) -> Broker:
         from mock_mt5 import MockMT5
         return MockMT5()
     if broker == 'CTRADER':
-        from ctrader_client import CTraderClient
-        return CTraderClient.from_creds(creds)
+        from ctrader_client import CTraderClient, make_token_refresh_callback
+        client = CTraderClient.from_creds(creds)
+        # Wire the refresh callback so the Python client can persist refreshed
+        # tokens back to NestJS. account_id is injected into creds by resolve_client.
+        account_id = creds.get('accountId')
+        if account_id:
+            client._on_token_refresh = make_token_refresh_callback(str(account_id))
+        return client
     # Default + 'METAAPI'
     from metaapi_mt5 import MetaApiMT5
     return MetaApiMT5.from_creds(creds)

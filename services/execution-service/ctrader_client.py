@@ -31,6 +31,37 @@ async def _async_post_form(url: str, data: Dict[str, str]) -> httpx.Response:
         return await client.post(url, data=data)
 
 
+def make_token_refresh_callback(account_id: str) -> Callable[[Dict[str, Any]], Awaitable[None]]:
+    """Returns an async callback the CTraderClient calls after a successful token
+    refresh. It PATCHes the refreshed tokens back to NestJS so they get re-encrypted
+    into the BrokerAccount row.
+
+    The internal NestJS endpoint is IP-restricted to docker subnets, so this only
+    works when both services are on the docker network."""
+    backend_url = os.getenv('BACKEND_INTERNAL_URL', 'http://backend:3001')
+
+    async def callback(tokens: Dict[str, Any]) -> None:
+        async with httpx.AsyncClient(timeout=10.0) as http:
+            try:
+                res = await http.patch(
+                    f'{backend_url}/api/accounts/{account_id}/oauth-tokens',
+                    json={
+                        'accessToken': tokens['accessToken'],
+                        'refreshToken': tokens['refreshToken'],
+                        'expiresAt': int(tokens['expiresAt']),
+                    },
+                )
+                if res.status_code >= 400:
+                    _logger.warning(
+                        f'Token persistence failed for account={account_id}: '
+                        f'{res.status_code} {res.text[:200]}'
+                    )
+            except Exception as e:
+                _logger.warning(f'Token persistence error for account={account_id}: {e}')
+
+    return callback
+
+
 class CTraderClient(Broker):
     def __init__(
         self,

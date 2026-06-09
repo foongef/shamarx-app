@@ -33,6 +33,7 @@ export class BrokerHttpClient {
     );
     return {
       headers: {
+        'X-Broker': acct.broker,           // dispatches CTraderClient vs MetaApiMT5 in execution-service
         'X-Broker-Creds': creds,
         'X-Broker-Mode': acct.mode,
       },

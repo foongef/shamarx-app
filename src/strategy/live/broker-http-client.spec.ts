@@ -16,6 +16,7 @@ describe('BrokerHttpClient', () => {
     accounts = {
       findByIdWithCreds: jest.fn().mockResolvedValue({
         id: 'a1',
+        broker: 'METAAPI',
         mode: 'metaapi',
         encryptedCreds: Buffer.from('ct'),
         credsIv: Buffer.from('iv-12bytes!!'),
@@ -40,9 +41,22 @@ describe('BrokerHttpClient', () => {
     const result = await client.fetchOpenPositions('a1', 'EURUSD');
     const [url, opts] = http.get.mock.calls[0];
     expect(url).toMatch(/\/accounts\/a1\/positions\?symbol=EURUSD$/);
+    expect(opts.headers['X-Broker']).toBe('METAAPI');
     expect(opts.headers['X-Broker-Creds']).toBe('{"accountId":"meta","accessToken":"tok"}');
     expect(opts.headers['X-Broker-Mode']).toBe('metaapi');
     expect(result).toEqual([{ ticket: 1 }]);
+  });
+
+  it('forwards X-Broker=CTRADER for cTrader accounts', async () => {
+    accounts.findByIdWithCreds.mockResolvedValue({
+      id: 'a2', broker: 'CTRADER', mode: 'metaapi',
+      encryptedCreds: Buffer.from('ct'), credsIv: Buffer.from('iv'), credsAuthTag: Buffer.from('at'),
+    });
+    crypto.decrypt.mockReturnValue('{"accessToken":"AT","refreshToken":"RT","ctidTraderAccountId":42}');
+    http.get.mockReturnValue(of({ data: [] }));
+    await client.fetchOpenPositions('a2');
+    const [, opts] = http.get.mock.calls[0];
+    expect(opts.headers['X-Broker']).toBe('CTRADER');
   });
 
   it('placeOrder POSTs to /accounts/:id/orders', async () => {

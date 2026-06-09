@@ -185,6 +185,9 @@ async def resolve_client(
         creds = json.loads(x_broker_creds)
     except json.JSONDecodeError:
         raise HTTPException(400, "X-Broker-Creds must be valid JSON")
+    # Inject account_id so CTraderClient's token-refresh callback knows which
+    # BrokerAccount row to PATCH back to NestJS.
+    creds['accountId'] = account_id
     return await registry.get_or_create(account_id, creds, x_broker, x_broker_mode)
 
 
