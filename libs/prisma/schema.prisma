@@ -479,6 +479,14 @@ model BrokerAccount {
   sortIndex       Int       @default(0)
   /// 'metaapi' | 'mock'
   mode            String    @default("metaapi")
+  /// cTrader account number (e.g., "52867017"). null for MetaApi.
+  accountNumber  String?
+  /// 'DEMO' | 'LIVE'. null for MetaApi.
+  accountKind    String?
+  /// Friendly broker name from Spotware (e.g., "IC Markets"). null for MetaApi.
+  brokerName     String?
+  /// When the current OAuth access token expires. null for MetaApi.
+  oauthExpiresAt DateTime?
   lastConnectedAt DateTime?
 
   createdAt DateTime @default(now())
@@ -491,6 +499,7 @@ model BrokerAccount {
 
   @@unique([userId, name])
   @@index([userId, isEnabled])
+  @@index([broker, accountKind])
 }
 
 model RefreshToken {
