@@ -5,36 +5,45 @@
   <meta name="color-scheme" content="dark">
   <title>{{symbol}} {{sideLabel}} opened</title>
 </head>
-<body style="margin:0; padding:0; background:#0a0a0a; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; color:#e5e5e5;">
-  <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:#0a0a0a;">
+<body style="margin:0; padding:0; background:#1a1612; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; color:#ece8e3;">
+  <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:#1a1612;">
     <tr>
       <td align="center" style="padding:48px 16px;">
-        <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="560" style="max-width:560px; background:#141414; border:1px solid #262626; border-radius:6px; overflow:hidden;">
+        <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="560" style="max-width:560px; background:#231f1a; border:1px solid #383229; border-radius:4px; overflow:hidden;">
 
-          <!-- Top accent rail (signal gold) -->
+          <!-- Top accent rail (Shamarx gold) -->
           <tr>
-            <td style="height:1px; background:linear-gradient(90deg, transparent 0%, #ddb13d 50%, transparent 100%);" height="1"></td>
+            <td style="height:1px; background:linear-gradient(90deg, transparent 0%, #F2C31C 50%, transparent 100%);" height="1"></td>
           </tr>
 
           <!-- Header -->
           <tr>
             <td style="padding:36px 40px 12px;">
-              <div style="font-family:'SF Mono',Menlo,Consolas,monospace; font-size:10px; text-transform:uppercase; letter-spacing:0.22em; color:#ddb13d; margin-bottom:10px;">
-                ShamarX · trade opened
+              <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; font-size:13px; font-weight:600; letter-spacing:0.16em; color:#F2C31C; text-transform:uppercase;">
+                ▲ SHAMARX
               </div>
-              <div style="font-family:ui-serif,Georgia,serif; font-size:30px; line-height:1.1; letter-spacing:0.01em; color:#fafafa;">
+              <div style="margin-top:6px; font-family:'SF Mono',Menlo,Consolas,monospace; font-size:10px; letter-spacing:0.22em; color:#8d8275; text-transform:uppercase;">
+                Trade opened · executed
+              </div>
+            </td>
+          </tr>
+
+          <!-- Symbol + side -->
+          <tr>
+            <td style="padding:12px 40px 16px;">
+              <div style="font-family:'SF Mono',Menlo,Consolas,monospace; font-size:32px; font-weight:500; line-height:1.1; letter-spacing:0.02em; color:#ece8e3;">
                 {{symbol}} <span style="color:{{accentColor}};">{{sideLabel}}</span>
               </div>
-              <div style="margin-top:8px; font-family:'SF Mono',Menlo,Consolas,monospace; font-size:11px; letter-spacing:0.16em; color:#737373; text-transform:uppercase;">
+              <div style="margin-top:10px; font-family:'SF Mono',Menlo,Consolas,monospace; font-size:11px; letter-spacing:0.16em; color:#8d8275; text-transform:uppercase;">
                 {{mode}} · {{lotSize}} lot · {{riskLabel}} risk
               </div>
             </td>
           </tr>
 
-          <!-- Direction strip -->
+          <!-- Divider -->
           <tr>
             <td style="padding:0 40px;">
-              <div style="height:1px; background:#262626; margin:20px 0;"></div>
+              <div style="height:1px; background:#383229; margin:8px 0 20px;"></div>
             </td>
           </tr>
 
@@ -43,23 +52,23 @@
             <td style="padding:0 40px 8px;">
               <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
                 <tr>
-                  <td width="50%" style="padding:0 12px 16px 0; vertical-align:top;">
-                    <div style="font-family:'SF Mono',Menlo,Consolas,monospace; font-size:9.5px; letter-spacing:0.22em; text-transform:uppercase; color:#737373;">Entry</div>
-                    <div style="margin-top:4px; font-family:'SF Mono',Menlo,Consolas,monospace; font-size:18px; color:#fafafa;">{{entryPrice}}</div>
+                  <td width="50%" style="padding:0 12px 18px 0; vertical-align:top;">
+                    <div style="font-family:'SF Mono',Menlo,Consolas,monospace; font-size:9.5px; letter-spacing:0.22em; text-transform:uppercase; color:#8d8275;">Entry</div>
+                    <div style="margin-top:6px; font-family:'SF Mono',Menlo,Consolas,monospace; font-size:18px; color:#ece8e3;">{{entryPrice}}</div>
                   </td>
-                  <td width="50%" style="padding:0 0 16px 12px; vertical-align:top;">
-                    <div style="font-family:'SF Mono',Menlo,Consolas,monospace; font-size:9.5px; letter-spacing:0.22em; text-transform:uppercase; color:#737373;">Opened</div>
-                    <div style="margin-top:4px; font-family:'SF Mono',Menlo,Consolas,monospace; font-size:14px; color:#fafafa;">{{openedAtPretty}}</div>
+                  <td width="50%" style="padding:0 0 18px 12px; vertical-align:top;">
+                    <div style="font-family:'SF Mono',Menlo,Consolas,monospace; font-size:9.5px; letter-spacing:0.22em; text-transform:uppercase; color:#8d8275;">Opened</div>
+                    <div style="margin-top:6px; font-family:'SF Mono',Menlo,Consolas,monospace; font-size:14px; color:#ece8e3;">{{openedAtPretty}}</div>
                   </td>
                 </tr>
                 <tr>
-                  <td width="50%" style="padding:0 12px 16px 0; vertical-align:top;">
-                    <div style="font-family:'SF Mono',Menlo,Consolas,monospace; font-size:9.5px; letter-spacing:0.22em; text-transform:uppercase; color:#737373;">Stop loss</div>
-                    <div style="margin-top:4px; font-family:'SF Mono',Menlo,Consolas,monospace; font-size:16px; color:#ef4444;">{{slPrice}}</div>
+                  <td width="50%" style="padding:0 12px 18px 0; vertical-align:top;">
+                    <div style="font-family:'SF Mono',Menlo,Consolas,monospace; font-size:9.5px; letter-spacing:0.22em; text-transform:uppercase; color:#8d8275;">Stop loss</div>
+                    <div style="margin-top:6px; font-family:'SF Mono',Menlo,Consolas,monospace; font-size:16px; color:#F26659;">{{slPrice}}</div>
                   </td>
-                  <td width="50%" style="padding:0 0 16px 12px; vertical-align:top;">
-                    <div style="font-family:'SF Mono',Menlo,Consolas,monospace; font-size:9.5px; letter-spacing:0.22em; text-transform:uppercase; color:#737373;">Take profit</div>
-                    <div style="margin-top:4px; font-family:'SF Mono',Menlo,Consolas,monospace; font-size:16px; color:#22c55e;">{{tpDisplay}}</div>
+                  <td width="50%" style="padding:0 0 18px 12px; vertical-align:top;">
+                    <div style="font-family:'SF Mono',Menlo,Consolas,monospace; font-size:9.5px; letter-spacing:0.22em; text-transform:uppercase; color:#8d8275;">Take profit</div>
+                    <div style="margin-top:6px; font-family:'SF Mono',Menlo,Consolas,monospace; font-size:16px; color:#4FD49F;">{{tpDisplay}}</div>
                   </td>
                 </tr>
               </table>
@@ -69,18 +78,20 @@
           <!-- Reason -->
           <tr>
             <td style="padding:8px 40px 0;">
-              <div style="font-family:'SF Mono',Menlo,Consolas,monospace; font-size:9.5px; letter-spacing:0.22em; text-transform:uppercase; color:#737373;">Setup</div>
-              <p style="margin:6px 0 0; font-size:13.5px; line-height:1.6; color:#d4d4d4;">{{reason}}</p>
+              <div style="font-family:'SF Mono',Menlo,Consolas,monospace; font-size:9.5px; letter-spacing:0.22em; text-transform:uppercase; color:#8d8275;">Setup</div>
+              <p style="margin:6px 0 0; font-size:13.5px; line-height:1.6; color:#d4cfc8;">{{reason}}</p>
             </td>
           </tr>
 
           <!-- CTA -->
           <tr>
-            <td align="center" style="padding:32px 40px;">
+            <td align="center" style="padding:32px 40px 8px;">
               <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center">
                 <tr>
-                  <td align="center" style="background:#ddb13d; border-radius:4px;">
-                    <a href="{{dashboardUrl}}" style="display:inline-block; padding:12px 28px; font-family:'SF Mono',Menlo,Consolas,monospace; font-size:11px; font-weight:600; letter-spacing:0.22em; text-transform:uppercase; color:#0a0a0a; text-decoration:none;">View on dashboard</a>
+                  <td align="center" style="background:#F2C31C; border-radius:4px;">
+                    <a href="{{dashboardUrl}}" style="display:inline-block; padding:13px 30px; font-family:'SF Mono',Menlo,Consolas,monospace; font-size:11px; font-weight:600; letter-spacing:0.22em; text-transform:uppercase; color:#1a1612; text-decoration:none;">
+                      Open dashboard
+                    </a>
                   </td>
                 </tr>
               </table>
@@ -89,24 +100,25 @@
 
           <!-- Disclaimer -->
           <tr>
-            <td style="padding:0 40px 32px; border-top:1px solid #262626;">
-              <p style="margin:24px 0 0; font-size:11px; line-height:1.6; color:#525252;">
-                This trade was placed automatically by the stop-hunt reversal engine. Position management (BE move, trail, TP partials) runs without further action from you. To stop the engine, use the dashboard "Stop session" button.
+            <td style="padding:24px 40px 32px;">
+              <hr style="border:none; border-top:1px solid #383229; margin:12px 0 16px;">
+              <p style="margin:0; font-size:11.5px; line-height:1.6; color:#8d8275;">
+                This trade was placed automatically by the stop-hunt reversal engine. Position management (BE move, trail, partial TPs) continues without further action from you. To stop the engine, use the dashboard.
               </p>
             </td>
           </tr>
 
           <!-- Bottom accent rail -->
           <tr>
-            <td style="height:1px; background:linear-gradient(90deg, transparent 0%, #ddb13d 50%, transparent 100%); opacity:0.6;" height="1"></td>
+            <td style="height:1px; background:linear-gradient(90deg, transparent 0%, #F2C31C 50%, transparent 100%); opacity:0.5;" height="1"></td>
           </tr>
         </table>
 
-        <!-- Footer outside card -->
+        <!-- Footer -->
         <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="560" style="max-width:560px; margin-top:16px;">
           <tr>
-            <td align="center" style="padding:8px 40px; font-family:'SF Mono',Menlo,Consolas,monospace; font-size:10px; letter-spacing:0.22em; text-transform:uppercase; color:#525252;">
-              ShamarX · Guarded by design
+            <td align="center" style="padding:8px 40px; font-family:'SF Mono',Menlo,Consolas,monospace; font-size:10px; letter-spacing:0.22em; text-transform:uppercase; color:#5e5447;">
+              SHAMARX · Guarded by design
             </td>
           </tr>
         </table>
