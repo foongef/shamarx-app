@@ -104,3 +104,74 @@ async def test_initialize_closes_transport_on_auth_failure(monkeypatch):
     assert transport.closed is True
     assert c._transport is None
     assert c._heartbeat_task is None
+
+
+def _initialized_client(monkeypatch, extra_canned=None):
+    canned = {
+        PAYLOAD['APP_AUTH_RES']: {},
+        PAYLOAD['ACCOUNT_AUTH_RES']: {},
+        PAYLOAD['SYMBOLS_LIST_RES']: {'symbol': [
+            {'symbolId': 1, 'symbolName': 'EURUSD', 'digits': 5},
+            {'symbolId': 41, 'symbolName': 'XAUUSD', 'digits': 2},
+        ]},
+    }
+    canned.update(extra_canned or {})
+    transport = FakeTransport(canned)
+    monkeypatch.setenv('CTRADER_CLIENT_ID', 'x'); monkeypatch.setenv('CTRADER_CLIENT_SECRET', 'y')
+    monkeypatch.setattr('ctrader_client.CTraderTransport', lambda *a, **kw: transport)
+    return transport
+
+
+async def test_place_order_translates_request(monkeypatch):
+    from models import OrderRequest
+    transport = _initialized_client(monkeypatch, extra_canned={
+        PAYLOAD['EXECUTION_EVENT']: {
+            'order': {'orderId': 9876543210, 'positionId': 1234567},
+            'executionType': 'ORDER_FILLED',
+            'position': {'positionId': 1234567},
+        },
+    })
+    c = _client()
+    await c.initialize()
+    req = OrderRequest(symbol='EURUSD', side='BUY', lotSize=0.10,
+                       entryPrice=1.08300, slPrice=1.08000, tpPrice=1.09000)
+    res = await c.place_order(req)
+    new_order_call = next(p for t, p in transport.sent if t == PAYLOAD['NEW_ORDER_REQ'])
+    assert new_order_call['symbolId'] == 1
+    assert new_order_call['orderType'] == 'MARKET'
+    assert new_order_call['tradeSide'] == 'BUY'
+    assert new_order_call['volume'] == 10
+    assert new_order_call['stopLoss'] == 108000
+    assert new_order_call['takeProfit'] == 109000
+    assert res.mt5_ticket == 1234567
+    assert res.status == 'FILLED'
+    await c.close()
+
+
+async def test_close_position_sends_volume_zero(monkeypatch):
+    transport = _initialized_client(monkeypatch, extra_canned={
+        PAYLOAD['EXECUTION_EVENT']: {'executionType': 'ORDER_FILLED', 'position': {'positionId': 555}},
+    })
+    c = _client()
+    await c.initialize()
+    res = await c.close_position(555)
+    close_call = next(p for t, p in transport.sent if t == PAYLOAD['CLOSE_POSITION_REQ'])
+    assert close_call['positionId'] == 555
+    assert close_call['volume'] == 0
+    assert res['status'] in ('CLOSED', 'OK')
+    await c.close()
+
+
+async def test_modify_position_sends_sl_tp(monkeypatch):
+    transport = _initialized_client(monkeypatch, extra_canned={
+        PAYLOAD['EXECUTION_EVENT']: {'executionType': 'AMENDED', 'position': {'positionId': 555}},
+    })
+    c = _client()
+    await c.initialize()
+    c._position_symbol_cache = {555: 'EURUSD'}
+    await c.modify_position(555, sl_price=1.07500, tp_price=1.09500)
+    amend_call = next(p for t, p in transport.sent if t == PAYLOAD['AMEND_POSITION_SLTP_REQ'])
+    assert amend_call['positionId'] == 555
+    assert amend_call['stopLoss'] == 107500
+    assert amend_call['takeProfit'] == 109500
+    await c.close()

@@ -144,16 +144,72 @@ class CTraderClient(Broker):
                 _logger.warning(f'CTrader heartbeat failed: {e}')
 
     async def place_order(self, request) -> object:
-        raise NotImplementedError('Task 6')
+        from models import OrderResponse
+        assert self._transport is not None
+        symbol_id = self._to_ctrader_symbol(request.symbol)
+        volume = int(round(request.lot_size * 100))
+        side = request.side.value if hasattr(request.side, 'value') else str(request.side)
+        payload = {
+            'ctidTraderAccountId': self.ctid_trader_account_id,
+            'symbolId': symbol_id,
+            'orderType': 'MARKET',
+            'tradeSide': side,
+            'volume': volume,
+            'stopLoss': self._to_ctrader_price(request.symbol, request.sl_price),
+            'takeProfit': self._to_ctrader_price(request.symbol, request.tp_price),
+        }
+        res = await self._transport.request(
+            PAYLOAD['NEW_ORDER_REQ'], payload, PAYLOAD['EXECUTION_EVENT'],
+        )
+        exec_type = res.get('executionType')
+        position_id = res.get('position', {}).get('positionId')
+        if position_id:
+            self._position_symbol_cache[int(position_id)] = request.symbol
+        status = 'FILLED' if exec_type == 'ORDER_FILLED' else 'REJECTED'
+        return OrderResponse(
+            orderId=str(res.get('order', {}).get('orderId', '')),
+            mt5Ticket=int(position_id) if position_id else None,
+            status=status,
+            message=str(res.get('errorCode') or exec_type or ''),
+        )
 
     async def get_positions(self, symbol: Optional[str] = None) -> list:
         raise NotImplementedError('Task 7')
 
     async def close_position(self, ticket: int) -> dict:
-        raise NotImplementedError('Task 6')
+        assert self._transport is not None
+        res = await self._transport.request(
+            PAYLOAD['CLOSE_POSITION_REQ'],
+            {'ctidTraderAccountId': self.ctid_trader_account_id, 'positionId': int(ticket), 'volume': 0},
+            PAYLOAD['EXECUTION_EVENT'],
+        )
+        exec_type = res.get('executionType', 'UNKNOWN')
+        self._position_symbol_cache.pop(int(ticket), None)
+        return {'status': 'CLOSED' if exec_type == 'ORDER_FILLED' else exec_type}
 
     async def modify_position(self, ticket: int, sl_price: float, tp_price: float) -> dict:
-        raise NotImplementedError('Task 6')
+        assert self._transport is not None
+        symbol = self._position_symbol_cache.get(int(ticket))
+        if not symbol:
+            positions = await self.get_positions()
+            for p in positions:
+                if p.get('ticket') == int(ticket):
+                    symbol = p.get('symbol')
+                    self._position_symbol_cache[int(ticket)] = symbol
+                    break
+        if not symbol:
+            raise CTraderApiError('POSITION_NOT_FOUND', f'ticket={ticket}')
+        await self._transport.request(
+            PAYLOAD['AMEND_POSITION_SLTP_REQ'],
+            {
+                'ctidTraderAccountId': self.ctid_trader_account_id,
+                'positionId': int(ticket),
+                'stopLoss': self._to_ctrader_price(symbol, sl_price),
+                'takeProfit': self._to_ctrader_price(symbol, tp_price),
+            },
+            PAYLOAD['EXECUTION_EVENT'],
+        )
+        return {'status': 'OK'}
 
     async def get_account_info(self) -> object:
         raise NotImplementedError('Task 7')
