@@ -52,6 +52,12 @@ export class AdminUsersService {
   }
 
   async setBotEnabled(id: string, botEnabled: boolean) {
-    await this.prisma.user.update({ where: { id }, data: { botEnabled } });
+    await this.prisma.user.update({
+      where: { id },
+      data: {
+        botEnabled,
+        pausedAt: botEnabled ? null : new Date(),
+      },
+    });
   }
 }

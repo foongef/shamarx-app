@@ -33,16 +33,14 @@ export class MeController {
     return this.prisma.user.update({
       where: { id: me.id },
       data: {
-        ...(dto.botEnabled !== undefined && { botEnabled: dto.botEnabled }),
+        ...(dto.botEnabled !== undefined && {
+          botEnabled: dto.botEnabled,
+          pausedAt: dto.botEnabled ? null : new Date(),
+        }),
         ...(dto.presetKey !== undefined && { presetKey: dto.presetKey }),
       },
       select: {
-        id: true,
-        email: true,
-        role: true,
-        isActive: true,
-        botEnabled: true,
-        presetKey: true,
+        id: true, email: true, role: true, isActive: true, botEnabled: true, presetKey: true, pausedAt: true,
       },
     });
   }
