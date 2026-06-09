@@ -111,7 +111,7 @@ class CTraderTransport:
         self._msg_seq += 1
         msg_id = f'm{self._msg_seq}'
         msg = ProtoMessage(payload_type=payload_type, payload=payload, client_msg_id=msg_id)
-        fut: asyncio.Future = asyncio.get_event_loop().create_future()
+        fut: asyncio.Future = asyncio.get_running_loop().create_future()
         self._pending[msg_id] = fut
         try:
             await self._ws.send(msg.to_wire())
@@ -135,7 +135,11 @@ class CTraderTransport:
         assert self._ws is not None
         try:
             async for raw in self._ws:
-                env = json.loads(raw)
+                try:
+                    env = json.loads(raw)
+                except json.JSONDecodeError as e:
+                    _logger.warning(f'cTrader: malformed frame, skipping: {e}')
+                    continue
                 msg_id = env.get('clientMsgId')
                 payload_type = env.get('payloadType')
                 if msg_id and msg_id in self._pending:
@@ -151,6 +155,14 @@ class CTraderTransport:
             _logger.warning('cTrader WebSocket closed')
         except asyncio.CancelledError:
             pass
+        except Exception as e:
+            _logger.error(f'cTrader reader loop crashed: {e}')
+        finally:
+            # Fail any pending requests so callers don't hang on a dead connection
+            for fut in self._pending.values():
+                if not fut.done():
+                    fut.set_exception(CTraderApiError('DISCONNECTED', 'WebSocket closed'))
+            self._pending.clear()
 
 
 class CTraderApiError(Exception):
