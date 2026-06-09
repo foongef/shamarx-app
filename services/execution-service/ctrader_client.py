@@ -94,34 +94,42 @@ class CTraderClient(Broker):
         self._transport = CTraderTransport(host)
         await self._transport.connect()
 
-        # App-level auth
-        await self._transport.request(
-            PAYLOAD['APP_AUTH_REQ'],
-            {'clientId': client_id, 'clientSecret': client_secret},
-            PAYLOAD['APP_AUTH_RES'],
-        )
+        try:
+            # App-level auth
+            await self._transport.request(
+                PAYLOAD['APP_AUTH_REQ'],
+                {'clientId': client_id, 'clientSecret': client_secret},
+                PAYLOAD['APP_AUTH_RES'],
+            )
 
-        # Account-level auth
-        await self._transport.request(
-            PAYLOAD['ACCOUNT_AUTH_REQ'],
-            {'ctidTraderAccountId': self.ctid_trader_account_id, 'accessToken': self.access_token},
-            PAYLOAD['ACCOUNT_AUTH_RES'],
-        )
+            # Account-level auth
+            await self._transport.request(
+                PAYLOAD['ACCOUNT_AUTH_REQ'],
+                {'ctidTraderAccountId': self.ctid_trader_account_id, 'accessToken': self.access_token},
+                PAYLOAD['ACCOUNT_AUTH_RES'],
+            )
 
-        # Symbol catalog
-        symbols_res = await self._transport.request(
-            PAYLOAD['SYMBOLS_LIST_REQ'],
-            {'ctidTraderAccountId': self.ctid_trader_account_id, 'includeArchivedSymbols': False},
-            PAYLOAD['SYMBOLS_LIST_RES'],
-        )
-        for s in symbols_res.get('symbol', []):
-            name = s['symbolName']
-            sid = int(s['symbolId'])
-            self._symbol_id_by_name[name] = sid
-            self._symbol_name_by_id[sid] = name
-            self._symbol_digits[name] = int(s.get('digits', 5))
+            # Symbol catalog
+            symbols_res = await self._transport.request(
+                PAYLOAD['SYMBOLS_LIST_REQ'],
+                {'ctidTraderAccountId': self.ctid_trader_account_id, 'includeArchivedSymbols': False},
+                PAYLOAD['SYMBOLS_LIST_RES'],
+            )
+            for s in symbols_res.get('symbol', []):
+                name = s['symbolName']
+                sid = int(s['symbolId'])
+                self._symbol_id_by_name[name] = sid
+                self._symbol_name_by_id[sid] = name
+                self._symbol_digits[name] = int(s.get('digits', 5))
+        except Exception:
+            # Clean up the transport so we don't leak a connected socket
+            try:
+                await self._transport.close()
+            finally:
+                self._transport = None
+            raise
 
-        # Start heartbeat
+        # Start heartbeat AFTER all fallible work succeeds
         self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
         _logger.info(f'CTraderClient: initialized account={self.ctid_trader_account_id} '
                      f'kind={self.account_kind} symbols={len(self._symbol_id_by_name)}')

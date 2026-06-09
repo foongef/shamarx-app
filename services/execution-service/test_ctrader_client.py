@@ -82,3 +82,25 @@ async def test_initialize_uses_live_endpoint_for_live_kind(monkeypatch):
     await c.initialize()
     assert captured['host'] == 'live.ctraderapi.com'
     await c.close()
+
+
+async def test_initialize_closes_transport_on_auth_failure(monkeypatch):
+    """If auth fails, transport must be closed and self._transport reset to None."""
+    class FailingTransport(FakeTransport):
+        async def request(self, payload_type, payload, expected_response_type, timeout=10.0):
+            self.sent.append((payload_type, payload))
+            if payload_type == PAYLOAD['ACCOUNT_AUTH_REQ']:
+                from ctrader_protocol import CTraderApiError
+                raise CTraderApiError('CH_CLIENT_AUTH_FAILURE', 'bad token')
+            return self.canned.get(expected_response_type, {})
+
+    transport = FailingTransport({PAYLOAD['APP_AUTH_RES']: {}})
+    monkeypatch.setenv('CTRADER_CLIENT_ID', 'x'); monkeypatch.setenv('CTRADER_CLIENT_SECRET', 'y')
+    monkeypatch.setattr('ctrader_client.CTraderTransport', lambda *a, **kw: transport)
+
+    c = _client()
+    with pytest.raises(Exception):
+        await c.initialize()
+    assert transport.closed is True
+    assert c._transport is None
+    assert c._heartbeat_task is None
