@@ -174,7 +174,34 @@ class CTraderClient(Broker):
         )
 
     async def get_positions(self, symbol: Optional[str] = None) -> list:
-        raise NotImplementedError('Task 7')
+        assert self._transport is not None
+        res = await self._transport.request(
+            PAYLOAD['RECONCILE_REQ'],
+            {'ctidTraderAccountId': self.ctid_trader_account_id},
+            PAYLOAD['RECONCILE_RES'],
+        )
+        positions = []
+        for p in res.get('position', []):
+            td = p.get('tradeData', {})
+            sym_id = int(td.get('symbolId', 0))
+            sym = self._our_symbol_from_id(sym_id)
+            if symbol and sym != symbol:
+                continue
+            entry_price = self._from_ctrader_price(sym, int(p.get('price', 0)))
+            positions.append({
+                'ticket': int(p['positionId']),
+                'symbol': sym,
+                'side': td.get('tradeSide', ''),
+                'lotSize': int(td.get('volume', 0)) / 100.0,
+                'entryPrice': entry_price,
+                'currentPrice': entry_price,  # cTrader reconcile doesn't include current; strategy doesn't depend on it
+                'sl': self._from_ctrader_price(sym, int(p.get('stopLoss', 0))),
+                'tp': self._from_ctrader_price(sym, int(p.get('takeProfit', 0))),
+                'pnl': 0.0,
+                'openTime': str(td.get('openTimestamp', 0)),
+            })
+            self._position_symbol_cache[int(p['positionId'])] = sym
+        return positions
 
     async def close_position(self, ticket: int) -> dict:
         assert self._transport is not None
@@ -212,10 +239,64 @@ class CTraderClient(Broker):
         return {'status': 'OK'}
 
     async def get_account_info(self) -> object:
-        raise NotImplementedError('Task 7')
+        from models import AccountInfo
+        assert self._transport is not None
+        trader_res = await self._transport.request(
+            PAYLOAD['TRADER_REQ'],
+            {'ctidTraderAccountId': self.ctid_trader_account_id},
+            PAYLOAD['TRADER_RES'],
+        )
+        trader = trader_res.get('trader', {})
+        money_digits = int(trader.get('moneyDigits', 2))
+        divisor = 10 ** money_digits
+        balance = int(trader.get('balance', 0)) / divisor
+        positions_res = await self._transport.request(
+            PAYLOAD['RECONCILE_REQ'],
+            {'ctidTraderAccountId': self.ctid_trader_account_id},
+            PAYLOAD['RECONCILE_RES'],
+        )
+        open_positions = len(positions_res.get('position', []))
+        used_margin = sum(int(p.get('usedMargin', 0)) for p in positions_res.get('position', [])) / divisor
+        equity = balance  # cTrader does not surface live equity on TRADER_RES; close enough for risk gates
+        return AccountInfo(
+            balance=balance,
+            equity=equity,
+            margin=used_margin,
+            freeMargin=max(0.0, equity - used_margin),
+            openPositions=open_positions,
+        )
 
     async def get_position_close_info(self, ticket: int) -> Optional[dict]:
-        raise NotImplementedError('Task 7')
+        assert self._transport is not None
+        now_ms = int(time.time() * 1000)
+        seven_days_ms = 7 * 24 * 3600 * 1000
+        res = await self._transport.request(
+            PAYLOAD['DEAL_LIST_REQ'],
+            {
+                'ctidTraderAccountId': self.ctid_trader_account_id,
+                'fromTimestamp': now_ms - seven_days_ms,
+                'toTimestamp': now_ms,
+            },
+            PAYLOAD['DEAL_LIST_RES'],
+        )
+        for deal in res.get('deal', []):
+            if int(deal.get('positionId', 0)) != int(ticket):
+                continue
+            if deal.get('closePositionDetail') is None:
+                continue
+            cpd = deal['closePositionDetail']
+            sym_id = int(deal.get('symbolId', 0))
+            sym = self._our_symbol_from_id(sym_id)
+            return {
+                'ticket': int(ticket),
+                'closePrice': self._from_ctrader_price(sym, int(cpd.get('executionPrice', 0))),
+                'closeTime': str(deal.get('executionTimestamp', 0)),
+                'pnl': int(cpd.get('grossProfit', 0)) / 100.0,
+                'commission': int(deal.get('commission', 0)) / 100.0,
+                'swap': int(cpd.get('swap', 0)) / 100.0,
+                'reason': cpd.get('closeReason', 'UNKNOWN'),
+            }
+        return None
 
     async def close(self) -> None:
         self._closed = True

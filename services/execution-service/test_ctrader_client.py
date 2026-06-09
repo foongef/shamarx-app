@@ -175,3 +175,102 @@ async def test_modify_position_sends_sl_tp(monkeypatch):
     assert amend_call['stopLoss'] == 107500
     assert amend_call['takeProfit'] == 109500
     await c.close()
+
+
+async def test_get_positions_translates_response(monkeypatch):
+    transport = _initialized_client(monkeypatch, extra_canned={
+        PAYLOAD['RECONCILE_RES']: {
+            'position': [
+                {
+                    'positionId': 100,
+                    'tradeData': {'symbolId': 1, 'tradeSide': 'BUY', 'volume': 10, 'openTimestamp': 1717000000000},
+                    'price': 108300, 'stopLoss': 108000, 'takeProfit': 109000,
+                    'commission': -5, 'swap': 0, 'usedMargin': 100,
+                },
+            ],
+        },
+    })
+    c = _client()
+    await c.initialize()
+    positions = await c.get_positions()
+    assert len(positions) == 1
+    p = positions[0]
+    assert p['ticket'] == 100
+    assert p['symbol'] == 'EURUSD'
+    assert p['side'] == 'BUY'
+    assert p['lotSize'] == pytest.approx(0.10)
+    assert p['entryPrice'] == pytest.approx(1.08300)
+    assert p['sl'] == pytest.approx(1.08000)
+    assert p['tp'] == pytest.approx(1.09000)
+    await c.close()
+
+
+async def test_get_positions_filters_by_symbol(monkeypatch):
+    transport = _initialized_client(monkeypatch, extra_canned={
+        PAYLOAD['RECONCILE_RES']: {
+            'position': [
+                {'positionId': 100, 'tradeData': {'symbolId': 1, 'tradeSide': 'BUY', 'volume': 10, 'openTimestamp': 0},
+                 'price': 108000, 'stopLoss': 0, 'takeProfit': 0, 'commission': 0, 'swap': 0, 'usedMargin': 0},
+                {'positionId': 101, 'tradeData': {'symbolId': 41, 'tradeSide': 'SELL', 'volume': 5, 'openTimestamp': 0},
+                 'price': 205000, 'stopLoss': 0, 'takeProfit': 0, 'commission': 0, 'swap': 0, 'usedMargin': 0},
+            ],
+        },
+    })
+    c = _client()
+    await c.initialize()
+    eur = await c.get_positions('EURUSD')
+    xau = await c.get_positions('XAUUSD')
+    assert [p['ticket'] for p in eur] == [100]
+    assert [p['ticket'] for p in xau] == [101]
+    await c.close()
+
+
+async def test_get_account_info_translates(monkeypatch):
+    _initialized_client(monkeypatch, extra_canned={
+        PAYLOAD['TRADER_RES']: {
+            'trader': {'balance': 1000000, 'depositAssetId': 1, 'moneyDigits': 2},
+        },
+        PAYLOAD['RECONCILE_RES']: {'position': []},
+    })
+    c = _client()
+    await c.initialize()
+    info = await c.get_account_info()
+    assert info.balance == pytest.approx(10000.0)
+    assert info.open_positions == 0
+    await c.close()
+
+
+async def test_get_position_close_info_returns_close_detail(monkeypatch):
+    _initialized_client(monkeypatch, extra_canned={
+        PAYLOAD['DEAL_LIST_RES']: {
+            'deal': [
+                {
+                    'positionId': 100, 'symbolId': 1, 'executionTimestamp': 1717000050000,
+                    'commission': -3,
+                    'closePositionDetail': {
+                        'executionPrice': 108550, 'grossProfit': 250, 'swap': 0, 'closeReason': 'TAKE_PROFIT',
+                    },
+                },
+            ],
+        },
+    })
+    c = _client()
+    await c.initialize()
+    info = await c.get_position_close_info(100)
+    assert info is not None
+    assert info['ticket'] == 100
+    assert info['closePrice'] == pytest.approx(1.08550)
+    assert info['pnl'] == pytest.approx(2.50)
+    assert info['reason'] == 'TAKE_PROFIT'
+    await c.close()
+
+
+async def test_get_position_close_info_returns_none_when_no_match(monkeypatch):
+    _initialized_client(monkeypatch, extra_canned={
+        PAYLOAD['DEAL_LIST_RES']: {'deal': []},
+    })
+    c = _client()
+    await c.initialize()
+    info = await c.get_position_close_info(999)
+    assert info is None
+    await c.close()
