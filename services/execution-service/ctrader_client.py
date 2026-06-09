@@ -85,7 +85,55 @@ class CTraderClient(Broker):
 
     # ----- Stubs (filled in subsequent tasks) -----
     async def initialize(self) -> None:
-        raise NotImplementedError('Task 5')
+        client_id = os.getenv('CTRADER_CLIENT_ID')
+        client_secret = os.getenv('CTRADER_CLIENT_SECRET')
+        if not client_id or not client_secret:
+            raise RuntimeError('CTRADER_CLIENT_ID and CTRADER_CLIENT_SECRET must be set')
+
+        host = 'live.ctraderapi.com' if self.account_kind == 'LIVE' else 'demo.ctraderapi.com'
+        self._transport = CTraderTransport(host)
+        await self._transport.connect()
+
+        # App-level auth
+        await self._transport.request(
+            PAYLOAD['APP_AUTH_REQ'],
+            {'clientId': client_id, 'clientSecret': client_secret},
+            PAYLOAD['APP_AUTH_RES'],
+        )
+
+        # Account-level auth
+        await self._transport.request(
+            PAYLOAD['ACCOUNT_AUTH_REQ'],
+            {'ctidTraderAccountId': self.ctid_trader_account_id, 'accessToken': self.access_token},
+            PAYLOAD['ACCOUNT_AUTH_RES'],
+        )
+
+        # Symbol catalog
+        symbols_res = await self._transport.request(
+            PAYLOAD['SYMBOLS_LIST_REQ'],
+            {'ctidTraderAccountId': self.ctid_trader_account_id, 'includeArchivedSymbols': False},
+            PAYLOAD['SYMBOLS_LIST_RES'],
+        )
+        for s in symbols_res.get('symbol', []):
+            name = s['symbolName']
+            sid = int(s['symbolId'])
+            self._symbol_id_by_name[name] = sid
+            self._symbol_name_by_id[sid] = name
+            self._symbol_digits[name] = int(s.get('digits', 5))
+
+        # Start heartbeat
+        self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
+        _logger.info(f'CTraderClient: initialized account={self.ctid_trader_account_id} '
+                     f'kind={self.account_kind} symbols={len(self._symbol_id_by_name)}')
+
+    async def _heartbeat_loop(self) -> None:
+        assert self._transport is not None
+        while not self._closed:
+            await asyncio.sleep(10)
+            try:
+                await self._transport.send_oneway(PAYLOAD['HEARTBEAT_EVENT'], {})
+            except Exception as e:
+                _logger.warning(f'CTrader heartbeat failed: {e}')
 
     async def place_order(self, request) -> object:
         raise NotImplementedError('Task 6')
