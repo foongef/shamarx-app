@@ -10,6 +10,8 @@ import os
 import time
 from typing import Any, Awaitable, Callable, Dict, List, Optional, TypeVar
 
+import httpx
+
 from broker_base import Broker
 from ctrader_protocol import CTraderTransport, CTraderApiError, PAYLOAD
 
@@ -22,6 +24,11 @@ SYMBOL_ALIASES = {
     'GBPUSD': ['GBP/USD'],
     'USDJPY': ['USD/JPY'],
 }
+
+
+async def _async_post_form(url: str, data: Dict[str, str]) -> httpx.Response:
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        return await client.post(url, data=data)
 
 
 class CTraderClient(Broker):
@@ -297,6 +304,81 @@ class CTraderClient(Broker):
                 'reason': cpd.get('closeReason', 'UNKNOWN'),
             }
         return None
+
+    async def _ensure_fresh_token(self) -> None:
+        """Refresh proactively if the access token expires in <60s."""
+        if self.expires_at > 0 and self.expires_at - int(time.time()) < 60:
+            await self._refresh_token()
+
+    async def _refresh_token(self) -> None:
+        client_id = os.getenv('CTRADER_CLIENT_ID')
+        client_secret = os.getenv('CTRADER_CLIENT_SECRET')
+        token_url = os.getenv('CTRADER_TOKEN_URL', 'https://openapi.ctrader.com/apps/token')
+        if not client_id or not client_secret:
+            raise RuntimeError('CTRADER_CLIENT_ID/SECRET required for refresh')
+        res = await _async_post_form(token_url, {
+            'grant_type': 'refresh_token',
+            'refresh_token': self.refresh_token,
+            'client_id': client_id,
+            'client_secret': client_secret,
+        })
+        res.raise_for_status()
+        body = res.json()
+        self.access_token = body['accessToken']
+        self.refresh_token = body['refreshToken']
+        self.expires_at = int(time.time()) + int(body.get('expiresIn', 0))
+        _logger.info(f'CTraderClient: refreshed token for account={self.ctid_trader_account_id} '
+                     f'(expires in {body.get("expiresIn", 0)}s)')
+        if self._on_token_refresh:
+            await self._on_token_refresh({
+                'accessToken': self.access_token,
+                'refreshToken': self.refresh_token,
+                'expiresAt': self.expires_at,
+            })
+
+    async def _reconnect(self) -> None:
+        """Close current transport + reinitialize. Used on auth/transport failure."""
+        if self._heartbeat_task:
+            self._heartbeat_task.cancel()
+            self._heartbeat_task = None
+        if self._transport:
+            try:
+                await self._transport.close()
+            except Exception:
+                pass
+            self._transport = None
+        await self.initialize()
+
+    async def _with_reconnect(
+        self,
+        op_name: str,
+        fn: Callable[[], Awaitable[T]],
+        max_attempts: int = 5,
+    ) -> T:
+        """Run fn with exponential backoff retry on auth/transport failure.
+        On CH_CLIENT_AUTH_FAILURE → refresh token + reconnect + retry once."""
+        delay = 1.0
+        last_exc: Optional[Exception] = None
+        for attempt in range(max_attempts):
+            try:
+                await self._ensure_fresh_token()
+                return await fn()
+            except CTraderApiError as e:
+                last_exc = e
+                if e.code == 'CH_CLIENT_AUTH_FAILURE':
+                    _logger.warning(f'{op_name}: auth failure → refresh + reconnect')
+                    await self._refresh_token()
+                    await self._reconnect()
+                    continue
+                raise
+            except Exception as e:
+                last_exc = e
+                _logger.warning(f'{op_name} attempt {attempt + 1}/{max_attempts} failed: {e}')
+                if attempt < max_attempts - 1:
+                    await asyncio.sleep(delay)
+                    delay = min(delay * 2, 16.0)
+                    await self._reconnect()
+        raise last_exc or RuntimeError(f'{op_name}: max attempts exceeded')
 
     async def close(self) -> None:
         self._closed = True
