@@ -1,4 +1,4 @@
-import { Injectable, ConflictException, NotFoundException, Logger } from '@nestjs/common';
+import { Injectable, BadRequestException, ConflictException, NotFoundException, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '@app/prisma';
 import { CryptoService } from '../crypto/crypto.service';
@@ -21,7 +21,17 @@ export class BrokerAccountsService {
     this.softCap = parseInt(config.get<string>('MULTI_ACCOUNT_SOFT_CAP') || '5', 10);
   }
 
-  async create(userId: string, dto: CreateBrokerAccountDto) {
+  async create(
+    userId: string,
+    dto: CreateBrokerAccountDto,
+    extra?: {
+      encryptedCredsJson: string;
+      accountNumber?: string | null;
+      accountKind?: 'DEMO' | 'LIVE' | null;
+      brokerName?: string | null;
+      oauthExpiresAt?: Date | null;
+    },
+  ) {
     if (dto.isEnabled !== false) {
       const enabledCount = await this.prisma.brokerAccount.count({
         where: { userId, isEnabled: true },
@@ -30,7 +40,20 @@ export class BrokerAccountsService {
         throw new ConflictException(`Soft cap of ${this.softCap} enabled accounts reached`);
       }
     }
-    const credsJson = JSON.stringify(dto.creds);
+
+    let credsJson: string;
+    if (dto.broker === 'CTRADER') {
+      if (!extra?.encryptedCredsJson) {
+        throw new BadRequestException('CTRADER accounts must be created via the OAuth flow');
+      }
+      credsJson = extra.encryptedCredsJson;
+    } else {
+      if (!dto.creds) {
+        throw new BadRequestException(`${dto.broker} accounts require a creds object`);
+      }
+      credsJson = JSON.stringify(dto.creds);
+    }
+
     const { ciphertext, iv, authTag } = this.crypto.encrypt(credsJson);
     const account = await this.prisma.brokerAccount.create({
       data: {
@@ -42,10 +65,39 @@ export class BrokerAccountsService {
         credsIv: iv,
         credsAuthTag: authTag,
         isEnabled: dto.isEnabled ?? false,
+        accountNumber: extra?.accountNumber ?? null,
+        accountKind: extra?.accountKind ?? null,
+        brokerName: extra?.brokerName ?? null,
+        oauthExpiresAt: extra?.oauthExpiresAt ?? null,
       } as any,
     });
     this.invalidate();
     return this.toSafe(account);
+  }
+
+  async updateCreds(accountId: string, credsJson: string, oauthExpiresAt?: Date) {
+    const { ciphertext, iv, authTag } = this.crypto.encrypt(credsJson);
+    const updated = await this.prisma.brokerAccount.update({
+      where: { id: accountId },
+      data: {
+        encryptedCreds: ciphertext,
+        credsIv: iv,
+        credsAuthTag: authTag,
+        ...(oauthExpiresAt ? { oauthExpiresAt } : {}),
+      } as any,
+    });
+    this.invalidate();
+    return this.toSafe(updated);
+  }
+
+  async decryptCreds(accountId: string): Promise<Record<string, unknown>> {
+    const acct = await this.findByIdWithCreds(accountId);
+    const json = this.crypto.decrypt(
+      Buffer.from(acct.encryptedCreds),
+      Buffer.from(acct.credsIv),
+      Buffer.from(acct.credsAuthTag),
+    );
+    return JSON.parse(json);
   }
 
   async findAllForUser(userId: string) {

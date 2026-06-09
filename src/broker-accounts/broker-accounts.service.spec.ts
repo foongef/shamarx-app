@@ -1,5 +1,5 @@
 import { Test } from '@nestjs/testing';
-import { ConflictException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '@app/prisma';
 import { ConfigService } from '@nestjs/config';
 import { CryptoService } from '../crypto/crypto.service';
@@ -79,6 +79,85 @@ describe('BrokerAccountsService', () => {
         creds: { accountId: 'a', accessToken: 't' },
       } as any);
       expect(prisma.brokerAccount.create).toHaveBeenCalled();
+    });
+
+    it('rejects CTRADER without pre-serialized creds (must go through OAuth)', async () => {
+      prisma.brokerAccount.count.mockResolvedValue(0);
+      await expect(
+        service.create('user-1', { name: 'X', broker: 'CTRADER', mode: 'metaapi' } as any),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('persists CTRADER with full metadata + encrypted creds from OAuth extra', async () => {
+      prisma.brokerAccount.count.mockResolvedValue(0);
+      prisma.brokerAccount.create.mockImplementation(async ({ data }: any) => ({ id: 'new-id', ...data }));
+      const credsJson = JSON.stringify({
+        accessToken: 'a', refreshToken: 'r', ctidTraderAccountId: 42, expiresAt: 1,
+      });
+      const expiresAt = new Date('2026-07-01T00:00:00Z');
+      await service.create(
+        'user-1',
+        { name: 'ICM Demo', broker: 'CTRADER', mode: 'metaapi', isEnabled: true } as any,
+        {
+          encryptedCredsJson: credsJson,
+          accountNumber: '5286',
+          accountKind: 'DEMO',
+          brokerName: 'IC Markets',
+          oauthExpiresAt: expiresAt,
+        },
+      );
+      expect(crypto.encrypt).toHaveBeenCalledWith(credsJson);
+      const createArg = (prisma.brokerAccount.create as jest.Mock).mock.calls[0][0].data;
+      expect(createArg.broker).toBe('CTRADER');
+      expect(createArg.accountNumber).toBe('5286');
+      expect(createArg.accountKind).toBe('DEMO');
+      expect(createArg.brokerName).toBe('IC Markets');
+      expect(createArg.oauthExpiresAt).toEqual(expiresAt);
+    });
+
+    it('rejects METAAPI without a creds object', async () => {
+      prisma.brokerAccount.count.mockResolvedValue(0);
+      await expect(
+        service.create('user-1', { name: 'X', broker: 'METAAPI', mode: 'metaapi' } as any),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+  });
+
+  describe('updateCreds', () => {
+    it('re-encrypts and persists, optionally updating oauthExpiresAt', async () => {
+      prisma.brokerAccount.update.mockImplementation(async ({ data }: any) => ({ id: 'acct-1', ...data }));
+      const newCreds = JSON.stringify({ accessToken: 'NEW', refreshToken: 'r2', ctidTraderAccountId: 42, expiresAt: 9 });
+      const expiresAt = new Date('2026-07-02T00:00:00Z');
+      await service.updateCreds('acct-1', newCreds, expiresAt);
+      expect(crypto.encrypt).toHaveBeenCalledWith(newCreds);
+      expect(prisma.brokerAccount.update).toHaveBeenCalledWith({
+        where: { id: 'acct-1' },
+        data: expect.objectContaining({
+          encryptedCreds: expect.any(Buffer),
+          oauthExpiresAt: expiresAt,
+        }),
+      });
+    });
+
+    it('omits oauthExpiresAt when not provided', async () => {
+      prisma.brokerAccount.update.mockImplementation(async ({ data }: any) => ({ id: 'acct-1', ...data }));
+      await service.updateCreds('acct-1', '{"a":1}');
+      const dataArg = (prisma.brokerAccount.update as jest.Mock).mock.calls[0][0].data;
+      expect(dataArg.oauthExpiresAt).toBeUndefined();
+    });
+  });
+
+  describe('decryptCreds', () => {
+    it('returns the decrypted creds as a parsed object', async () => {
+      prisma.brokerAccount.findUnique.mockResolvedValue({
+        id: 'acct-1',
+        encryptedCreds: Buffer.from('ct'),
+        credsIv: Buffer.from('iv'),
+        credsAuthTag: Buffer.from('at'),
+      });
+      crypto.decrypt = jest.fn().mockReturnValue('{"accessToken":"abc","ctidTraderAccountId":42}');
+      const result = await service.decryptCreds('acct-1');
+      expect(result).toEqual({ accessToken: 'abc', ctidTraderAccountId: 42 });
     });
   });
 
