@@ -642,3 +642,24 @@ and persisted in the `BrokerAccount` row.
 | Continuous `CH_CLIENT_AUTH_FAILURE` after refresh | Spotware revoked the app or user | User must re-OAuth via `/accounts/new`. |
 | `InternalIpGuard: rejected request from <ip>` | execution-service not on the docker network | Check `docker compose ps` — both services must be on the same bridge. |
 
+
+## Spec 3 production rollout checklist
+
+- [ ] Register Spotware app, save Client ID/Secret to AWS Secrets Manager (`shamarx/ctrader-oauth`)
+- [ ] EC2 role can read the secret (`secretsmanager:GetSecretValue` on the secret ARN)
+- [ ] Set `CTRADER_CLIENT_ID`, `CTRADER_CLIENT_SECRET`, `CTRADER_REDIRECT_URI` in the backend env
+- [ ] Push to main → CI deploys backend + web + execution-service (auto-runs `prisma db push`)
+- [ ] Verify schema landed:
+  ```sql
+  SELECT column_name FROM information_schema.columns
+  WHERE table_name = 'BrokerAccount'
+    AND column_name IN ('accountNumber', 'accountKind', 'brokerName', 'oauthExpiresAt');
+  -- expect 4 rows
+  ```
+- [ ] Smoke the API: `curl -H "Authorization: Bearer $JWT" https://api.shamarx.com/api/broker-accounts/ctrader/oauth/start` returns an `authUrl`
+- [ ] Walk through `/accounts/new` in a real browser end-to-end (use a Spotware demo account first)
+- [ ] Confirm the new `BrokerAccount` row has: encrypted creds, `accountNumber`, `accountKind = DEMO`, `oauthExpiresAt` set
+- [ ] Account stays `isEnabled = false` by default — toggle on only after manual smoke
+- [ ] Wait for next M15 close → engine fans out to the cTrader account via existing fan-out gate (Spec 2 Task 10)
+- [ ] If signals fire, verify trade lands; if no signal, `GET /api/me/snapshot` shows no errors from the broker call
+- [ ] Existing MetaApi accounts are untouched (regression canary)
