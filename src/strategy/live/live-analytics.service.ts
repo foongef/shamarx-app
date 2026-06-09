@@ -201,6 +201,165 @@ export class LiveAnalyticsService {
     }));
   }
 
+  /**
+   * Snapshot summary metrics for the dashboard header cards.
+   * Uses `pnl` (the actual Trade column — plan called it `realisedPnl`).
+   * `rMultiple` doesn't exist on Trade; expectancy is computed from
+   * pnl / implied-risk derived from SL distance, mirroring `compute()`.
+   */
+  async snapshot(userId: string): Promise<{
+    netReturnPct: number;
+    mtdPct: number;
+    winRate: number;
+    maxDd: number;
+    expectancy: number;
+    tradesCount: number;
+    equity: number;
+  }> {
+    const accounts = await this.prisma.brokerAccount.findMany({ where: { userId } });
+    const accountIds = accounts.map((a) => a.id);
+    if (accountIds.length === 0) {
+      return { netReturnPct: 0, mtdPct: 0, winRate: 0, maxDd: 0, expectancy: 0, tradesCount: 0, equity: 0 };
+    }
+
+    const latestSnapshot = await this.prisma.equitySnapshot.findFirst({
+      where: { accountId: { in: accountIds } },
+      orderBy: { takenAt: 'desc' },
+    });
+    const firstSnapshot = await this.prisma.equitySnapshot.findFirst({
+      where: { accountId: { in: accountIds } },
+      orderBy: { takenAt: 'asc' },
+    });
+    const equity = latestSnapshot?.equity ?? 0;
+    const initial = firstSnapshot?.equity ?? equity;
+    const netReturnPct = initial > 0 ? ((equity - initial) / initial) * 100 : 0;
+
+    // MTD
+    const startOfMonth = new Date();
+    startOfMonth.setUTCDate(1);
+    startOfMonth.setUTCHours(0, 0, 0, 0);
+    const mtdFirstSnapshot = await this.prisma.equitySnapshot.findFirst({
+      where: { accountId: { in: accountIds }, takenAt: { gte: startOfMonth } },
+      orderBy: { takenAt: 'asc' },
+    });
+    const mtdInitial = mtdFirstSnapshot?.equity ?? equity;
+    const mtdPct = mtdInitial > 0 ? ((equity - mtdInitial) / mtdInitial) * 100 : 0;
+
+    // `realisedPnl` in plan → actual column is `pnl`
+    const trades = await this.prisma.trade.findMany({
+      where: { account: { userId }, status: 'CLOSED' },
+      select: { pnl: true, symbol: true, entryPrice: true, slPrice: true, lotSize: true },
+    });
+    const tradesCount = trades.length;
+    const wins = trades.filter((t) => (t.pnl ?? 0) > 0).length;
+    const winRate = tradesCount > 0 ? wins / tradesCount : 0;
+
+    // `rMultiple` doesn't exist on Trade — compute implied R from SL distance
+    // (same approach as the private compute() method above)
+    const rMultiples = trades
+      .map((t) => {
+        const slDistance = Math.abs(t.entryPrice - t.slPrice);
+        if (slDistance <= 0) return null;
+        const lotUnits = t.symbol === 'XAUUSD' ? 100 : 100_000;
+        let riskUsd = slDistance * t.lotSize * lotUnits;
+        if (t.symbol.endsWith('JPY') && t.entryPrice > 0) riskUsd /= t.entryPrice;
+        return riskUsd > 0 ? (t.pnl ?? 0) / riskUsd : null;
+      })
+      .filter((x): x is number => x !== null);
+    const expectancy = rMultiples.length > 0
+      ? rMultiples.reduce((s, r) => s + r, 0) / rMultiples.length
+      : 0;
+
+    const allSnapshots = await this.prisma.equitySnapshot.findMany({
+      where: { accountId: { in: accountIds } },
+      orderBy: { takenAt: 'asc' },
+      select: { equity: true },
+    });
+    let peak = 0;
+    let maxDd = 0;
+    for (const s of allSnapshots) {
+      if (s.equity > peak) peak = s.equity;
+      if (peak > 0) {
+        const dd = ((peak - s.equity) / peak) * 100;
+        if (dd > maxDd) maxDd = dd;
+      }
+    }
+
+    return { netReturnPct, mtdPct, winRate, maxDd, expectancy, tradesCount, equity };
+  }
+
+  /**
+   * Daily equity curve aggregated across all accounts for a given user.
+   */
+  async equityCurve(opts: { userId: string; days?: number }): Promise<Array<{ date: string; equity: number }>> {
+    const days = opts.days ?? 90;
+    const since = new Date(Date.now() - days * 86_400_000);
+    const accounts = await this.prisma.brokerAccount.findMany({ where: { userId: opts.userId } });
+    const accountIds = accounts.map((a) => a.id);
+    if (accountIds.length === 0) return [];
+
+    const snapshots = await this.prisma.equitySnapshot.findMany({
+      where: { accountId: { in: accountIds }, takenAt: { gte: since } },
+      orderBy: { takenAt: 'asc' },
+      select: { takenAt: true, equity: true, accountId: true },
+    });
+
+    // Group by day, then sum per-account latest equity for that day
+    const byDay = new Map<string, Map<string, number>>();
+    for (const s of snapshots) {
+      const dayKey = s.takenAt.toISOString().slice(0, 10);
+      if (!byDay.has(dayKey)) byDay.set(dayKey, new Map());
+      byDay.get(dayKey)!.set(s.accountId ?? '', s.equity);
+    }
+    return Array.from(byDay.entries())
+      .map(([date, perAccount]) => ({
+        date,
+        equity: Array.from(perAccount.values()).reduce((s, v) => s + v, 0),
+      }))
+      .slice(-days);
+  }
+
+  /**
+   * How much of today's daily-loss budget has been consumed (realized losses
+   * + open-position risk). Daily-loss limit is derived from the user's preset.
+   */
+  async riskUsedToday(userId: string): Promise<{ pctUsedToday: number; dailyLossLimit: number; openRiskPct: number }> {
+    const accounts = await this.prisma.brokerAccount.findMany({ where: { userId } });
+    const accountIds = accounts.map((a) => a.id);
+    if (accountIds.length === 0) return { pctUsedToday: 0, dailyLossLimit: 3.0, openRiskPct: 0 };
+
+    const user = await this.prisma.user.findUniqueOrThrow({ where: { id: userId } });
+    const dailyLossLimit = user.presetKey === 'CONSERVATIVE' ? 2.0 : user.presetKey === 'AGGRESSIVE' ? 5.0 : 3.0;
+
+    const startOfDay = new Date();
+    startOfDay.setUTCHours(0, 0, 0, 0);
+    // `realisedPnl` in plan → actual column is `pnl`
+    const today = await this.prisma.trade.findMany({
+      where: { account: { userId }, status: 'CLOSED', closedAt: { gte: startOfDay } },
+      select: { pnl: true },
+    });
+    const realizedTodayPnl = today.reduce((s, t) => s + (t.pnl ?? 0), 0);
+
+    const latest = await this.prisma.equitySnapshot.findFirst({
+      where: { accountId: { in: accountIds } },
+      orderBy: { takenAt: 'desc' },
+    });
+    const equity = latest?.equity ?? 1;
+    const realizedTodayPct = (realizedTodayPnl / equity) * 100;
+
+    const openTrades = await this.prisma.trade.findMany({
+      where: { account: { userId }, status: 'OPEN' },
+      select: { side: true, symbol: true },
+    });
+    const presetRisk = user.presetKey === 'CONSERVATIVE' ? 0.5 : user.presetKey === 'AGGRESSIVE' ? 1.5 : 1.0;
+    const openRiskPct = openTrades.length * presetRisk;
+
+    const consumed = Math.max(0, -realizedTodayPct) + openRiskPct;
+    const pctUsedToday = (consumed / dailyLossLimit) * 100;
+
+    return { pctUsedToday, dailyLossLimit, openRiskPct };
+  }
+
   private compute(trades: Trade[]): LiveStats {
     const closed = trades.filter((t) => t.status === 'CLOSED' && t.pnl !== null);
     const open = trades.filter((t) => t.status === 'OPEN');

@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, ConflictException } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '@app/prisma';
@@ -23,12 +23,21 @@ export class BacktestService {
       this.configService.get('EXECUTION_SERVICE_URL') || 'http://localhost:8000';
   }
 
-  async createAndRun(dto: CreateBacktestDto): Promise<{ id: string; status: string }> {
+  async createAndRun(dto: CreateBacktestDto, userId: string): Promise<{ id: string; status: string }> {
     const symbol = dto.symbol ?? 'XAUUSD';
+
+    // Cost guard: max 2 concurrent runs per user
+    const running = await this.prisma.backtestRun.count({
+      where: { userId, status: { in: ['PENDING', 'RUNNING'] } },
+    });
+    if (running >= 2) {
+      throw new ConflictException('You already have running backtests. Wait for them to finish.');
+    }
 
     // Create the run record (persist strategyVersion so the dashboard badge is accurate)
     const run = await this.prisma.backtestRun.create({
       data: {
+        userId,
         symbol,
         startDate: new Date(dto.startDate),
         endDate: new Date(dto.endDate),
@@ -177,8 +186,9 @@ export class BacktestService {
     return res.data;
   }
 
-  async listRuns(limit = 50): Promise<BacktestRunResult[]> {
+  async listRuns(userId: string, limit = 50): Promise<BacktestRunResult[]> {
     const runs = await this.prisma.backtestRun.findMany({
+      where: { userId },
       orderBy: { createdAt: 'desc' },
       take: limit,
     });
@@ -199,9 +209,9 @@ export class BacktestService {
     }));
   }
 
-  async getRun(id: string): Promise<BacktestRunResult | null> {
-    const run = await this.prisma.backtestRun.findUnique({
-      where: { id },
+  async getRun(id: string, userId: string): Promise<BacktestRunResult | null> {
+    const run = await this.prisma.backtestRun.findFirst({
+      where: { id, userId },
     });
     if (!run) return null;
 
@@ -222,17 +232,15 @@ export class BacktestService {
     };
   }
 
-  async getCandles(runId: string): Promise<BacktestCandle[] | null> {
-    const run = await this.prisma.backtestRun.findUnique({
-      where: { id: runId },
-    });
+  async getCandles(runId: string, userId: string): Promise<BacktestCandle[] | null> {
+    const run = await this.getRun(runId, userId);
     if (!run) return null;
 
     const candles = await this.fetchCandles(
       run.symbol,
       'M15',
-      run.startDate.toISOString().split('T')[0],
-      run.endDate.toISOString().split('T')[0],
+      run.startDate.split('T')[0],
+      run.endDate.split('T')[0],
     );
 
     return candles.map((c) => ({
@@ -247,10 +255,8 @@ export class BacktestService {
     }));
   }
 
-  async getTrades(runId: string): Promise<BacktestTradeResult[] | null> {
-    const run = await this.prisma.backtestRun.findUnique({
-      where: { id: runId },
-    });
+  async getTrades(runId: string, userId: string): Promise<BacktestTradeResult[] | null> {
+    const run = await this.getRun(runId, userId);
     if (!run) return null;
 
     const trades = await this.prisma.backtestTrade.findMany({
