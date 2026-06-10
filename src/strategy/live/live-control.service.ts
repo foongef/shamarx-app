@@ -23,8 +23,8 @@ const REDIS_KEY_SESSION = 'live:engine:session';
 const REDIS_KEY_LAST_CHANGED = 'live:engine:last-changed-at';
 
 export interface LiveEngineConfig {
-  /** 'SMC-V2' is canonical; 'V6-alt' kept as legacy alias. */
-  strategyVersion: 'SMC-V2' | 'V6-alt';
+  /** 'GIDEON' is canonical; 'SMC-V2' / 'V6-alt' kept as legacy aliases. */
+  strategyVersion: 'GIDEON' | 'SMC-V2' | 'V6-alt';
   riskPercent: number;
   mode: 'mock' | 'metaapi';
   /** Mock starting balance — only meaningful when mode='mock'. */
@@ -83,8 +83,8 @@ export class LiveControlService implements OnModuleInit {
 
   /** Validate + persist config; return normalized config. */
   validateConfig(input: Partial<LiveEngineConfig>): LiveEngineConfig {
-    const strategy = input.strategyVersion ?? 'SMC-V2';
-    if (strategy !== 'SMC-V2' && strategy !== 'V6-alt') {
+    const strategy = input.strategyVersion ?? 'GIDEON';
+    if (strategy !== 'GIDEON' && strategy !== 'SMC-V2' && strategy !== 'V6-alt') {
       throw new Error(`Unsupported strategy: ${strategy}. Live engine supports SMC-V2 (legacy alias: V6-alt).`);
     }
     const risk = Number(input.riskPercent);
@@ -108,7 +108,7 @@ export class LiveControlService implements OnModuleInit {
     if (mode === 'metaapi' && !process.env.METAAPI_ACCOUNT_ID_DEMO) {
       throw new Error('Cannot start in MetaApi mode — METAAPI_ACCOUNT_ID_DEMO not set in .env');
     }
-    return { strategyVersion: 'SMC-V2', riskPercent: risk, mode, mockBalance };
+    return { strategyVersion: 'GIDEON', riskPercent: risk, mode, mockBalance };
   }
 
   async start(input: Partial<LiveEngineConfig>): Promise<LiveEngineConfig> {
@@ -292,7 +292,7 @@ export class LiveControlService implements OnModuleInit {
         .map((s) => s.trim().toUpperCase())
         .filter(Boolean),
       riskPercent: this.getRiskPercent(),
-      strategyVersion: this.config?.strategyVersion ?? 'SMC-V2',
+      strategyVersion: this.config?.strategyVersion ?? 'GIDEON',
       mockBalance: this.config?.mockBalance ?? null,
       lastChangedAt: this.lastChangedAt,
     };

@@ -3,7 +3,7 @@ import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 const SUPPORTED_SYMBOLS = ['XAUUSD', 'GBPUSD', 'EURUSD', 'USDJPY', 'US30', 'NAS100'] as const;
-// 'SMC-V2' is canonical; 'V6-alt' kept as legacy alias for back-compat.
+// 'GIDEON' is canonical; 'SMC-V2' / 'V6-alt' kept as legacy aliases for back-compat.
 const SUPPORTED_STRATEGIES = ['V5.5b', 'V6', 'V6-alt', 'SMC-V2'] as const;
 
 export class CreateBacktestDto {

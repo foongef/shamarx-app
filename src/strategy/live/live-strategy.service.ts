@@ -276,7 +276,7 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
       this.logger.log('LIVE_MODE=false — live strategy is DORMANT (legacy BOS service still bound)');
       return;
     }
-    this.logger.log(`LIVE_MODE=true — SMC-V2 live trading enabled for ${this.pairs.join(', ')}`);
+    this.logger.log(`LIVE_MODE=true — GIDEON live trading enabled for ${this.pairs.join(', ')}`);
     for (const pair of this.pairs) this.actionedSweeps.set(pair, new Set());
 
     // Seed the orchestrator's long-lived per-pair RiskManager with the REAL
@@ -794,7 +794,7 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
               : null,
             d1Bias: signal.smcContext?.d1Bias ?? null,
             originalSlPrice: signal.slPrice,
-            strategyName: 'stop-hunt',
+            strategyName: 'GIDEON',
           },
         });
         tradeId = trade.id;
@@ -1231,7 +1231,7 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
             // column never changes. The educational chart uses this so
             // users see where SL was *placed*, not where it ended up.
             originalSlPrice: signal.slPrice,
-            strategyName: 'stop-hunt',
+            strategyName: 'GIDEON',
           },
         });
         tradeId = trade.id;
@@ -1388,7 +1388,7 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
             : null,
           d1Bias: signal.smcContext?.d1Bias ?? null,
           originalSlPrice: signal.slPrice,
-          strategyName: 'stop-hunt',
+          strategyName: 'GIDEON',
         },
       });
     } catch (e) {

@@ -97,7 +97,7 @@ export interface LiveContext {
 export class LiveSmcOrchestrator {
   /** Strategy identifier — written to Trade.strategyName + LiveReplayTrade.strategyName
    *  for analytics. Single-strategy today; literal constant. */
-  readonly name = 'stop-hunt';
+  readonly name = 'GIDEON';
 
   private readonly logger = new Logger(LiveSmcOrchestrator.name);
   private readonly states = new Map<string, OrchestratorState>();

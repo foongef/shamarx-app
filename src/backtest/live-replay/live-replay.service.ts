@@ -112,7 +112,7 @@ export class LiveReplayService {
             // shows as "SL" — where the stop was originally placed,
             // structurally anchored to the swept extreme.
             originalSlPrice: t.originalSlPrice ?? null,
-            strategyName: 'stop-hunt',
+            strategyName: 'GIDEON',
           })),
         });
       }

@@ -1,9 +1,9 @@
 import { IsIn, IsNumber, IsOptional, Max, Min } from 'class-validator';
 
 export class StartLiveDto {
-  // 'SMC-V2' is the current name; 'V6-alt' kept as legacy alias.
-  @IsIn(['SMC-V2', 'V6-alt'])
-  strategyVersion!: 'SMC-V2' | 'V6-alt';
+  // 'GIDEON' is the current name; 'SMC-V2' and 'V6-alt' kept as legacy aliases.
+  @IsIn(['GIDEON', 'SMC-V2', 'V6-alt'])
+  strategyVersion!: 'GIDEON' | 'SMC-V2' | 'V6-alt';
 
   @IsNumber()
   @Min(0.25)

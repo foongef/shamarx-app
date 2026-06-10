@@ -34,15 +34,16 @@ export type EngineType =
   | 'BB_REVERSAL'   // V6: Bollinger reversal (replaces RANGE_ENGINE in V6 profile)
   | 'SMC';          // V6-alt: order-flow / smart money concepts
 
-// V6: Strategy version selector. 'SMC-V2' is the current canonical name;
+// V6: Strategy version selector. 'GIDEON' is the current canonical name;
 // 'V6-alt' is kept as a legacy alias so existing DB rows + scripts still
-// type-check. New writes should use 'SMC-V2'.
-export type StrategyVersion = 'V5.5b' | 'V6' | 'V6-alt' | 'SMC-V2';
+// type-check. New writes should use 'GIDEON'. ('SMC-V2' and 'V6-alt'
+// remain accepted for rows persisted before the renames.)
+export type StrategyVersion = 'V5.5b' | 'V6' | 'V6-alt' | 'SMC-V2' | 'GIDEON';
 
 /** True when the strategy is the live SMC engine — accepts both new and
  *  legacy names. Use this instead of `=== 'V6-alt'` in new code. */
 export function isSmcV2(v: string | null | undefined): boolean {
-  return v === 'SMC-V2' || v === 'V6-alt';
+  return v === 'GIDEON' || v === 'SMC-V2' || v === 'V6-alt';
 }
 
 // V6: D1 trend bias for HTF confluence filter

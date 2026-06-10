@@ -62,7 +62,7 @@ export class BacktestEngine {
     );
 
     // SMC-V2 (legacy alias: 'V6-alt'): Route to greenfield SMC engine.
-    if (strategyVersion === 'SMC-V2' || strategyVersion === 'V6-alt') {
+    if (strategyVersion === 'GIDEON' || strategyVersion === 'SMC-V2' || strategyVersion === 'V6-alt') {
       // Lazy-loaded to keep V6 working even if SMC module is absent.
       const { runSmcBacktest } = require('./smc');
       return runSmcBacktest(m15Candles, h1Candles, h4Candles, d1Candles, config);
