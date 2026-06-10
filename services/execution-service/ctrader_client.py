@@ -98,7 +98,7 @@ class CTraderClient(Broker):
             ctid_trader_account_id=int(creds['ctidTraderAccountId']),
             expires_at=int(creds.get('expiresAt', 0)),
             account_kind=creds.get('accountKind', 'DEMO'),
-            account_id=creds.get('accountId', ''),
+            account_id=creds.get('brokerAccountId', ''),
         )
 
     # ----- Symbol + price helpers -----

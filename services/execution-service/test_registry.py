@@ -74,3 +74,31 @@ async def test_factory_receives_broker_arg():
     await r.get_or_create('acct-1', {'foo': 'bar'}, 'CTRADER', 'metaapi')
     assert received['broker'] == 'CTRADER'
     assert received['mode'] == 'metaapi'
+
+
+async def test_resolve_client_must_not_clobber_metaapi_account_id():
+    """Regression: resolve_client injects the BrokerAccount row id into creds.
+    It must use the 'brokerAccountId' key — overwriting 'accountId' broke
+    every MetaApi call in prod (2026-06-10) because MetaApiMT5.from_creds
+    reads creds['accountId'] as the MetaApi CLOUD account id."""
+    import json
+    from unittest.mock import AsyncMock, patch
+    import routes
+
+    captured = {}
+
+    async def fake_get_or_create(account_id, creds, broker, mode):
+        captured['creds'] = creds
+        return AsyncMock()
+
+    with patch.object(routes.registry, 'get_or_create', side_effect=fake_get_or_create):
+        metaapi_creds = json.dumps({'accountId': 'metaapi-cloud-id-123', 'accessToken': 'tok'})
+        await routes.resolve_client(
+            account_id='db-row-uuid-456',
+            x_broker_creds=metaapi_creds,
+            x_broker_mode='metaapi',
+            x_broker='METAAPI',
+        )
+
+    assert captured['creds']['accountId'] == 'metaapi-cloud-id-123'  # untouched
+    assert captured['creds']['brokerAccountId'] == 'db-row-uuid-456'  # injected separately
