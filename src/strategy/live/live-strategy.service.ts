@@ -967,55 +967,84 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
     return signal;
   }
 
+  /**
+   * SINGLE SOURCE OF TRUTH: all timeframes read from the append-only Candle
+   * table the ingestion cron maintains — the SAME rows the replay engine
+   * consumes. Three properties make this correct:
+   *
+   *   1. The table holds CLOSED bars only (candle.service.ts drops the
+   *      in-progress bar before createMany), so the partial-bar dedup
+   *      poisoning that direct MetaApi fetches suffered cannot occur.
+   *   2. M15 evaluation is TRIGGERED by CANDLE_STORED — published only after
+   *      a new M15 row landed — so at eval time the table is current by
+   *      construction.
+   *   3. D1 rows are the cron's H1→UTC-midnight resample, not the broker's
+   *      session-aligned (21:00 UTC) bars, keeping live D1 ADX/EMA identical
+   *      to replay's.
+   *
+   * Live previously fetched M15/H1 from MetaApi per evaluation; even tiny
+   * wick differences vs the stored rows flipped edge-triggered sweep
+   * detections, producing live-vs-replay signal sets that barely overlapped
+   * (observed 2026-06-03..10). One data path ends that class of divergence.
+   *
+   * STALENESS FALLBACK (M15/H1 only): if the ingestion cron dies, the table
+   * goes stale and trading on old prices would be worse than divergence —
+   * fall back to the direct broker fetch and log loudly. D1 has no guard:
+   * its rows legitimately lag up to a day (resample writes once per day,
+   * more across weekends).
+   */
   private async fetchCandles(
     symbol: string,
     timeframe: string,
     count: number,
   ): Promise<BacktestCandle[]> {
-    // D1 SPECIAL CASE: MetaApi's /candles?D1 returns bars aligned to the
-    // BROKER session (typically 21:00 UTC start), while the replay engine
-    // reads D1 from Postgres where the cron poller's H1→D1 resample (see
-    // candle.service.ts:resampleH1ToD1, added in PR #19) writes bars aligned
-    // to UTC midnight. Different OHLC per "calendar day" → different D1
-    // ADX/EMA50 → different bias → live's `liveD1Adx >= cfg.d1AdxFloor`
-    // gate fails on bars where replay's passes. Every sweep is silently
-    // skipped before detectSweep is even called. Reading D1 from Postgres
-    // here makes live + replay share the same D1 source of truth.
-    if (timeframe === Timeframe.D1) {
-      const rows = await this.prisma.candle.findMany({
-        where: { symbol, timeframe },
-        orderBy: { openTime: 'desc' },
-        take: count,
-      });
-      return rows.reverse().map((r) => ({
-        symbol: r.symbol,
-        timeframe: r.timeframe,
-        openTime: r.openTime.toISOString(),
-        open: r.open,
-        high: r.high,
-        low: r.low,
-        close: r.close,
-        volume: r.volume,
-      }));
-    }
+    const rows = await this.prisma.candle.findMany({
+      where: { symbol, timeframe },
+      orderBy: { openTime: 'desc' },
+      take: count,
+    });
+
+    const mapped = rows.reverse().map((r) => ({
+      symbol: r.symbol,
+      timeframe: r.timeframe,
+      openTime: r.openTime.toISOString(),
+      open: r.open,
+      high: r.high,
+      low: r.low,
+      close: r.close,
+      volume: r.volume,
+    }));
+
+    if (timeframe === Timeframe.D1) return mapped;
+
+    // Freshness: the newest CLOSED bar's openTime should be within
+    // 2× timeframe + grace of now. Worst legitimate case is an :00 M15 eval
+    // racing the cron's H1 store — the prior H1 opened 2h ago exactly.
+    const tfMs = TIMEFRAME_DURATION_MS[timeframe] ?? 0;
+    const graceMs = 120_000;
+    const newest = mapped[mapped.length - 1];
+    const isFresh =
+      !!newest &&
+      tfMs > 0 &&
+      Date.now() - new Date(newest.openTime).getTime() <= 2 * tfMs + graceMs;
+
+    if (isFresh) return mapped;
+
+    this.logger.error(
+      `[${symbol}/${timeframe}] Candle table stale (newest=${newest?.openTime ?? 'none'}) — ` +
+        `falling back to direct broker fetch. Check the candle ingestion cron; ` +
+        `fallback data may diverge from replay.`,
+    );
+
     const url = `${SERVICE_URLS.EXECUTION}/candles`;
     const res = await firstValueFrom(
       this.httpService.get<CandleDto[]>(url, { params: { symbol, timeframe, count } }),
     );
-    // MetaApi (and our /candles endpoint) returns the currently-OPEN bar as
-    // the last element of the response. Without filtering, the orchestrator's
-    // H1 catchup loop sees a partial bar as `lastClosedH1`, processes it on
-    // `detectSweep` with incomplete OHLC, and (worse) writes
-    // `state.lastProcessedH1Time = bar.openTime` — which means once the bar
-    // ACTUALLY closes the write-once dedup makes the bar permanently invisible
-    // to the orchestrator. Sweep wicks that form in the latter half of an H1
-    // bar (the common case) are silently lost in live but caught by replay,
-    // because replay reads from Postgres where the cursor only advances when
-    // a bar fully closes. Keep only bars whose close time is at-or-before now.
-    const tfMs = TIMEFRAME_DURATION_MS[timeframe];
+    // Drop the in-progress bar (broker returns it as the last element);
+    // processing partial OHLC would poison the orchestrator's write-once
+    // H1 dedup (state.lastProcessedH1Time).
     const now = Date.now();
-    const rows = res.data || [];
-    return rows
+    return (res.data || [])
       .filter((c) => !tfMs || new Date(c.openTime).getTime() + tfMs <= now)
       .map((c) => ({
         symbol,
