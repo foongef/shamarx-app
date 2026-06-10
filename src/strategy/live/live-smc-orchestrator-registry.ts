@@ -18,27 +18,58 @@ export class LiveSmcOrchestratorRegistry {
   private readonly logger = new Logger(LiveSmcOrchestratorRegistry.name);
   private readonly instances = new Map<string, LiveSmcOrchestrator>();
   private readonly evictTimers = new Map<string, NodeJS.Timeout>();
+  private readonly creating = new Map<string, Promise<LiveSmcOrchestrator>>();
 
   constructor(
     @Inject('ORCHESTRATOR_FACTORY')
     private readonly factory: OrchestratorFactory,
   ) {}
 
-  getOrCreate(accountId: string): LiveSmcOrchestrator {
-    let inst = this.instances.get(accountId);
-    if (inst) {
+  /**
+   * Restore is AWAITED before the instance is returned. The previous
+   * fire-and-forget restore meant the first evaluate() after a restart ran
+   * against an empty actionedSweeps set — re-actioning sweeps that were
+   * already traded. Prod evidence (2026-06-03..08): the same USDJPY sweep
+   * entered 8 times across a deploy-heavy week.
+   *
+   * Concurrent first calls for the same account share one in-flight
+   * creation promise so we never construct two instances racing to restore.
+   */
+  async getOrCreate(accountId: string): Promise<LiveSmcOrchestrator> {
+    const existing = this.instances.get(accountId);
+    if (existing) {
       // Cancel any pending eviction (toggle ON within grace period).
       const timer = this.evictTimers.get(accountId);
       if (timer) {
         clearTimeout(timer);
         this.evictTimers.delete(accountId);
       }
-      return inst;
+      return existing;
     }
-    inst = this.factory();
-    void inst.restoreFromRedis(accountId);
-    this.instances.set(accountId, inst);
-    return inst;
+
+    const inFlight = this.creating.get(accountId);
+    if (inFlight) return inFlight;
+
+    const creation = (async () => {
+      const inst = this.factory();
+      try {
+        await inst.restoreFromRedis(accountId);
+      } catch (err) {
+        // Restore failure is survivable (fresh state) but must be loud —
+        // it means dedup/cooldown state was lost.
+        this.logger.error(
+          `getOrCreate: restore failed for account=${accountId}, starting fresh: ${(err as Error).message}`,
+        );
+      }
+      this.instances.set(accountId, inst);
+      return inst;
+    })();
+    this.creating.set(accountId, creation);
+    try {
+      return await creation;
+    } finally {
+      this.creating.delete(accountId);
+    }
   }
 
   async removeIfDisabled(accountId: string): Promise<void> {

@@ -33,11 +33,22 @@ interface BrokerPosition {
   openTime: string;
 }
 
+/**
+ * A trade is only finalized as closed after this many CONSECUTIVE reconcile
+ * passes where the broker did not report its ticket. A single empty read is
+ * not trustworthy: a freshly-reconnected MetaApi client returns [] with
+ * HTTP 200 until its terminal state sync completes. On 2026-06-08 one such
+ * read orphaned all 60 open trades at pnl=0 in a single pass.
+ */
+const ABSENCE_CONFIRMATIONS = 3;
+
 @Injectable()
 export class PositionMonitorService implements OnModuleInit {
   private readonly logger = new Logger(PositionMonitorService.name);
   private readonly liveMode: boolean;
   private readonly pairs: string[];
+  /** tradeId → consecutive reconcile passes where the broker didn't report the ticket. */
+  private readonly absenceCounts = new Map<string, number>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -130,28 +141,17 @@ export class PositionMonitorService implements OnModuleInit {
       where: { symbol, status: 'OPEN', mt5Ticket: { not: null } },
     });
 
-    for (const trade of dbOpenTrades) {
-      if (trade.mt5Ticket && brokerTicketSet.has(trade.mt5Ticket)) {
-        // Still open at broker — leave alone (broker manages SL/TP).
-        continue;
-      }
-      // Position no longer at broker → it was closed (SL, TP, or manual).
-      await this.finalizeClosedTrade(
-        trade.id,
-        trade.mt5Ticket!,
-        symbol,
-        trade.side as 'BUY' | 'SELL',
-        trade.lotSize,
-        trade.entryPrice,
-        trade.slPrice,
-        trade.tpPrice,
-      );
-    }
+    await this.reconcileTrades(symbol, dbOpenTrades, brokerTicketSet);
   }
 
   /**
    * Per-account version of reconcilePair. Open trades queried with
    * accountId scope; broker calls routed via BrokerHttpClient.
+   *
+   * NOTE: fetchOpenPositions throwing is SAFE here — the exception
+   * propagates to reconcileAll's per-pair catch and this pass is skipped
+   * without touching absence counters. The dangerous case is a successful
+   * response with missing tickets, which the confirmation counter absorbs.
    */
   private async reconcilePairForAccount(symbol: string, account: { id: string }): Promise<void> {
     const brokerPositions = await this.brokerHttp.fetchOpenPositions(account.id, symbol);
@@ -161,12 +161,47 @@ export class PositionMonitorService implements OnModuleInit {
       where: { symbol, status: 'OPEN', mt5Ticket: { not: null }, accountId: account.id },
     });
 
+    await this.reconcileTrades(symbol, dbOpenTrades, brokerTicketSet);
+  }
+
+  /**
+   * Shared absence-tracking core. A ticket missing from the broker's
+   * position list is only finalized after ABSENCE_CONFIRMATIONS consecutive
+   * misses; any sighting resets the counter. This converts "one bad read
+   * nukes the books" into "a real close finalizes ~3 M15 cycles late",
+   * which the journal back-fills with accurate history anyway.
+   */
+  private async reconcileTrades(
+    symbol: string,
+    dbOpenTrades: Array<{
+      id: string;
+      mt5Ticket: number | null;
+      side: string;
+      lotSize: number;
+      entryPrice: number;
+      slPrice: number;
+      tpPrice: number;
+    }>,
+    brokerTicketSet: Set<number>,
+  ): Promise<void> {
     for (const trade of dbOpenTrades) {
       if (trade.mt5Ticket && brokerTicketSet.has(trade.mt5Ticket)) {
         // Still open at broker — leave alone (broker manages SL/TP).
+        this.absenceCounts.delete(trade.id);
         continue;
       }
-      // Position no longer at broker → it was closed (SL, TP, or manual).
+
+      const misses = (this.absenceCounts.get(trade.id) ?? 0) + 1;
+      if (misses < ABSENCE_CONFIRMATIONS) {
+        this.absenceCounts.set(trade.id, misses);
+        this.logger.warn(
+          `[${symbol}] ticket=${trade.mt5Ticket} missing from broker ` +
+            `(${misses}/${ABSENCE_CONFIRMATIONS} confirmations) — holding off`,
+        );
+        continue;
+      }
+
+      this.absenceCounts.delete(trade.id);
       await this.finalizeClosedTrade(
         trade.id,
         trade.mt5Ticket!,

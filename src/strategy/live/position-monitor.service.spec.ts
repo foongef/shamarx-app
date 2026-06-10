@@ -172,3 +172,63 @@ describe('PositionMonitorService.maybeTriggerSisterRunnerBe', () => {
     );
   });
 });
+
+describe('PositionMonitorService.reconcileTrades — absence confirmation (2026-06-08 mass-orphan regression)', () => {
+  function makeService(): { svc: any; finalized: string[] } {
+    const finalized: string[] = [];
+    // Bypass Nest DI — reconcileTrades only touches absenceCounts,
+    // finalizeClosedTrade and logger, so a bare instance is enough.
+    const svc: any = Object.create(PositionMonitorService.prototype);
+    svc.absenceCounts = new Map();
+    svc.logger = { warn: jest.fn(), log: jest.fn(), error: jest.fn(), debug: jest.fn() };
+    svc.finalizeClosedTrade = jest.fn(async (tradeId: string) => {
+      finalized.push(tradeId);
+    });
+    return { svc, finalized };
+  }
+
+  const trade = {
+    id: 't1', mt5Ticket: 111, side: 'BUY',
+    lotSize: 0.01, entryPrice: 160.0, slPrice: 159.5, tpPrice: 161.0,
+  };
+
+  it('does NOT finalize on a single missing read (the June 8 failure mode)', async () => {
+    const { svc, finalized } = makeService();
+    await svc.reconcileTrades('USDJPY', [trade], new Set()); // broker says: nothing open
+    expect(finalized).toEqual([]);
+    expect(svc.absenceCounts.get('t1')).toBe(1);
+  });
+
+  it('finalizes only after 3 consecutive missing reads', async () => {
+    const { svc, finalized } = makeService();
+    await svc.reconcileTrades('USDJPY', [trade], new Set());
+    await svc.reconcileTrades('USDJPY', [trade], new Set());
+    expect(finalized).toEqual([]);
+    await svc.reconcileTrades('USDJPY', [trade], new Set());
+    expect(finalized).toEqual(['t1']);
+    expect(svc.absenceCounts.has('t1')).toBe(false); // counter cleaned up
+  });
+
+  it('a sighting resets the absence counter', async () => {
+    const { svc, finalized } = makeService();
+    await svc.reconcileTrades('USDJPY', [trade], new Set());
+    await svc.reconcileTrades('USDJPY', [trade], new Set());
+    // Broker reports the ticket again (e.g. terminal state finished syncing)
+    await svc.reconcileTrades('USDJPY', [trade], new Set([111]));
+    expect(svc.absenceCounts.has('t1')).toBe(false);
+    // Two more misses — still below threshold because counter was reset
+    await svc.reconcileTrades('USDJPY', [trade], new Set());
+    await svc.reconcileTrades('USDJPY', [trade], new Set());
+    expect(finalized).toEqual([]);
+  });
+
+  it('tracks each trade independently', async () => {
+    const { svc, finalized } = makeService();
+    const t2 = { ...trade, id: 't2', mt5Ticket: 222 };
+    // t1 missing 3x, t2 always present
+    await svc.reconcileTrades('USDJPY', [trade, t2], new Set([222]));
+    await svc.reconcileTrades('USDJPY', [trade, t2], new Set([222]));
+    await svc.reconcileTrades('USDJPY', [trade, t2], new Set([222]));
+    expect(finalized).toEqual(['t1']);
+  });
+});

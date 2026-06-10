@@ -130,3 +130,43 @@ describe('LiveAnalyticsService — Spec 2.5 analytics methods', () => {
     });
   });
 });
+
+describe('LiveAnalyticsService — ORPHAN exclusion (2026-06-08 regression)', () => {
+  it('compute() drops ORPHAN rows from WR / pnl / exitReason stats', () => {
+    const service = new LiveAnalyticsService(makePrismaMock());
+    const trades = [
+      { status: 'CLOSED', pnl: 15, exitReason: 'TP', symbol: 'EURUSD' },
+      { status: 'CLOSED', pnl: -10, exitReason: 'SL', symbol: 'EURUSD' },
+      // 3 reconciliation artifacts that would otherwise crush the WR
+      { status: 'CLOSED', pnl: 0, exitReason: 'ORPHAN', symbol: 'USDJPY' },
+      { status: 'CLOSED', pnl: 0, exitReason: 'ORPHAN', symbol: 'USDJPY' },
+      { status: 'CLOSED', pnl: 0, exitReason: 'ORPHAN', symbol: 'GBPUSD' },
+    ] as any[];
+
+    const stats = (service as any).compute(trades);
+
+    expect(stats.totalTrades ?? stats.closedTrades ?? 2).toBeDefined();
+    expect(stats.winRate).toBeCloseTo(50, 5); // 1 of 2 REAL trades — not 1 of 5
+    expect(stats.exitReasons.ORPHAN).toBeUndefined();
+    expect(stats.totalPnl).toBeCloseTo(5, 5);
+  });
+
+  it('snapshot() query excludes ORPHAN (OR-form preserves NULL exitReason rows)', async () => {
+    const tradeFindMany = jest.fn().mockResolvedValue([]);
+    const prisma = makePrismaMock({
+      brokerAccountFindMany: jest.fn().mockResolvedValue([{ id: 'acct-1', isEnabled: true }]),
+      tradeFindMany,
+    });
+    const service = new LiveAnalyticsService(prisma);
+    await service.snapshot('user-1');
+
+    const tradeCall = tradeFindMany.mock.calls.find(
+      ([arg]: any[]) => arg?.where?.status === 'CLOSED' && arg?.where?.account,
+    );
+    expect(tradeCall).toBeDefined();
+    expect(tradeCall![0].where.OR).toEqual([
+      { exitReason: null },
+      { exitReason: { not: 'ORPHAN' } },
+    ]);
+  });
+});

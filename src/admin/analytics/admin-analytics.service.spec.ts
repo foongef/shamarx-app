@@ -125,5 +125,34 @@ describe('AdminAnalyticsService', () => {
       expect(r.trends).toEqual([]);
       expect(r.sampleSize).toBe(0);
     });
+
+    it('excludes ORPHAN rows from the drift sample (2026-06-08 regression)', async () => {
+      prismaMock.trade.findMany.mockResolvedValue([]);
+      await svc.computeTrends();
+      const where = prismaMock.trade.findMany.mock.calls[0][0].where;
+      // The query must exclude reconciliation artifacts. OR-form because
+      // Prisma's `not` silently drops NULL exitReason rows.
+      expect(where.OR).toEqual([
+        { exitReason: null },
+        { exitReason: { not: 'ORPHAN' } },
+      ]);
+    });
+
+    it('drift sample math is computed over the (already filtered) rows', async () => {
+      // 10 real trades: 7 winners at +$15 / 3 losers at -$10, risk $10 each
+      const real = Array.from({ length: 10 }, (_, i) => ({
+        pnl: i < 7 ? 15 : -10,
+        symbol: 'EURUSD',
+        entryPrice: 1.085,
+        slPrice: 1.084,   // slDistance 0.001 × lotSize 0.1 → risk used in R calc
+        lotSize: 100,     // risk = 0.001 * 100 = 0.1 … keep simple: r = pnl / 0.1
+        side: 'BUY',
+      }));
+      prismaMock.trade.findMany.mockResolvedValue(real);
+      const r = await svc.computeTrends();
+      expect(r.sampleSize).toBe(10);
+      // WR = 70% vs 64.9% baseline → drift ≈ +5.1pp
+      expect(r.wrDriftPp).toBeCloseTo((0.7 - 0.649) * 100, 1);
+    });
   });
 });

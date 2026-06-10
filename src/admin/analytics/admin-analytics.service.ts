@@ -120,7 +120,15 @@ export class AdminAnalyticsService {
   async computeTrends(): Promise<{ trends: Trend[]; wrDriftPp: number; expectancyDriftR: number; sampleSize: number }> {
     const since = new Date(Date.now() - 30 * 86_400_000);
     const recentTrades = await this.prisma.trade.findMany({
-      where: { status: 'CLOSED', closedAt: { gte: since } },
+      where: {
+        status: 'CLOSED',
+        closedAt: { gte: since },
+        // ORPHAN rows are reconciliation artifacts (pnl=0, no real fill) and
+        // would poison both WR and expectancy. 2026-06-08: 60 orphans in one
+        // pass dragged measured WR to ~12% against a 65% baseline.
+        // OR-form because Prisma's `not` filter silently drops NULL rows.
+        OR: [{ exitReason: null }, { exitReason: { not: 'ORPHAN' } }],
+      },
       select: { pnl: true, symbol: true, entryPrice: true, slPrice: true, lotSize: true, side: true },
     });
     const sampleSize = recentTrades.length;

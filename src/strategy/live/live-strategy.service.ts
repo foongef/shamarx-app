@@ -598,7 +598,7 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
     ]);
 
     const evalTs = m15[m15.length - 1]?.openTime ?? new Date().toISOString();
-    const orchestrator = this.orchestratorRegistry.getOrCreate(account.id);
+    const orchestrator = await this.orchestratorRegistry.getOrCreate(account.id);
 
     const signal = orchestrator.evaluate(symbol, m15, h1, d1, {
       accountEquity: accountInfo.equity,

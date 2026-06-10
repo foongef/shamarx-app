@@ -245,9 +245,16 @@ export class LiveAnalyticsService {
     const mtdInitial = mtdFirstSnapshot?.equity ?? equity;
     const mtdPct = mtdInitial > 0 ? ((equity - mtdInitial) / mtdInitial) * 100 : 0;
 
-    // `realisedPnl` in plan → actual column is `pnl`
+    // `realisedPnl` in plan → actual column is `pnl`.
+    // ORPHAN rows excluded — they're reconciliation artifacts (pnl=0, no
+    // real fill) that drag WR and expectancy toward zero. OR-form because
+    // Prisma's `not` filter silently drops NULL rows.
     const trades = await this.prisma.trade.findMany({
-      where: { account: { userId }, status: 'CLOSED' },
+      where: {
+        account: { userId },
+        status: 'CLOSED',
+        OR: [{ exitReason: null }, { exitReason: { not: 'ORPHAN' } }],
+      },
       select: { pnl: true, symbol: true, entryPrice: true, slPrice: true, lotSize: true },
     });
     const tradesCount = trades.length;
@@ -361,7 +368,11 @@ export class LiveAnalyticsService {
   }
 
   private compute(trades: Trade[]): LiveStats {
-    const closed = trades.filter((t) => t.status === 'CLOSED' && t.pnl !== null);
+    // ORPHAN rows are reconciliation artifacts, not real trade outcomes —
+    // excluding them keeps WR / expectancy / per-pair stats honest.
+    const closed = trades.filter(
+      (t) => t.status === 'CLOSED' && t.pnl !== null && t.exitReason !== 'ORPHAN',
+    );
     const open = trades.filter((t) => t.status === 'OPEN');
 
     const wins = closed.filter((t) => (t.pnl ?? 0) > 0);
