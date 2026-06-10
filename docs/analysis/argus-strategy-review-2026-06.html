@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ARGUS — Strategy Review · Shamarx</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Instrument+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --bg: #16120e;
+    --bg-2: #1a1612;
+    --card: #231f1a;
+    --card-2: #1e1a15;
+    --border: #383229;
+    --border-strong: #4d4538;
+    --input: #15110c;
+    --fg: #ece8e3;
+    --muted: #8d8275;
+    --subtle: #5e5447;
+    --signal: #F2C31C;
+    --signal-dim: rgba(242, 195, 28, 0.12);
+    --profit: #4FD49F;
+    --profit-dim: rgba(79, 212, 159, 0.10);
+    --loss: #F26659;
+    --loss-dim: rgba(242, 102, 89, 0.10);
+    --steel: #7da7d9;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: 'Instrument Sans', system-ui, sans-serif;
+    font-size: 15px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+    position: relative;
+  }
+  /* grain overlay */
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.35'/%3E%3C/svg%3E");
+    opacity: 0.04; pointer-events: none; mix-blend-mode: overlay; z-index: 999;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 48px 24px 96px; }
+  .mono { font-family: 'IBM Plex Mono', monospace; }
+  .display { font-family: 'Orbitron', sans-serif; text-transform: uppercase; letter-spacing: 0.08em; }
+  .eyebrow {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px; font-weight: 500;
+    letter-spacing: 0.2em; text-transform: uppercase;
+    color: var(--muted);
+  }
+  .eyebrow .d { color: var(--signal); }
+  .hairline { height: 1px; background: linear-gradient(90deg, transparent, var(--border) 18%, var(--border) 82%, transparent); }
+  .gold-hairline { height: 1px; background: linear-gradient(90deg, transparent, rgba(242,195,28,0.5) 50%, transparent); }
+
+  /* ───── hero ───── */
+  header { padding: 28px 0 40px; }
+  .hero-top { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 12px; margin-bottom: 28px; }
+  .codename { position: relative; display: inline-block; padding: 28px 34px; margin: 8px 0 4px; }
+  .codename .bracket { position: absolute; width: 16px; height: 16px; border-color: var(--signal); border-style: solid; border-width: 0; }
+  .codename .tl { top: 0; left: 0; border-top-width: 1px; border-left-width: 1px; }
+  .codename .tr { top: 0; right: 0; border-top-width: 1px; border-right-width: 1px; }
+  .codename .bl { bottom: 0; left: 0; border-bottom-width: 1px; border-left-width: 1px; }
+  .codename .br { bottom: 0; right: 0; border-bottom-width: 1px; border-right-width: 1px; }
+  h1 { font-family: 'Orbitron', sans-serif; font-size: clamp(40px, 8vw, 72px); font-weight: 600; letter-spacing: 0.14em; line-height: 0.95; }
+  h1 .gold { color: var(--signal); }
+  .tagline { margin-top: 14px; color: var(--muted); font-size: 14.5px; max-width: 620px; }
+  .tagline b { color: var(--fg); font-weight: 600; }
+  .name-note { margin-top: 18px; font-size: 12px; color: var(--subtle); max-width: 640px; }
+  .name-note .mono { color: var(--muted); }
+
+  /* ───── verdict strip ───── */
+  .verdict { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-top: 34px; }
+  .verdict-tile { background: var(--card); border: 1px solid var(--border); border-radius: 5px; padding: 18px 20px; position: relative; overflow: hidden; }
+  .verdict-tile::after { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 1px; }
+  .verdict-tile.good::after { background: linear-gradient(90deg, transparent, var(--profit), transparent); }
+  .verdict-tile.warn::after { background: linear-gradient(90deg, transparent, var(--signal), transparent); }
+  .verdict-tile.bad::after { background: linear-gradient(90deg, transparent, var(--loss), transparent); }
+  .verdict-q { font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted); font-family: 'IBM Plex Mono', monospace; }
+  .verdict-a { font-family: 'Orbitron', sans-serif; font-size: 19px; letter-spacing: 0.06em; margin: 8px 0 6px; }
+  .verdict-a.good { color: var(--profit); } .verdict-a.warn { color: var(--signal); } .verdict-a.bad { color: var(--loss); }
+  .verdict-d { font-size: 12px; color: var(--muted); line-height: 1.55; }
+
+  /* ───── sections ───── */
+  section { margin-top: 64px; }
+  .sec-head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 6px; }
+  h2 { font-family: 'Orbitron', sans-serif; font-size: 21px; font-weight: 500; letter-spacing: 0.08em; text-transform: uppercase; margin: 14px 0 18px; }
+  h2 .gold { color: var(--signal); }
+
+  /* stat tiles */
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+  .stat { background: var(--card); border: 1px solid var(--border); border-radius: 5px; padding: 16px 18px; }
+  .stat .k { font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--muted); }
+  .stat .v { font-family: 'IBM Plex Mono', monospace; font-size: 26px; font-weight: 600; margin-top: 6px; font-variant-numeric: tabular-nums; }
+  .stat .v.gold { color: var(--signal); } .stat .v.green { color: var(--profit); } .stat .v.red { color: var(--loss); }
+  .stat .s { font-size: 10.5px; color: var(--subtle); margin-top: 4px; }
+  .src-note { margin-top: 10px; font-size: 11px; color: var(--subtle); }
+
+  /* mechanics flow */
+  .flow { display: grid; gap: 10px; counter-reset: step; }
+  .flow-item { display: grid; grid-template-columns: 44px 1fr; gap: 16px; background: var(--card-2); border: 1px solid var(--border); border-radius: 5px; padding: 16px 18px; }
+  .flow-num { font-family: 'IBM Plex Mono', monospace; color: var(--signal); font-size: 13px; padding-top: 2px; }
+  .flow-t { font-weight: 600; font-size: 13.5px; }
+  .flow-d { font-size: 12.5px; color: var(--muted); margin-top: 3px; }
+  .flow-d .mono { color: var(--fg); font-size: 11.5px; }
+
+  /* tables */
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th { font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--muted); text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border-strong); font-weight: 500; }
+  td { padding: 10px 12px; border-bottom: 1px solid var(--border); color: var(--fg); vertical-align: top; }
+  td.mono, .tnum { font-family: 'IBM Plex Mono', monospace; font-variant-numeric: tabular-nums; font-size: 12px; }
+  tr:last-child td { border-bottom: none; }
+  .tbl-card { background: var(--card); border: 1px solid var(--border); border-radius: 5px; overflow-x: auto; }
+  .pill { display: inline-block; font-family: 'IBM Plex Mono', monospace; font-size: 9px; letter-spacing: 0.18em; text-transform: uppercase; border-radius: 3px; padding: 2px 8px; }
+  .pill.green { color: var(--profit); background: var(--profit-dim); border: 1px solid rgba(79,212,159,0.35); }
+  .pill.gold { color: var(--signal); background: var(--signal-dim); border: 1px solid rgba(242,195,28,0.35); }
+  .pill.red { color: var(--loss); background: var(--loss-dim); border: 1px solid rgba(242,102,89,0.35); }
+
+  /* risk grade */
+  .grade-row { display: flex; gap: 18px; align-items: stretch; flex-wrap: wrap; }
+  .grade-box { background: var(--card); border: 1px solid var(--border); border-radius: 5px; padding: 24px 28px; text-align: center; min-width: 150px; display: flex; flex-direction: column; justify-content: center; }
+  .grade { font-family: 'Orbitron', sans-serif; font-size: 56px; font-weight: 700; color: var(--profit); line-height: 1; }
+  .grade-sub { font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--muted); margin-top: 8px; font-family: 'IBM Plex Mono', monospace; }
+  .grade-detail { flex: 1; min-width: 280px; }
+
+  /* weakness cards */
+  .weak { display: grid; gap: 10px; }
+  .weak-item { background: var(--card-2); border: 1px solid var(--border); border-left: 2px solid var(--loss); border-radius: 5px; padding: 15px 18px; }
+  .weak-item.amber { border-left-color: var(--signal); }
+  .weak-t { font-weight: 600; font-size: 13px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .weak-d { font-size: 12.5px; color: var(--muted); margin-top: 4px; }
+  .weak-d .mono { color: var(--fg); font-size: 11.5px; }
+
+  /* roadmap */
+  .tier { margin-top: 26px; }
+  .tier-label { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+  .tier-chip { font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; padding: 4px 12px; border-radius: 3px; }
+  .tier-chip.t1 { background: var(--loss-dim); color: var(--loss); border: 1px solid rgba(242,102,89,0.35); }
+  .tier-chip.t2 { background: var(--signal-dim); color: var(--signal); border: 1px solid rgba(242,195,28,0.35); }
+  .tier-chip.t3 { background: var(--profit-dim); color: var(--profit); border: 1px solid rgba(79,212,159,0.35); }
+  .tier-line { flex: 1; height: 1px; background: var(--border); }
+  .road { display: grid; gap: 10px; }
+  .road-item { background: var(--card); border: 1px solid var(--border); border-radius: 5px; padding: 16px 18px; display: grid; grid-template-columns: 1fr auto; gap: 14px; align-items: start; }
+  .road-t { font-weight: 600; font-size: 13.5px; }
+  .road-d { font-size: 12.5px; color: var(--muted); margin-top: 4px; }
+  .road-d .mono { color: var(--fg); font-size: 11.5px; }
+  .road-effort { font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: var(--subtle); letter-spacing: 0.14em; text-transform: uppercase; white-space: nowrap; padding-top: 2px; }
+  .callout { margin-top: 16px; background: var(--input); border: 1px dashed var(--border-strong); border-radius: 5px; padding: 16px 20px; font-size: 12.5px; color: var(--muted); }
+  .callout b { color: var(--signal); }
+
+  footer { margin-top: 80px; text-align: center; }
+  .foot-mark { font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: 0.25em; text-transform: uppercase; color: var(--subtle); margin-top: 16px; }
+
+  @media (max-width: 640px) {
+    .wrap { padding: 28px 16px 64px; }
+    .road-item { grid-template-columns: 1fr; }
+    .grade-row { flex-direction: column; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- ═════════ HERO ═════════ -->
+  <header>
+    <div class="hero-top">
+      <span class="eyebrow"><span class="d">◆</span>&nbsp;Shamarx · Strategy Review</span>
+      <span class="eyebrow">2026 · 06 · Internal</span>
+    </div>
+    <div class="gold-hairline"></div>
+
+    <div style="text-align:center; padding: 36px 0 8px;">
+      <div class="eyebrow" style="margin-bottom:18px;">Designation</div>
+      <div class="codename">
+        <span class="bracket tl"></span><span class="bracket tr"></span>
+        <span class="bracket bl"></span><span class="bracket br"></span>
+        <h1>ARG<span class="gold">U</span>S</h1>
+      </div>
+      <p class="tagline" style="margin-left:auto; margin-right:auto;">
+        <b>A</b>daptive <b>R</b>eversal <b>G</b>ating at <b>U</b>ntapped <b>S</b>wing-liquidity.
+        An H1 stop-hunt engine that waits for the market to raid resting liquidity,
+        then fades or rides the move — depending on what the daily trend says.
+      </p>
+      <p class="name-note">
+        Named for the hundred-eyed watchman of Greek myth — Argus Panoptes never slept, watching every
+        swing extreme for the wick that gives the raid away. Previously known internally as
+        <span class="mono">stop-hunt reversal / SMC sweep</span>.
+      </p>
+    </div>
+
+    <!-- verdict strip -->
+    <div class="verdict">
+      <div class="verdict-tile good">
+        <div class="verdict-q">Is it profitable?</div>
+        <div class="verdict-a good">VALIDATED</div>
+        <div class="verdict-d">+179% over 28 months in replay, 790 trades, 65.8% WR. The edge is real in backtest and survived three adversarial gate studies.</div>
+      </div>
+      <div class="verdict-tile warn">
+        <div class="verdict-q">Is it HIGHLY profitable?</div>
+        <div class="verdict-a warn">NOT YET PROVEN</div>
+        <div class="verdict-d">The first live week produced only 23 genuine trades (35% WR, +$40.62) — the rest was infrastructure noise, now fixed. Clean validation starts now; judge after 60–90 real trades.</div>
+      </div>
+      <div class="verdict-tile good">
+        <div class="verdict-q">Is it safe?</div>
+        <div class="verdict-a good">YES · BY DESIGN</div>
+        <div class="verdict-d">Five-layer risk stack: daily-loss breaker, loss-streak pauses, tiered drawdown brakes, adaptive sizing, and a 40% hard-kill. Among the best retail risk frameworks reviewed.</div>
+      </div>
+    </div>
+  </header>
+
+  <!-- ═════════ THE NUMBERS ═════════ -->
+  <section>
+    <div class="sec-head">
+      <span class="eyebrow"><span class="d">◆</span>&nbsp;Section · 01</span>
+      <span class="eyebrow">Replay · 2024-05 → 2026-05</span>
+    </div>
+    <div class="hairline"></div>
+    <h2>The validated <span class="gold">numbers</span></h2>
+
+    <div class="stats">
+      <div class="stat"><div class="k">Net return</div><div class="v green">+179.1%</div><div class="s">$10,000 → $27,914</div></div>
+      <div class="stat"><div class="k">Win rate</div><div class="v gold">65.8%</div><div class="s">790 trades</div></div>
+      <div class="stat"><div class="k">Expectancy</div><div class="v">0.42R</div><div class="s">per trade</div></div>
+      <div class="stat"><div class="k">Max drawdown</div><div class="v green">4.1%</div><div class="s">remarkably shallow</div></div>
+      <div class="stat"><div class="k">Avg R:R</div><div class="v">1.6</div><div class="s">partial TP1 + runner</div></div>
+      <div class="stat"><div class="k">Risk / trade</div><div class="v">1.5%</div><div class="s">drawdown-adaptive</div></div>
+    </div>
+
+    <div style="margin-top:14px;" class="tbl-card">
+      <table>
+        <thead><tr><th>Pair</th><th>PnL contribution</th><th>Killzones (UTC)</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">XAUUSD</td><td class="mono" style="color:var(--profit)">+$4,218</td><td class="mono">06–18</td><td>Tightest sweep buffer (0.10 ATR) · anchor filter removed after it suppressed the edge ($8 → $614 in 12-mo replay)</td></tr>
+          <tr><td class="mono">EURUSD</td><td class="mono" style="color:var(--profit)">+$5,102</td><td class="mono">07–11 · 13–17</td><td>Best performer · anchor sweeps on (PDH/PDL + Asian range)</td></tr>
+          <tr><td class="mono">GBPUSD</td><td class="mono" style="color:var(--profit)">+$4,890</td><td class="mono">07–11 · 13–17</td><td>Highly correlated with EURUSD — see weakness №4</td></tr>
+          <tr><td class="mono">USDJPY</td><td class="mono" style="color:var(--profit)">+$3,704</td><td class="mono">00–03 · 07–11 · 13–17</td><td>Widest ATR spike tolerance (3.5×) for BoJ intervention</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="src-note">Source: locked replay baseline (2026-05-08) + per-pair configs in <span class="mono">src/backtest/engine/smc/pairs/</span>. Every gate variation tested against this baseline (FVG, OB, BOS, displacement, range-reversion) failed to beat it — the edge is already distilled.</p>
+  </section>
+
+  <!-- ═════════ HOW IT WORKS ═════════ -->
+  <section>
+    <div class="sec-head">
+      <span class="eyebrow"><span class="d">◆</span>&nbsp;Section · 02</span>
+      <span class="eyebrow">Mechanics</span>
+    </div>
+    <div class="hairline"></div>
+    <h2>How ARGUS <span class="gold">hunts</span></h2>
+
+    <div class="flow">
+      <div class="flow-item">
+        <div class="flow-num">01</div>
+        <div>
+          <div class="flow-t">Watch the swing extremes</div>
+          <div class="flow-d">3-bar fractals on H1 mark where retail stops cluster. Lookback is pair-tuned: <span class="mono">24–32 bars</span>.</div>
+        </div>
+      </div>
+      <div class="flow-item">
+        <div class="flow-num">02</div>
+        <div>
+          <div class="flow-t">Detect the raid</div>
+          <div class="flow-d">A wick pierces the extreme by <span class="mono">sweepBuffer × ATR</span> but the body closes back inside — institutional stop-hunt signature. The failed breakout IS the signal.</div>
+        </div>
+      </div>
+      <div class="flow-item">
+        <div class="flow-num">03</div>
+        <div>
+          <div class="flow-t">Ask the daily chart which way to trade it</div>
+          <div class="flow-d">D1 ADX ≥ 22 → <span class="mono">CONTINUATION</span> (ride the trend through the sweep). Below → <span class="mono">REVERSAL</span> (fade the raid). A structure-health filter vetoes CONTINUATION when ADX is falling, EMAs misaligned, or trend exhausted (ADX &gt; 50).</div>
+        </div>
+      </div>
+      <div class="flow-item">
+        <div class="flow-num">04</div>
+        <div>
+          <div class="flow-t">Strike only in killzones</div>
+          <div class="flow-d">London + NY sessions (plus Tokyo for USDJPY). Signals stay valid in a pending queue for <span class="mono">8–12 H1 bars</span>; any M15 close inside the window can trigger.</div>
+        </div>
+      </div>
+      <div class="flow-item">
+        <div class="flow-num">05</div>
+        <div>
+          <div class="flow-t">Manage the position mechanically</div>
+          <div class="flow-d">30% off at TP1 (<span class="mono">0.8R</span>) → break-even stop at +1R → trail from +2R toward TP2 (<span class="mono">3.5–4.0R</span>). No discretion anywhere in the loop.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═════════ SAFETY AUDIT ═════════ -->
+  <section>
+    <div class="sec-head">
+      <span class="eyebrow"><span class="d">◆</span>&nbsp;Section · 03</span>
+      <span class="eyebrow">Risk framework audit</span>
+    </div>
+    <div class="hairline"></div>
+    <h2>Safety <span class="gold">stack</span></h2>
+
+    <div class="grade-row">
+      <div class="grade-box">
+        <div class="grade">A−</div>
+        <div class="grade-sub">Risk grade</div>
+      </div>
+      <div class="grade-detail tbl-card">
+        <table>
+          <thead><tr><th>Layer</th><th>Trigger</th><th>Action</th></tr></thead>
+          <tbody>
+            <tr><td>Daily-loss breaker</td><td class="mono">−3% day PnL</td><td>Pause until next day</td></tr>
+            <tr><td>Loss-streak pauses</td><td class="mono">5 / 6 / 7+ consecutive</td><td>1 / 3 / 5-day pauses · 4 losses in 7d → 5-day</td></tr>
+            <tr><td>Drawdown brakes</td><td class="mono">DD 15 / 25 / 35%</td><td>3 / 7 / 30-day pauses</td></tr>
+            <tr><td>Adaptive sizing</td><td class="mono">DD 10 / 20 / 30%</td><td>Risk × 0.5 / 0.25 / 0.10</td></tr>
+            <tr><td>Hard-kill</td><td class="mono">DD ≥ 40%</td><td><span class="pill red">Permanent disable</span> manual reset only</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <p class="src-note">Why not a clean A: the framework reacts to drawdown but doesn't yet see <b style="color:var(--fg)">correlation</b> — EURUSD and GBPUSD positions can effectively double the same EUR/GBP-vs-USD bet, and the engine treats them as independent. State survives restarts via Redis snapshots, which is genuinely rare at this level. ✓</p>
+  </section>
+
+  <!-- ═════════ HONEST WEAKNESSES ═════════ -->
+  <section>
+    <div class="sec-head">
+      <span class="eyebrow"><span class="d">◆</span>&nbsp;Section · 04</span>
+      <span class="eyebrow">What could hurt you</span>
+    </div>
+    <div class="hairline"></div>
+    <h2>Honest <span class="gold">weaknesses</span></h2>
+
+    <div class="weak">
+      <div class="weak-item" style="border-left-color: var(--profit);">
+        <div class="weak-t">№1 — The live health panel was showing poisoned numbers <span class="pill green">Fixed · 2026-06-11</span></div>
+        <div class="weak-d">Root cause found in prod: 60 of 83 closed trades were <span class="mono">ORPHAN</span> reconciliation artifacts at pnl=0, finalized in one bad pass on June 8 when a freshly-reconnected MetaApi client returned an empty position list. They dragged measured WR to ~12% against the 65% baseline. Fixed three ways: analytics exclude ORPHAN rows; the position-monitor requires <b style="color:var(--fg)">3 consecutive absent reads</b> before finalizing a close; and orchestrator dedup state is now restored <i>before</i> first use, ending the duplicate entries (one sweep had been traded 8×).</div>
+      </div>
+      <div class="weak-item amber">
+        <div class="weak-t">№2 — Backtest-to-live gap is unproven</div>
+        <div class="weak-d">+179% came from replayed candles with modeled fills. Live adds spread variance, slippage on news wicks, MetaApi/cTrader latency, and partial-fill behavior the simulator can't see. A realistic haircut is 30–50% of backtest returns. Still profitable — but plan on <span class="mono">+90–125%</span> per 28 months, not +179%, until live data says otherwise.</div>
+      </div>
+      <div class="weak-item amber">
+        <div class="weak-t">№3 — Regime dependence with no regime detector</div>
+        <div class="weak-d">The 2024–2026 window contained strong trends (gold's run, USDJPY intervention cycles). ARGUS profits from <i>raids on liquidity in directional markets</i>. A prolonged ultra-low-volatility regime (2019-style) would starve it: fewer sweeps, more chop-fakeouts. The D1 ADX floor partially protects, but nothing measures "is this market still the market we validated on?"</div>
+      </div>
+      <div class="weak-item amber">
+        <div class="weak-t">№4 — EURUSD / GBPUSD correlation is unmodeled</div>
+        <div class="weak-d">Both pairs share killzones and direction most days (~0.85 correlated). Simultaneous signals are effectively one 3% bet wearing two 1.5% hats. The risk manager counts positions, not exposure.</div>
+      </div>
+      <div class="weak-item amber">
+        <div class="weak-t">№5 — Dormancy is a feature that feels like a bug</div>
+        <div class="weak-d">Killzones + ADX floor + dedup means the engine does nothing for large stretches. That discipline IS the edge — but it also means slow equity growth in quiet months and temptation to "loosen the filters" (every loosening tested so far made it worse).</div>
+      </div>
+      <div class="weak-item">
+        <div class="weak-t">№6 — Single point of failure history</div>
+        <div class="weak-d">The MetaApi outage proved bridge risk is real. Spec 3 (cTrader OAuth, just shipped) addresses this — once the Spotware app is Active and accounts run on both bridges, this weakness retires.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═════════ ROADMAP ═════════ -->
+  <section>
+    <div class="sec-head">
+      <span class="eyebrow"><span class="d">◆</span>&nbsp;Section · 05</span>
+      <span class="eyebrow">From profitable to highly profitable</span>
+    </div>
+    <div class="hairline"></div>
+    <h2>Upgrade <span class="gold">path</span></h2>
+
+    <!-- TIER 1 -->
+    <div class="tier">
+      <div class="tier-label"><span class="tier-chip t1">Tier 1 · Now</span><div class="tier-line"></div><span class="eyebrow">Trust your instruments</span></div>
+      <div class="road">
+        <div class="road-item">
+          <div>
+            <div class="road-t">Fix the expectancy-drift calculation</div>
+            <div class="road-d">Guard against <span class="mono">riskAmount ≤ ε</span> rows, exclude replay/manual trades from the live sample, add a unit test with a poisoned row. The DEGRADED panel must be believable before anything else matters.</div>
+          </div>
+          <div class="road-effort">~half day</div>
+        </div>
+        <div class="road-item">
+          <div>
+            <div class="road-t">Live-vs-backtest shadow ledger</div>
+            <div class="road-d">For every live signal, log what the simulator <i>would have</i> done at the same candle. The divergence series (fill slippage, missed entries, spread cost) is the single most valuable dataset you can start collecting today — every later improvement is calibrated against it.</div>
+          </div>
+          <div class="road-effort">~2 days</div>
+        </div>
+        <div class="road-item">
+          <div>
+            <div class="road-t">Finish the news blackout</div>
+            <div class="road-d"><span class="mono">newsBlackoutMinutes</span> is configured but not fully wired. NFP/FOMC/CPI wicks are exactly the fake-sweep generator ARGUS is most vulnerable to. Complete the calendar feed integration.</div>
+          </div>
+          <div class="road-effort">~2 days</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- TIER 2 -->
+    <div class="tier">
+      <div class="tier-label"><span class="tier-chip t2">Tier 2 · Next</span><div class="tier-line"></div><span class="eyebrow">Structural intelligence</span></div>
+      <div class="road">
+        <div class="road-item">
+          <div>
+            <div class="road-t">Correlation-aware exposure cap</div>
+            <div class="road-d">Treat same-direction EURUSD+GBPUSD as one exposure bucket: when both signal within the same killzone, take the higher-conviction one or halve both sizes. Directly addresses weakness №4 with zero new ML.</div>
+          </div>
+          <div class="road-effort">~2 days</div>
+        </div>
+        <div class="road-item">
+          <div>
+            <div class="road-t">Regime monitor + auto-throttle</div>
+            <div class="road-d">A rolling 60-day fingerprint (realized vol, ADX distribution, sweep frequency) vs the validation window. When the live regime drifts beyond 2σ from anything in the backtest, cut risk to 0.75× automatically and flag the dashboard. The strategy doesn't change — its confidence does.</div>
+          </div>
+          <div class="road-effort">~4 days</div>
+        </div>
+        <div class="road-item">
+          <div>
+            <div class="road-t">Quarterly walk-forward revalidation cron</div>
+            <div class="road-d">Auto-rerun the 28-month replay quarterly with the window slid forward; alert if WR or expectancy degrade beyond thresholds. Catches slow parameter decay before your equity does.</div>
+          </div>
+          <div class="road-effort">~1 day</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- TIER 3 -->
+    <div class="tier">
+      <div class="tier-label"><span class="tier-chip t3">Tier 3 · Self-learning</span><div class="tier-line"></div><span class="eyebrow">Adapt without gambling</span></div>
+      <div class="road">
+        <div class="road-item">
+          <div>
+            <div class="road-t">LLM gate in shadow mode</div>
+            <div class="road-d">The <span class="mono">LlmFilterService</span> exists but is unwired. Don't give it veto power — run it in shadow: log its verdict on every signal for 90 days, then measure whether vetoed trades actually underperformed. Promote to live veto only with statistical proof. (Most LLM gates fail this test; you want to know cheaply.)</div>
+          </div>
+          <div class="road-effort">~3 days + 90d data</div>
+        </div>
+        <div class="road-item">
+          <div>
+            <div class="road-t">Bayesian per-pair confidence sizing</div>
+            <div class="road-d">Maintain a Beta(α,β) posterior on each pair's live win rate, updated per closed trade. Size = base risk × posterior confidence vs baseline. A pair drifting below its backtest WR automatically de-weights itself — graceful degradation, fully explainable, no black box.</div>
+          </div>
+          <div class="road-effort">~4 days</div>
+        </div>
+        <div class="road-item">
+          <div>
+            <div class="road-t">Contextual bandit over setup features</div>
+            <div class="road-d">Each signal carries features (sweep depth in ATR, ADX, killzone, mode). A Thompson-sampling bandit learns which feature combinations earn full size vs half size. Bounded action space (sizing only, never entries), online learning, converges with hundreds — not millions — of samples.</div>
+          </div>
+          <div class="road-effort">~1–2 weeks</div>
+        </div>
+      </div>
+      <div class="callout">
+        <b>Deliberately excluded:</b> full reinforcement-learning entry/exit policies. With ~30 live trades per month, an RL agent would need a decade of data to outlearn the validated rule set — and would silently overfit long before that. The architecture above keeps the proven edge as the backbone and lets learning adjust only <i>confidence and size</i>, where small samples are survivable. That's the smart version of self-learning: <b>adapt the throttle, never the steering.</b>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═════════ BOTTOM LINE ═════════ -->
+  <section>
+    <div class="sec-head">
+      <span class="eyebrow"><span class="d">◆</span>&nbsp;Section · 06</span>
+      <span class="eyebrow">Bottom line</span>
+    </div>
+    <div class="hairline"></div>
+    <h2>The <span class="gold">verdict</span></h2>
+    <div style="background:var(--card); border:1px solid var(--border); border-radius:5px; padding:26px 30px; font-size:14px; line-height:1.8; color:var(--muted);">
+      <p><b style="color:var(--fg)">ARGUS is a validated, well-engineered, defensively excellent strategy — operating one tier below its potential.</b></p>
+      <p style="margin-top:12px;">The edge is real: three rounds of adversarial gate-testing failed to find a filter that improves it, which is the strongest evidence the signal is already distilled. The risk stack would survive scrutiny at a prop firm. What separates it from "highly profitable" is not the strategy — it's the <i>feedback loop around it</i>: a drift monitor currently showing garbage, no live-vs-backtest ledger, no correlation awareness, and adaptation mechanisms that don't exist yet.</p>
+      <p style="margin-top:12px;">Run Tier 1 this month. Tier 2 this quarter. Let Tier 3 earn its way in with shadow data. Expect live performance of <span class="mono" style="color:var(--signal)">+40–55%/yr</span> at 1.5% risk if the backtest holds within a typical live haircut — and trust the DEGRADED panel to tell you early if it doesn't. <b style="color:var(--fg)">Once it's fixed.</b></p>
+    </div>
+  </section>
+
+  <footer>
+    <div class="gold-hairline"></div>
+    <div class="foot-mark">▲ SHAMARX · ARGUS STRATEGY REVIEW · GUARDED BY DESIGN</div>
+  </footer>
+
+</div>
+</body>
+</html>
