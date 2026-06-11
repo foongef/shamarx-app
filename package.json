@@ -29,7 +29,8 @@
     "test:e2e": "jest --config ./test/jest-e2e.config.ts",
     "build:web": "pnpm --filter @app/web build",
     "web:dev": "pnpm --filter @app/web dev",
-    "web:start": "pnpm --filter @app/web start"
+    "web:start": "pnpm --filter @app/web start",
+    "host:stats": "bash scripts/host-stats.sh"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
