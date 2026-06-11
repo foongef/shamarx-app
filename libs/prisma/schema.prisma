@@ -460,6 +460,19 @@ model DayNote {
   @@index([userId])
 }
 
+model Mt5Host {
+  id        String   @id @default(uuid())
+  name      String   @unique // "mt5-host-01"
+  privateIp String
+  port      Int      @default(8100)
+  capacity  Int      @default(4)
+  status    String   @default("ACTIVE") // ACTIVE | DRAINING | DOWN
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  accounts BrokerAccount[]
+}
+
 model BrokerAccount {
   id     String @id @default(uuid())
   userId String
@@ -489,6 +502,10 @@ model BrokerAccount {
   oauthExpiresAt DateTime?
   lastConnectedAt DateTime?
 
+  /// MT5_DIRECT only: which mt5-host runs this account's terminal.
+  hostId String?
+  host   Mt5Host? @relation(fields: [hostId], references: [id])
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -500,6 +517,7 @@ model BrokerAccount {
   @@unique([userId, name])
   @@index([userId, isEnabled])
   @@index([broker, accountKind])
+  @@index([hostId])
 }
 
 model RefreshToken {
