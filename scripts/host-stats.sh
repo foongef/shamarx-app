@@ -21,7 +21,7 @@ TARGET="${1:-app}"
 # Spec 4 W1 lands. Until then only the app server is known.
 case "$TARGET" in
   app)         INSTANCE_ID="i-0da17ad488fa32c8a"; KIND="linux-app" ;;
-  mt5-host-01) echo "mt5-host-01 is not provisioned yet (Spec 4 W1)."; exit 1 ;;
+  mt5-host-01) INSTANCE_ID="i-0357e694bbc4ed0a7"; KIND="windows-mt5" ;;
   *)           echo "Unknown host '$TARGET'. Known: app, mt5-host-01"; exit 1 ;;
 esac
 
@@ -43,10 +43,25 @@ cd /opt/trading-bot/repo 2>/dev/null && sudo docker compose --env-file .env -f d
   "SELECT symbol || ' ' || to_char(now() - MAX(\"openTime\"), 'HH24:MI') FROM \"Candle\" WHERE timeframe='M15' GROUP BY symbol ORDER BY symbol;" 2>/dev/null || echo "n/a"
 EOF
 
+read -r -d '' REMOTE_WINDOWS <<'EOF' || true
+$secret = (Get-Content C:\shamarx-etc\manager.env | Where-Object { $_ -match '^MANAGER_SECRET=' }) -replace '^MANAGER_SECRET=',''
+$h = @{ 'X-Manager-Secret' = $secret }
+Write-Output "=== CAPACITY ==="
+(Invoke-RestMethod -Uri http://127.0.0.1:8100/capacity -Headers $h) | ConvertTo-Json -Depth 4
+Write-Output "=== SERVICES ==="
+Get-Service shamarx-mt5-* | ForEach-Object { Write-Output "$($_.Name) $($_.Status)" }
+EOF
+
 # ── Send + collect via SSM ───────────────────────────────────────────────────
 PARAMS_FILE="$(mktemp)"
 REMOTE_FILE="$(mktemp)"
-printf '%s' "$REMOTE_LINUX" > "$REMOTE_FILE"
+if [[ "$KIND" == "windows-mt5" ]]; then
+  SSM_DOC="AWS-RunPowerShellScript"
+  printf '%s' "$REMOTE_WINDOWS" > "$REMOTE_FILE"
+else
+  SSM_DOC="AWS-RunShellScript"
+  printf '%s' "$REMOTE_LINUX" > "$REMOTE_FILE"
+fi
 python3 - "$REMOTE_FILE" "$PARAMS_FILE" <<'PYEOF'
 import json, sys
 remote = open(sys.argv[1]).read()
@@ -56,7 +71,7 @@ rm -f "$REMOTE_FILE"
 
 CMD_ID=$(aws ssm send-command \
   --instance-ids "$INSTANCE_ID" \
-  --document-name "AWS-RunShellScript" \
+  --document-name "$SSM_DOC" \
   --parameters "file://$PARAMS_FILE" \
   --region "$REGION" --profile "$PROFILE" \
   --query 'Command.CommandId' --output text)
@@ -71,6 +86,36 @@ done
 OUTPUT=$(aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "$INSTANCE_ID" \
   --region "$REGION" --profile "$PROFILE" --query 'StandardOutputContent' --output text)
 rm -f "$PARAMS_FILE"
+
+# ── Windows (mt5-host): the manager's own /capacity verdict is authoritative ─
+if [[ "$KIND" == "windows-mt5" ]]; then
+  RAW_OUTPUT="$OUTPUT" python3 - "$TARGET" <<'WINEOF'
+import json, os, re, sys
+raw = os.environ["RAW_OUTPUT"].replace("\r", "")
+target = sys.argv[1]
+GOLD, GREEN, RED, DIM, RESET, BOLD = "\033[33m", "\033[32m", "\033[31m", "\033[2m", "\033[0m", "\033[1m"
+cap_m = re.search(r"=== CAPACITY ===\n(.*?)(?=\n=== |\Z)", raw, re.S)
+svc_m = re.search(r"=== SERVICES ===\n(.*?)(?=\n=== |\Z)", raw, re.S)
+cap = json.loads(cap_m.group(1)) if cap_m else {}
+print(f"\n{BOLD}◆ SHAMARX HOST STATS · {target}{RESET}  {DIM}(windows-mt5){RESET}")
+print(f"{DIM}{'─'*62}{RESET}")
+mem, disk, term = cap.get("memory", {}), cap.get("disk", {}), cap.get("terminals", {})
+print(f"  memory     {mem.get('usedMb','?')}/{mem.get('totalMb','?')} MB used · {mem.get('freeMb','?')} MB free")
+print(f"  disk       {disk.get('freeGb','?')}/{disk.get('totalGb','?')} GB free")
+print(f"  terminals  {term.get('running','?')}/{term.get('capacity','?')} running · avg {term.get('avgRssMb','?')} MB each")
+if svc_m:
+    print(f"\n  {DIM}services{RESET}")
+    for line in svc_m.group(1).strip().splitlines():
+        ok = 'Running' in line
+        print(f"    {(GREEN if ok else RED)}●{RESET} {line.strip()}")
+v = cap.get("verdict", "?")
+color = {"OK": GREEN, "NEAR_CAPACITY": GOLD}.get(v, RED)
+print(f"\n{DIM}{'─'*62}{RESET}")
+print(f"  {color}{BOLD}VERDICT: {v.replace('_',' ')}{RESET}  +{cap.get('headroom',{}).get('additionalAccounts','?')} account(s)")
+print(f"  {DIM}{cap.get('recommendation','')}{RESET}\n")
+WINEOF
+  exit 0
+fi
 
 # ── Pretty-print + verdict ───────────────────────────────────────────────────
 RAW_OUTPUT="$OUTPUT" python3 - "$TARGET" "$KIND" <<'PYEOF'

@@ -663,3 +663,32 @@ and persisted in the `BrokerAccount` row.
 - [ ] Wait for next M15 close → engine fans out to the cTrader account via existing fan-out gate (Spec 2 Task 10)
 - [ ] If signals fire, verify trade lands; if no signal, `GET /api/me/snapshot` shows no errors from the broker call
 - [ ] Existing MetaApi accounts are untouched (regression canary)
+
+## MT5 Direct (Spec 4)
+
+Self-hosted MT5 bridge. Architecture: `docs/architecture/mt5-direct-architecture.html`.
+
+**Host:** `mt5-host-01` · `i-0357e694bbc4ed0a7` · private `10.0.2.48:8100` · t3.medium Windows · subnet AZ b.
+Terraform: `shamarx-terraform/modules/mt5-host`. NO public ingress; admin via SSM only.
+
+**Services (NSSM):** `shamarx-mt5-manager` (FastAPI :8100) + `shamarx-mt5-watchdog`.
+Restart: `aws ssm send-command --document-name AWS-RunPowerShellScript --instance-ids i-0357e694bbc4ed0a7 --parameters 'commands=["Restart-Service shamarx-mt5-manager"]' --region ap-southeast-5 --profile shamarx-prod`
+Logs on host: `C:\shamarx-etc\manager.{log,err}`, `watchdog.{log,err}`.
+
+**Capacity / scale decision:** `pnpm host:stats -- mt5-host-01` (manager `/capacity` verdict is authoritative). Admin API: `GET /api/admin/mt5-hosts`.
+
+**Code deploy to host:** `cd C:\shamarx; git pull --ff-only; Restart-Service shamarx-mt5-manager` via SSM. Code lives in this repo `services/mt5-host/`, sparse-checked-out.
+
+**Golden template rebuild:** download `mt5setup.exe` (MetaQuotes CDN) on the host, silent-install to a scratch dir, run once with `/portable` (no login), close, zip the folder to `C:\shamarx-mt5\golden-template.zip`. Keep charts/news/sounds minimal before zipping.
+
+**Heartbeats:** Redis `live:mt5host:<hostId>:<accountId>` (TTL 300s) via `POST /api/internal/mt5-heartbeat`. Watchdog needs `APP_INTERNAL_URL` in `C:\shamarx-etc\manager.env`.
+
+**Patch window:** Windows Update Sun 22:00 UTC; services auto-start, watchdog resumes the fleet.
+
+### Parallel-run promotion checklist (before migrating the primary account)
+- [ ] Operator demo onboarded via wizard (MT5 Direct) alongside the MetaApi account, same MT5 login
+- [ ] 1–2 weeks elapsed
+- [ ] Zero unexplained fill divergence between the two rails
+- [ ] Candle parity ≥99.9% vs the Candle table
+- [ ] No watchdog 3-strike alerts for 7 consecutive days
+- [ ] Then: disable MetaApi BrokerAccount, MT5 Direct becomes primary, wizard opened to friends
