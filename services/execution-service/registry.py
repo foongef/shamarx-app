@@ -25,6 +25,9 @@ def _default_factory(creds: dict, broker: str, mode: str) -> Broker:
         if broker_account_id:
             client._on_token_refresh = make_token_refresh_callback(str(broker_account_id))
         return client
+    if broker == 'MT5_DIRECT':
+        from mt5_direct_client import Mt5DirectClient
+        return Mt5DirectClient.from_creds(creds)
     # Default + 'METAAPI'
     from metaapi_mt5 import MetaApiMT5
     return MetaApiMT5.from_creds(creds)

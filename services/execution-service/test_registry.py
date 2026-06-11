@@ -102,3 +102,15 @@ async def test_resolve_client_must_not_clobber_metaapi_account_id():
 
     assert captured['creds']['accountId'] == 'metaapi-cloud-id-123'  # untouched
     assert captured['creds']['brokerAccountId'] == 'db-row-uuid-456'  # injected separately
+
+
+async def test_factory_dispatches_mt5_direct():
+    received = {}
+
+    def factory(creds, broker, mode):
+        received['broker'] = broker
+        return FakeClient()
+
+    r = BrokerClientRegistry(factory=factory)
+    await r.get_or_create('acct-x', {'managerUrl': 'http://h:8100'}, 'MT5_DIRECT', 'metaapi')
+    assert received['broker'] == 'MT5_DIRECT'
