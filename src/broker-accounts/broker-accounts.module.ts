@@ -1,3 +1,4 @@
+import { Mt5HostModule } from '../mt5-hosts/mt5-host.module';
 import { Module } from '@nestjs/common';
 import { HttpModule } from '@nestjs/axios';
 import { PrismaModule } from '@app/prisma';
@@ -8,7 +9,7 @@ import { BrokerOAuthService } from './oauth/broker-oauth.service';
 import { BrokerOAuthController } from './oauth/broker-oauth.controller';
 
 @Module({
-  imports: [PrismaModule, CryptoModule, HttpModule],
+  imports: [PrismaModule, CryptoModule, HttpModule, Mt5HostModule],
   controllers: [BrokerAccountsController, BrokerOAuthController],
   providers: [BrokerAccountsService, BrokerOAuthService],
   exports: [BrokerAccountsService, BrokerOAuthService],

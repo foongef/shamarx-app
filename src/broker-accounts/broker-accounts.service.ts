@@ -1,6 +1,7 @@
-import { Injectable, BadRequestException, ConflictException, NotFoundException, Logger } from '@nestjs/common';
+import { Optional, Injectable, BadRequestException, ConflictException, NotFoundException, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '@app/prisma';
+import { Mt5HostService } from '../mt5-hosts/mt5-host.service';
 import { CryptoService } from '../crypto/crypto.service';
 import { CreateBrokerAccountDto } from './dto/create-broker-account.dto';
 import { UpdateBrokerAccountDto } from './dto/update-broker-account.dto';
@@ -17,6 +18,7 @@ export class BrokerAccountsService {
     private readonly prisma: PrismaService,
     private readonly crypto: CryptoService,
     config: ConfigService,
+    @Optional() private readonly mt5Hosts?: Mt5HostService,
   ) {
     this.softCap = parseInt(config.get<string>('MULTI_ACCOUNT_SOFT_CAP') || '5', 10);
   }
@@ -72,6 +74,18 @@ export class BrokerAccountsService {
       } as any,
     });
     this.invalidate();
+
+    // MT5_DIRECT: provision the terminal synchronously. Fail-clean — a bad
+    // login or full fleet must not leave a zombie BrokerAccount row.
+    if (dto.broker === 'MT5_DIRECT' && this.mt5Hosts) {
+      try {
+        await this.mt5Hosts.provision(account.id, dto.creds as any);
+      } catch (err) {
+        await this.prisma.brokerAccount.delete({ where: { id: account.id } });
+        this.invalidate();
+        throw err;
+      }
+    }
     return this.toSafe(account);
   }
 
@@ -178,6 +192,9 @@ export class BrokerAccountsService {
         data: { isEnabled: false },
       });
     } else {
+      if (acct.broker === 'MT5_DIRECT' && this.mt5Hosts) {
+        await this.mt5Hosts.deprovision(id);
+      }
       await this.prisma.brokerAccount.delete({ where: { id } });
     }
     this.invalidate();

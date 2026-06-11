@@ -14,6 +14,7 @@ import { LiveReplayModule } from './backtest/live-replay/live-replay.module';
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
 import { BrokerAccountsModule } from './broker-accounts/broker-accounts.module';
+import { Mt5HostModule } from './mt5-hosts/mt5-host.module';
 import { InviteModule } from './invites/invite.module';
 import { MeModule } from './me/me.module';
 import { AdminModule } from './admin/admin.module';
@@ -28,6 +29,7 @@ import { AdminModule } from './admin/admin.module';
     UsersModule,
     AuthModule,
     BrokerAccountsModule,
+    Mt5HostModule,
     InviteModule,
     MeModule,
     MarketDataModule,

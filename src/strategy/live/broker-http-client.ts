@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
+import { PrismaService } from '@app/prisma';
 import { firstValueFrom } from 'rxjs';
 import { SERVICE_URLS } from '@app/common';
 import { BrokerAccountsService } from '../../broker-accounts/broker-accounts.service';
@@ -22,15 +23,29 @@ export class BrokerHttpClient {
     private readonly http: HttpService,
     private readonly accounts: BrokerAccountsService,
     private readonly crypto: CryptoService,
+    private readonly prisma: PrismaService,
   ) {}
 
   private async credsOpts(accountId: string): Promise<{ headers: Record<string, string> }> {
     const acct = await this.accounts.findByIdWithCreds(accountId);
-    const creds = this.crypto.decrypt(
+    let creds = this.crypto.decrypt(
       Buffer.from(acct.encryptedCreds),
       Buffer.from(acct.credsIv),
       Buffer.from(acct.credsAuthTag),
     );
+    // MT5_DIRECT: the python client needs the terminal-manager address. It
+    // lives on the Mt5Host row (set at provisioning), not in the encrypted
+    // creds — inject it here so creds stay host-portable.
+    if (acct.broker === 'MT5_DIRECT' && (acct as any).hostId) {
+      const host = await this.prisma.mt5Host.findUnique({
+        where: { id: (acct as any).hostId },
+      });
+      if (host) {
+        const parsed = JSON.parse(creds);
+        parsed.managerUrl = `http://${host.privateIp}:${host.port}`;
+        creds = JSON.stringify(parsed);
+      }
+    }
     return {
       headers: {
         'X-Broker': acct.broker,           // dispatches CTraderClient vs MetaApiMT5 in execution-service
