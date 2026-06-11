@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>MT5 DIRECT — Self-Hosted Bridge Architecture · Shamarx</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Instrument+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --bg: #16120e; --bg-2: #1a1612; --card: #231f1a; --card-2: #1e1a15;
+    --border: #383229; --border-strong: #4d4538; --input: #15110c;
+    --fg: #ece8e3; --muted: #8d8275; --subtle: #5e5447;
+    --signal: #F2C31C; --signal-dim: rgba(242,195,28,0.12);
+    --profit: #4FD49F; --profit-dim: rgba(79,212,159,0.10);
+    --loss: #F26659; --loss-dim: rgba(242,102,89,0.10);
+    --steel: #7da7d9;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    background: var(--bg); color: var(--fg);
+    font-family: 'Instrument Sans', system-ui, sans-serif;
+    font-size: 15px; line-height: 1.65; -webkit-font-smoothing: antialiased;
+  }
+  body::before {
+    content:''; position:fixed; inset:0;
+    background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.35'/%3E%3C/svg%3E");
+    opacity:0.04; pointer-events:none; mix-blend-mode:overlay; z-index:999;
+  }
+  .wrap { max-width:1080px; margin:0 auto; padding:48px 24px 96px; }
+  .mono { font-family:'IBM Plex Mono', monospace; }
+  .eyebrow { font-family:'IBM Plex Mono',monospace; font-size:10px; font-weight:500; letter-spacing:0.2em; text-transform:uppercase; color:var(--muted); }
+  .eyebrow .d { color:var(--signal); }
+  .hairline { height:1px; background:linear-gradient(90deg,transparent,var(--border) 18%,var(--border) 82%,transparent); }
+  .gold-hairline { height:1px; background:linear-gradient(90deg,transparent,rgba(242,195,28,0.5) 50%,transparent); }
+
+  header { padding:28px 0 36px; }
+  .hero-top { display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:12px; margin-bottom:28px; }
+  h1 { font-family:'Orbitron',sans-serif; font-size:clamp(32px,6vw,56px); font-weight:600; letter-spacing:0.12em; line-height:1; text-align:center; }
+  h1 .gold { color:var(--signal); }
+  .tagline { margin:16px auto 0; color:var(--muted); font-size:14.5px; max-width:680px; text-align:center; }
+  .tagline b { color:var(--fg); }
+
+  section { margin-top:60px; }
+  .sec-head { display:flex; align-items:baseline; justify-content:space-between; gap:16px; flex-wrap:wrap; margin-bottom:6px; }
+  h2 { font-family:'Orbitron',sans-serif; font-size:20px; font-weight:500; letter-spacing:0.08em; text-transform:uppercase; margin:14px 0 18px; }
+  h2 .gold { color:var(--signal); }
+  h3 { font-size:13.5px; font-weight:600; margin:22px 0 8px; color:var(--fg); }
+
+  table { width:100%; border-collapse:collapse; font-size:12.5px; }
+  th { font-family:'IBM Plex Mono',monospace; font-size:9.5px; letter-spacing:0.18em; text-transform:uppercase; color:var(--muted); text-align:left; padding:10px 12px; border-bottom:1px solid var(--border-strong); font-weight:500; }
+  td { padding:10px 12px; border-bottom:1px solid var(--border); vertical-align:top; }
+  td.mono { font-family:'IBM Plex Mono',monospace; font-variant-numeric:tabular-nums; font-size:12px; }
+  tr:last-child td { border-bottom:none; }
+  .tbl-card { background:var(--card); border:1px solid var(--border); border-radius:5px; overflow-x:auto; }
+  .pill { display:inline-block; font-family:'IBM Plex Mono',monospace; font-size:9px; letter-spacing:0.18em; text-transform:uppercase; border-radius:3px; padding:2px 8px; }
+  .pill.green { color:var(--profit); background:var(--profit-dim); border:1px solid rgba(79,212,159,0.35); }
+  .pill.gold { color:var(--signal); background:var(--signal-dim); border:1px solid rgba(242,195,28,0.35); }
+  .pill.red { color:var(--loss); background:var(--loss-dim); border:1px solid rgba(242,102,89,0.35); }
+  .pill.blue { color:var(--steel); background:rgba(125,167,217,0.10); border:1px solid rgba(125,167,217,0.35); }
+
+  /* architecture diagram */
+  .diagram { background:var(--input); border:1px solid var(--border); border-radius:6px; padding:26px; overflow-x:auto; }
+  .diagram pre { font-family:'IBM Plex Mono',monospace; font-size:11.5px; line-height:1.6; color:var(--muted); }
+  .diagram .g { color:var(--signal); } .diagram .p { color:var(--profit); }
+  .diagram .r { color:var(--loss); } .diagram .b { color:var(--steel); } .diagram .w { color:var(--fg); }
+
+  .box-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:12px; }
+  .comp { background:var(--card); border:1px solid var(--border); border-radius:5px; padding:18px 20px; }
+  .comp .name { font-family:'IBM Plex Mono',monospace; font-size:12px; font-weight:600; color:var(--signal); }
+  .comp .role { font-size:12.5px; color:var(--muted); margin-top:6px; line-height:1.55; }
+  .comp .role .mono { color:var(--fg); font-size:11.5px; }
+
+  /* numbered flow */
+  .flow { display:grid; gap:10px; }
+  .flow-item { display:grid; grid-template-columns:44px 1fr; gap:16px; background:var(--card-2); border:1px solid var(--border); border-radius:5px; padding:15px 18px; }
+  .flow-num { font-family:'IBM Plex Mono',monospace; color:var(--signal); font-size:13px; padding-top:2px; }
+  .flow-t { font-weight:600; font-size:13.5px; }
+  .flow-d { font-size:12.5px; color:var(--muted); margin-top:3px; }
+  .flow-d .mono { color:var(--fg); font-size:11.5px; }
+
+  /* phases */
+  .phase { margin-top:24px; }
+  .phase-label { display:flex; align-items:center; gap:12px; margin-bottom:12px; }
+  .phase-line { flex:1; height:1px; background:var(--border); }
+
+  .callout { margin-top:16px; background:var(--input); border:1px dashed var(--border-strong); border-radius:5px; padding:16px 20px; font-size:12.5px; color:var(--muted); }
+  .callout b { color:var(--signal); }
+  .callout.warn { border-color:rgba(242,102,89,0.5); }
+  .callout.warn b { color:var(--loss); }
+
+  footer { margin-top:80px; text-align:center; }
+  .foot-mark { font-family:'IBM Plex Mono',monospace; font-size:10px; letter-spacing:0.25em; text-transform:uppercase; color:var(--subtle); margin-top:16px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- ═════════ HERO ═════════ -->
+  <header>
+    <div class="hero-top">
+      <span class="eyebrow"><span class="d">◆</span>&nbsp;Shamarx · Architecture Draft</span>
+      <span class="eyebrow">2026 · 06 · v1 · For review</span>
+    </div>
+    <div class="gold-hairline"></div>
+    <div style="padding:36px 0 8px;">
+      <div class="eyebrow" style="text-align:center; margin-bottom:14px;">Designation</div>
+      <h1>MT5 <span class="gold">DIRECT</span></h1>
+      <p class="tagline">
+        Self-hosted MT5 bridge — <b>our own MetaApi</b>, on our own metal.
+        One Windows host runs a fleet of portable MT5 terminals; the existing
+        <span class="mono" style="color:var(--fg)">Broker</span> abstraction treats it as just another backend.
+        Zero third-party bridge. Zero per-account fees. Friends onboard through the same wizard.
+      </p>
+    </div>
+  </header>
+
+  <!-- ═════════ DESIGN GOALS ═════════ -->
+  <section>
+    <div class="sec-head">
+      <span class="eyebrow"><span class="d">◆</span>&nbsp;Section · 01</span>
+      <span class="eyebrow">Constraints first</span>
+    </div>
+    <div class="hairline"></div>
+    <h2>Design <span class="gold">goals</span></h2>
+    <div class="tbl-card">
+      <table>
+        <thead><tr><th>Goal</th><th>How the design answers it</th></tr></thead>
+        <tbody>
+          <tr><td><b>Save money now</b></td><td>Phase 1 runs on one <span class="mono">t3.small</span> Windows box (~$37/mo all-in) serving 3–4 accounts. No new services, no load balancers, no MetaApi fees for migrated accounts.</td></tr>
+          <tr><td><b>No stability sacrifice</b></td><td>Watchdog supervises every terminal + worker with exponential-backoff restarts; heartbeats feed the same loop-health pill the dashboard already shows; nightly EBS snapshot = 15-min full rebuild.</td></tr>
+          <tr><td><b>No security sacrifice</b></td><td>The Windows host has <b style="color:var(--fg)">zero public ingress</b> — admin via SSM only (same as the app server), API reachable only from the app server's security group over the private VPC. Passwords AES-256-GCM at rest, never logged, never leave the VPC.</td></tr>
+          <tr><td><b>Automated onboarding</b></td><td>User pastes login/password/server in the wizard → terminal provisioned, logged in, health-checked, and trading in ~60 seconds. No human touches the host.</td></tr>
+          <tr><td><b>Scalable later</b></td><td>Host capacity is a column, not an assumption. Phase 2 adds hosts behind a registry table; Phase 3 bakes a golden AMI so new hosts self-provision via Terraform. The API contract never changes.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ═════════ ARCHITECTURE ═════════ -->
+  <section>
+    <div class="sec-head">
+      <span class="eyebrow"><span class="d">◆</span>&nbsp;Section · 02</span>
+      <span class="eyebrow">The shape of it</span>
+    </div>
+    <div class="hairline"></div>
+    <h2>Architecture <span class="gold">overview</span></h2>
+
+    <div class="diagram">
+<pre>
+ ┌──────────────────────────────  AWS VPC · ap-southeast-5  ──────────────────────────────┐
+ │                                                                                         │
+ │  <span class="w">app server (existing EC2 · Linux)</span>                <span class="w">mt5-host-01 (NEW · EC2 Windows t3.small)</span> │
+ │  ┌─────────────────────────────────┐             ┌─────────────────────────────────────┐│
+ │  │ NestJS backend                  │             │  <span class="g">terminal-manager</span> :8100 (FastAPI)    ││
+ │  │  └ BrokerHttpClient             │             │   ├ POST   /terminals    (provision) ││
+ │  │     X-Broker: MT5_DIRECT ──────────────┐      │   ├ DELETE /terminals/:id            ││
+ │  │                                 │      │      │   ├ GET    /health                   ││
+ │  │ execution-service (Python)      │      │      │   └ /t/:id/*  → routes to worker     ││
+ │  │  └ registry: _default_factory   │      │      │                                      ││
+ │  │     ├ METAAPI  → MetaApiMT5     │      │      │  <span class="p">watchdog</span> (30s loop)                 ││
+ │  │     ├ CTRADER  → CTraderClient  │      │      │   restart dead terminals/workers,    ││
+ │  │     └ MT5_DIRECT → <span class="g">Mt5Direct</span>────┼──────┘      │   backoff, heartbeat → Redis         ││
+ │  │                 <span class="g">Client</span>          │  private    │                                      ││
+ │  │                                 │  VPC only   │  ┌─────────┐ ┌─────────┐ ┌─────────┐ ││
+ │  │ Postgres · Redis (existing)     │  SG-to-SG   │  │terminal │ │terminal │ │terminal │ ││
+ │  └─────────────────────────────────┘             │  │ acct-A  │ │ acct-B  │ │ acct-C  │ ││
+ │                                                  │  │ +worker │ │ +worker │ │ +worker │ ││
+ │   <span class="b">admin path: SSM only — no RDP,</span>                 │  └────┬────┘ └────┬────┘ └────┬────┘ ││
+ │   <span class="b">no public IP, no open ports</span>                    └───────┼───────────┼───────────┼─────┘│
+ └──────────────────────────────────────────────────────────┼───────────┼───────────┼──────┘
+                                                             ▼           ▼           ▼
+                                                       <span class="w">IC Markets / Pepperstone MT5 servers</span>
+                                                       (terminal ⇄ broker, TLS, as normal)
+</pre>
+    </div>
+
+    <h3>Components</h3>
+    <div class="box-grid">
+      <div class="comp">
+        <div class="name">terminal-manager</div>
+        <div class="role">Single FastAPI service on the Windows host. Owns the terminal fleet: provisions from a golden portable-MT5 template, spawns one worker per terminal, routes per-account Broker calls (<span class="mono">/t/:id/orders</span>, <span class="mono">/t/:id/positions</span>, …) to the right worker, reports capacity.</div>
+      </div>
+      <div class="comp">
+        <div class="name">worker (×N)</div>
+        <div class="role">One Python process per terminal — the official <span class="mono">MetaTrader5</span> lib binds process-globally, so isolation is mandatory, not optional. Implements the same verbs as every other Broker: order, positions, modify, close, account-info, candles.</div>
+      </div>
+      <div class="comp">
+        <div class="name">watchdog</div>
+        <div class="role">30-second supervision loop: terminal process alive? worker IPC responding? broker connection state OK? Restart with exponential backoff (1m→2m→4m→cap 15m), write per-terminal heartbeat to Redis — surfaces in the existing loop-health pill automatically.</div>
+      </div>
+      <div class="comp">
+        <div class="name">Mt5DirectClient</div>
+        <div class="role">~150 lines in execution-service implementing the <span class="mono">Broker</span> ABC by HTTP-calling the manager. The registry dispatches on <span class="mono">broker='MT5_DIRECT'</span> exactly like CTRADER/METAAPI. <b style="color:var(--fg)">Nothing upstream changes</b> — engine, risk, analytics, journal all blind to the swap.</div>
+      </div>
+      <div class="comp">
+        <div class="name">Mt5Host registry (DB)</div>
+        <div class="role">New table: <span class="mono">id, privateIp, capacity, activeCount, status</span>. Phase 1 has one row. BrokerAccount gains <span class="mono">hostId</span>. Provisioning picks the least-loaded healthy host — the Phase 2 shard key already in place on day one.</div>
+      </div>
+      <div class="comp">
+        <div class="name">golden template</div>
+        <div class="role">A pristine portable MT5 folder (no login, charts off, news off, sounds off, minimal symbols) zipped on the host. Provisioning = unzip + write <span class="mono">config.ini</span> + launch. Versioned so terminal upgrades roll fleet-wide deliberately, not accidentally.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═════════ ONBOARDING FLOW ═════════ -->
+  <section>
+    <div class="sec-head">
+      <span class="eyebrow"><span class="d">◆</span>&nbsp;Section · 03</span>
+      <span class="eyebrow">User adds an account · fully automated</span>
+    </div>
+    <div class="hairline"></div>
+    <h2>Onboarding <span class="gold">flow</span></h2>
+
+    <div class="flow">
+      <div class="flow-item"><div class="flow-num">01</div><div>
+        <div class="flow-t">Wizard — same one that exists today</div>
+        <div class="flow-d"><span class="mono">/accounts/new</span> gains an “MT5 Direct” card next to cTrader. Form: login, password, server name (e.g. <span class="mono">ICMarketsSC-Demo</span>), friendly name. The custody disclosure is shown here, plainly: <i>“Shamarx stores this password encrypted to operate your terminal.”</i></div>
+      </div></div>
+      <div class="flow-item"><div class="flow-num">02</div><div>
+        <div class="flow-t">Backend: encrypt, persist, pick a host</div>
+        <div class="flow-d">Creds → AES-256-GCM (existing CryptoService) → BrokerAccount row (<span class="mono">broker='MT5_DIRECT'</span>, <span class="mono">isEnabled=false</span>). Host selection: least-loaded healthy row in <span class="mono">Mt5Host</span> with free capacity; 409 with a clear message if the fleet is full.</div>
+      </div></div>
+      <div class="flow-item"><div class="flow-num">03</div><div>
+        <div class="flow-t">Provision call — private VPC, shared-secret header</div>
+        <div class="flow-d"><span class="mono">POST http://10.x.x.x:8100/terminals {accountId, login, password, server}</span>. Manager unzips the golden template into <span class="mono">terminals/&lt;accountId&gt;/</span>, writes the login config, launches the terminal in portable mode.</div>
+      </div></div>
+      <div class="flow-item"><div class="flow-num">04</div><div>
+        <div class="flow-t">Login verification — fail fast, fail clean</div>
+        <div class="flow-d">Manager polls terminal state up to 90s. <span class="pill green">Connected</span> → spawn worker, register in process table, return healthy. <span class="pill red">Auth failed</span> → kill terminal, delete folder, return 401 — wizard shows “check your credentials” and the BrokerAccount row is removed. No zombie terminals, no orphan rows.</div>
+      </div></div>
+      <div class="flow-item"><div class="flow-num">05</div><div>
+        <div class="flow-t">Go live</div>
+        <div class="flow-d">Backend stamps <span class="mono">lastConnectedAt</span>, flips the account enabled (or honors the wizard’s “enable now” checkbox). Engine fans out to it at the next M15 close. Wall-clock for the user: <b style="color:var(--fg)">~60 seconds, zero human involvement.</b></div>
+      </div></div>
+      <div class="flow-item"><div class="flow-num">06</div><div>
+        <div class="flow-t">Removal mirrors creation</div>
+        <div class="flow-d">Account delete in the UI → <span class="mono">DELETE /terminals/:id</span> → worker stopped, terminal killed, folder shredded, host capacity freed. Same open-trades guard the delete flow already enforces.</div>
+      </div></div>
+    </div>
+  </section>
+
+  <!-- ═════════ SECURITY ═════════ -->
+  <section>
+    <div class="sec-head">
+      <span class="eyebrow"><span class="d">◆</span>&nbsp;Section · 04</span>
+      <span class="eyebrow">Threat model honored</span>
+    </div>
+    <div class="hairline"></div>
+    <h2>Security <span class="gold">posture</span></h2>
+
+    <div class="tbl-card">
+      <table>
+        <thead><tr><th>Surface</th><th>Control</th></tr></thead>
+        <tbody>
+          <tr><td>Network ingress</td><td><b>No public IP on the Windows host.</b> Security group allows :8100 from the app server’s SG only. RDP closed entirely — admin via SSM Session Manager (port-forward RDP through SSM on the rare day a GUI is needed), identical to how we manage the Linux box today.</td></tr>
+          <tr><td>API auth</td><td>Shared-secret header (from AWS Secrets Manager, same pattern as <span class="mono">shamarx/ctrader-oauth</span>) on every manager call; manager rejects everything else. Upgrade path to mTLS in Phase 2 if friends’ LIVE accounts justify it.</td></tr>
+          <tr><td>Passwords at rest (app side)</td><td>Existing AES-256-GCM CryptoService, key in Secrets Manager. Same custody class as MetaApi creds today.</td></tr>
+          <tr><td>Passwords at rest (host side)</td><td>Written once into the terminal’s own config at provision; never logged, never echoed in any API response, EBS volume encrypted (default-on). Folder shredded on deprovision.</td></tr>
+          <tr><td>Blast radius</td><td>The host can <i>trade</i> accounts but holds no Shamarx DB creds, no JWT secrets, no other users’ web data. Compromise is severe for trading accounts on that host — which is why ingress is zero and the box runs nothing else.</td></tr>
+          <tr><td>User consent</td><td>Master-password custody stated in the wizard in plain words before submission. Friends who are uncomfortable use the cTrader OAuth path instead — both rails coexist.</td></tr>
+          <tr><td>Patching</td><td>Weekly Windows Update window (Sun 22:00 UTC, market closed); watchdog quiesces and resumes the fleet around the reboot automatically.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="callout warn"><b>Stated trade-off:</b> unlike cTrader OAuth, MT5 has no delegated-auth mechanism — custody of the master password is intrinsic to ANY MT5 bridge (MetaApi holds it today too). Self-hosting doesn’t add this risk; it relocates it from MetaApi’s cloud to a box we control and can audit.</div>
+  </section>
+
+  <!-- ═════════ STABILITY ═════════ -->
+  <section>
+    <div class="sec-head">
+      <span class="eyebrow"><span class="d">◆</span>&nbsp;Section · 05</span>
+      <span class="eyebrow">Boring by design</span>
+    </div>
+    <div class="hairline"></div>
+    <h2>Stability <span class="gold">mechanics</span></h2>
+    <div class="tbl-card">
+      <table>
+        <thead><tr><th>Failure</th><th>Detection</th><th>Recovery</th></tr></thead>
+        <tbody>
+          <tr><td>Terminal crash</td><td class="mono">watchdog · 30s</td><td>Relaunch from its folder, auto-login, worker reattaches. Backoff 1m→15m on flapping; alert pill after 3 strikes.</td></tr>
+          <tr><td>Worker hang</td><td class="mono">IPC ping timeout</td><td>Kill + respawn worker (terminal untouched — positions unaffected).</td></tr>
+          <tr><td>Broker disconnect</td><td class="mono">terminal state poll</td><td>MT5 reconnects natively; watchdog escalates only if disconnected &gt; 5 min.</td></tr>
+          <tr><td>Whole host down</td><td class="mono">Redis heartbeat TTL</td><td>Loop-health pill goes DEGRADED (same UX as tonight’s MetaApi outage). <b style="color:var(--fg)">SL/TP live on the broker server</b> — open positions stay protected exactly as they are right now. Rebuild from nightly AMI snapshot ≈ 15 min.</td></tr>
+          <tr><td>Windows reboot (patches)</td><td class="mono">scheduled window</td><td>Watchdog runs as a service with auto-start; fleet resumes unattended.</td></tr>
+          <tr><td>Capacity exhaustion</td><td class="mono">manager refuses &gt; cap</td><td>Provisioning 409s with “fleet full” — never oversubscribes RAM into OOM territory. Adding capacity = Phase 2 playbook below.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="callout">The reconciliation hardening shipped this week (3-strike absence confirmation, error-skips-reconcile) was built for exactly this class of bridge flap — MT5 Direct inherits it for free.</div>
+  </section>
+
+  <!-- ═════════ COST ═════════ -->
+  <section>
+    <div class="sec-head">
+      <span class="eyebrow"><span class="d">◆</span>&nbsp;Section · 06</span>
+      <span class="eyebrow">Money, honestly</span>
+    </div>
+    <div class="hairline"></div>
+    <h2>Cost <span class="gold">model</span></h2>
+    <div class="tbl-card">
+      <table>
+        <thead><tr><th>Phase</th><th>Infra</th><th>Capacity</th><th>$/month</th><th>$/account</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><span class="pill gold">Phase 1</span></td>
+            <td class="mono">1× t3.small Windows + 50GB gp3</td>
+            <td>3–4 terminals</td>
+            <td class="mono">~$37</td>
+            <td class="mono">~$9–12</td>
+          </tr>
+          <tr>
+            <td><span class="pill blue">Phase 2</span></td>
+            <td class="mono">upgrade in place → t3.large</td>
+            <td>8–12 terminals</td>
+            <td class="mono">~$85</td>
+            <td class="mono">~$7–10</td>
+          </tr>
+          <tr>
+            <td><span class="pill green">Phase 3</span></td>
+            <td class="mono">N hosts from golden AMI (Terraform)</td>
+            <td>10–12 per host</td>
+            <td class="mono">~$85 / host</td>
+            <td class="mono">~$7</td>
+          </tr>
+          <tr>
+            <td>Reference</td>
+            <td class="mono">MetaApi G2 high-reliability</td>
+            <td>per account</td>
+            <td class="mono">—</td>
+            <td class="mono">~$30–50</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p style="font-size:12px; color:var(--subtle); margin-top:10px;">
+      Break-even vs MetaApi: <b style="color:var(--fg)">~1–2 accounts.</b> Phase 1 → 2 is a stop-instance/resize/start (10 min, no code).
+      Reserved-instance pricing shaves a further ~30% once committed. Ops time honestly budgeted: ~1–2 hrs/month steady-state.
+    </p>
+  </section>
+
+  <!-- ═════════ ROLLOUT ═════════ -->
+  <section>
+    <div class="sec-head">
+      <span class="eyebrow"><span class="d">◆</span>&nbsp;Section · 07</span>
+      <span class="eyebrow">De-risked sequence</span>
+    </div>
+    <div class="hairline"></div>
+    <h2>Build &amp; rollout <span class="gold">plan</span></h2>
+
+    <div class="flow">
+      <div class="flow-item"><div class="flow-num">W1</div><div>
+        <div class="flow-t">Host + manager + one terminal (manual account first) · ~4 days</div>
+        <div class="flow-d">Terraform the Windows EC2 (SSM-only, SG locked), golden template, terminal-manager with provision/route/destroy, worker, watchdog. Provision <b style="color:var(--fg)">your own IC Markets demo</b> by API call — not via UI yet.</div>
+      </div></div>
+      <div class="flow-item"><div class="flow-num">W2</div><div>
+        <div class="flow-t">Wire into the platform · ~3 days</div>
+        <div class="flow-d"><span class="mono">Mt5DirectClient</span> + registry dispatch + <span class="mono">Mt5Host</span> table + wizard “MT5 Direct” branch + provisioning orchestration in NestJS. Candles from the worker feed the same <span class="mono">Candle</span> table — a second independent candle source for free.</div>
+      </div></div>
+      <div class="flow-item"><div class="flow-num">W2–3</div><div>
+        <div class="flow-t">Parallel-run gate · 1–2 weeks, zero code</div>
+        <div class="flow-d">Your demo runs on BOTH MetaApi and MT5 Direct simultaneously (two BrokerAccounts, same MT5 login). Compare fills, candle parity, uptime. <b style="color:var(--fg)">Only after parity:</b> migrate the primary, demote MetaApi to fallback, open the wizard branch to friends.</div>
+      </div></div>
+      <div class="flow-item"><div class="flow-num">∞</div><div>
+        <div class="flow-t">Endgame topology</div>
+        <div class="flow-d"><span class="pill gold">cTrader OAuth</span> the smooth zero-custody rail (pending approval) · <span class="pill green">MT5 Direct</span> for MT5-only friends, self-hosted · <span class="pill red">MetaApi</span> legacy fallback, retire when count hits zero. One Broker ABC over all three — no engine changes ever.</div>
+      </div></div>
+    </div>
+
+    <div class="callout">
+      <b>Total build estimate: ~7–9 days</b> engineering + a 1–2-week passive parallel-run.
+      Next step if this design is approved: formal spec → implementation plan (same Spec-1/2/3 process), starting with the W1 block.
+    </div>
+  </section>
+
+  <footer>
+    <div class="gold-hairline"></div>
+    <div class="foot-mark">▲ SHAMARX · MT5 DIRECT ARCHITECTURE · GUARDED BY DESIGN</div>
+  </footer>
+
+</div>
+</body>
+</html>
