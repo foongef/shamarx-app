@@ -1,6 +1,7 @@
 import { Test } from '@nestjs/testing';
 import { HttpService } from '@nestjs/axios';
 import { of, throwError } from 'rxjs';
+import { PrismaService } from '@app/prisma';
 import { CryptoService } from '../../crypto/crypto.service';
 import { BrokerAccountsService } from '../../broker-accounts/broker-accounts.service';
 import { BrokerHttpClient } from './broker-http-client';
@@ -31,6 +32,7 @@ describe('BrokerHttpClient', () => {
         { provide: HttpService, useValue: http },
         { provide: BrokerAccountsService, useValue: accounts },
         { provide: CryptoService, useValue: crypto },
+        { provide: PrismaService, useValue: { mt5Host: { findUnique: jest.fn() } } },
       ],
     }).compile();
     client = moduleRef.get(BrokerHttpClient);
