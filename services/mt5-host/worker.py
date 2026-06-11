@@ -64,11 +64,15 @@ def _init_terminal():
         state.update(state='TIMEOUT', error=f'start.ini unreadable: {e}')
         return
     for attempt in range(3):
+        print(f'[worker {ACCOUNT_ID}] initialize attempt {attempt + 1} '
+              f'path={TERMINAL_PATH} server={c.get("server")}', flush=True)
         ok = mt5.initialize(path=TERMINAL_PATH, login=int(c['login']),
                             password=c['password'], server=c['server'],
                             portable=True, timeout=60_000)
+        print(f'[worker {ACCOUNT_ID}] initialize -> {ok}, last_error={mt5.last_error()}', flush=True)
         if ok:
             info = mt5.account_info()
+            print(f'[worker {ACCOUNT_ID}] account_info={info}', flush=True)
             if info is not None and info.login:
                 state.update(state='CONNECTED')
                 return
