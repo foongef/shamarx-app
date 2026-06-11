@@ -131,9 +131,17 @@ Verdict thresholds: `OK` (<70% of capacity AND freeMb > 1.5×avgRss), `NEAR_CAPA
 
 Break-even vs MetaApi (~$30–50/acct): 1–2 accounts. Reserved pricing −~30% once stable.
 
+## 8.5 Infrastructure-as-code home
+
+All Spec 4 infra is defined in the **`shamarx-terraform` repo** (`/Users/shepyrd/development/shamarx/shamarx-terraform`), not ad-hoc CLI:
+
+- New module **`modules/mt5-host`**: Windows EC2 (t3.small, SSM-only, no public IP), security group (:8100 ← app SG only), instance role (SSM core + secrets read), encrypted gp3 root, DLM nightly snapshot policy.
+- `envs/prod/main.tf` gains the `mt5_host` module instantiation + `aws_secretsmanager_secret.mt5_manager_secret`.
+- **Drift remediation (part of W1):** import the two resources created via CLI during Spec 3 into state — `shamarx/ctrader-oauth` secret (→ `envs/prod/main.tf` beside `broker_creds_master_key`) and the `shamarx-prod-read-ctrader-oauth` inline policy (→ `modules/compute-ec2`). `terraform plan` must come back clean before the new module applies.
+
 ## 9. Rollout
 
-1. **W1 (~4 days):** Terraform Windows EC2 (SSM-only, SG-locked, EBS-encrypted, nightly snapshot) · golden template · terminal-manager (provision/route/destroy/capacity) · worker · watchdog · provision the operator's own IC Markets demo via API (not UI).
+1. **W1 (~4 days):** `mt5-host` Terraform module in shamarx-terraform (SSM-only, SG-locked, EBS-encrypted, nightly snapshot) + drift imports (§8.5) · golden template · terminal-manager (provision/route/destroy/capacity) · worker · watchdog · provision the operator's own IC Markets demo via API (not UI).
 2. **W2 (~3 days):** `Mt5DirectClient` + registry dispatch · `Mt5Host` table + `BrokerAccount.hostId` · `Mt5HostService` orchestration · wizard branch · admin capacity card · `scripts/host-stats.sh` finalized against the new host.
 3. **Parallel-run gate (1–2 wks, passive):** operator demo on MetaApi + MT5 Direct simultaneously; compare fills, candle parity, uptime. Promotion criteria: zero unexplained fill divergence, candle parity ≥99.9%, no watchdog 3-strike alerts for 7 consecutive days.
 4. **Promote:** migrate primary, demote MetaApi to fallback, open wizard branch to friends.
