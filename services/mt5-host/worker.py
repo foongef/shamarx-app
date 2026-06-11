@@ -39,22 +39,46 @@ def mt5_position_to_dict(p) -> dict:
     }
 
 
+def _read_start_ini() -> dict:
+    """Login config written by the manager into this terminal's folder."""
+    from pathlib import Path as _P
+    ini = _P(TERMINAL_PATH).parent / 'config' / 'start.ini'
+    creds = {}
+    for line in ini.read_text().splitlines():
+        if '=' in line:
+            k, v = line.split('=', 1)
+            creds[k.strip().lower()] = v.strip()
+    return creds
+
+
 def _init_terminal():
     global mt5
     import MetaTrader5 as _mt5
     mt5 = _mt5
-    # initialize() ATTACHES to the already-running terminal at this path —
-    # the manager launched it with auto-login config; the worker never sees
-    # the password.
-    for _ in range(30):
-        if mt5.initialize(path=TERMINAL_PATH, portable=True):
+    # initialize() LAUNCHES the terminal itself and logs in — the documented
+    # headless pattern. (Popen-launching a GUI exe from a Session-0 Windows
+    # service silently fails; the lib's launcher does not.)
+    try:
+        c = _read_start_ini()
+    except OSError as e:
+        state.update(state='TIMEOUT', error=f'start.ini unreadable: {e}')
+        return
+    for attempt in range(3):
+        ok = mt5.initialize(path=TERMINAL_PATH, login=int(c['login']),
+                            password=c['password'], server=c['server'],
+                            portable=True, timeout=60_000)
+        if ok:
             info = mt5.account_info()
             if info is not None and info.login:
                 state.update(state='CONNECTED')
                 return
-        time.sleep(3)
-    code, desc = mt5.last_error() if mt5 else (-1, 'mt5 import failed')
-    state.update(state='AUTH_FAILED' if code == -6 else 'TIMEOUT', error=f'{code}: {desc}')
+        code, desc = mt5.last_error()
+        if code == -6:  # authorization failed — no point retrying
+            state.update(state='AUTH_FAILED', error=f'{code}: {desc}')
+            return
+        time.sleep(5)
+    code, desc = mt5.last_error()
+    state.update(state='TIMEOUT', error=f'{code}: {desc}')
 
 
 @app.on_event('startup')

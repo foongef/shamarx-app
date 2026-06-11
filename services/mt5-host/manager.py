@@ -126,13 +126,6 @@ def _terminal_dir(account_id: str) -> Path:
     return TERMINALS_DIR / account_id
 
 
-def _launch_terminal(account_id: str) -> None:
-    tdir = _terminal_dir(account_id)
-    cfg = tdir / 'config' / 'start.ini'
-    subprocess.Popen([str(tdir / 'terminal64.exe'), '/portable', f'/config:{cfg}'],
-                     cwd=str(tdir))
-
-
 def _spawn_worker(account_id: str, port: int) -> subprocess.Popen:
     env = {**os.environ,
            'WORKER_ACCOUNT_ID': account_id,
@@ -191,7 +184,8 @@ async def provision(request: Request):
         cfg.write_text(
             f"[Common]\nLogin={body['login']}\nPassword={body['password']}\nServer={body['server']}\n")
 
-        _launch_terminal(account_id)
+        # The WORKER launches the terminal via mt5.initialize() — a GUI exe
+        # Popen'd from a Session-0 service never starts.
         procs[account_id] = _spawn_worker(account_id, port)
         info = await _worker_ready(port)
         registry.save()
@@ -221,7 +215,6 @@ async def restart(account_id: str, request: Request):
     if p:
         p.kill()
     _kill_terminal(account_id)
-    _launch_terminal(account_id)
     procs[account_id] = _spawn_worker(account_id, port)
     info = await _worker_ready(port)
     return {'status': 'CONNECTED', **{k: info.get(k) for k in ('balance', 'equity')}}
