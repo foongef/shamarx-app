@@ -1,5 +1,4 @@
-import { IsBoolean, IsIn, IsInt, IsObject, IsOptional, IsString, MaxLength, ValidateNested } from 'class-validator';
-import { Type } from 'class-transformer';
+import { IsBoolean, IsIn, IsInt, IsObject, IsOptional, IsString, MaxLength } from 'class-validator';
 import { MetaApiCredsDto, Mt5DirectCredsDto } from './broker-creds.dto';
 
 export class CreateBrokerAccountDto {
@@ -13,11 +12,14 @@ export class CreateBrokerAccountDto {
   @IsIn(['metaapi', 'mock'])
   mode!: 'metaapi' | 'mock';
 
-  /** Present for METAAPI + MOCK. CTRADER uses oauthSessionId + ctidTraderAccountId instead. */
+  /**
+   * Present for METAAPI + MOCK ({accountId, accessToken}) and MT5_DIRECT
+   * ({login, password, server}). CTRADER uses oauthSessionId instead.
+   * class-validator can't discriminate a union on a sibling field, so the
+   * per-broker shape check lives in BrokerAccountsService.validateCreds().
+   */
   @IsOptional()
   @IsObject()
-  @ValidateNested()
-  @Type(() => MetaApiCredsDto)
   creds?: MetaApiCredsDto | Mt5DirectCredsDto;
 
   /** CTRADER finalize shape — carried in the body for clients that POST through this DTO. */

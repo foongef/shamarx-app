@@ -43,6 +43,8 @@ export class BrokerAccountsService {
       }
     }
 
+    this.validateCreds(dto);
+
     let credsJson: string;
     if (dto.broker === 'CTRADER') {
       if (!extra?.encryptedCredsJson) {
@@ -198,6 +200,26 @@ export class BrokerAccountsService {
       await this.prisma.brokerAccount.delete({ where: { id } });
     }
     this.invalidate();
+  }
+
+  /** Per-broker creds shape check — the DTO can't discriminate the union. */
+  private validateCreds(dto: CreateBrokerAccountDto) {
+    if (dto.broker === 'CTRADER' || !dto.creds) return;
+    const c = dto.creds as unknown as Record<string, unknown>;
+    const requireStr = (key: string, max: number) => {
+      const v = c[key];
+      if (typeof v !== 'string' || v.length === 0 || v.length > max) {
+        throw new BadRequestException(`creds.${key} must be a non-empty string (max ${max} chars)`);
+      }
+    };
+    if (dto.broker === 'MT5_DIRECT') {
+      requireStr('login', 32);
+      requireStr('password', 128);
+      requireStr('server', 128);
+    } else {
+      requireStr('accountId', 128);
+      requireStr('accessToken', 1024);
+    }
   }
 
   private toSafe(row: any) {
