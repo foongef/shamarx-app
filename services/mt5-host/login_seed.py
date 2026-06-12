@@ -106,10 +106,9 @@ def main() -> int:
     password = os.environ['SEED_PASSWORD']
     server = os.environ['SEED_SERVER']
 
-    # Already logged into the target account? (title carries the login number)
-    if login in (win.window_text() or ''):
-        print('already logged into target account', flush=True)
-        return 0
+    # NOTE: the title may already show the login number because the manager's
+    # start.ini preloads it — but build 5836 doesn't CONNECT from config, so
+    # the dialog login below is still required. Don't short-circuit on title.
 
     # Navigator is already open by default. The Navigator is a SysTreeView32
     # whose roots include an "Accounts" node.

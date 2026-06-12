@@ -216,8 +216,9 @@ async def provision(request: Request):
             shutil.unpack_archive(str(TEMPLATE_ZIP), str(tdir))
         cfg = tdir / 'config' / 'start.ini'
         cfg.parent.mkdir(parents=True, exist_ok=True)
+        # No [Common] login — build 5836 won't connect from config anyway, and
+        # preloading it makes the title lie. login_seed does the real login.
         cfg.write_text(
-            f"[Common]\nLogin={body['login']}\nPassword={body['password']}\nServer={body['server']}\n"
             "[Experts]\nAllowLiveTrading=1\nEnabled=1\n"
             "[StartUp]\nExpert=ShamarxBridge\nSymbol=EURUSD\nPeriod=M15\n")
         # Worker FIRST (its listener must exist before the EA dials in),
