@@ -135,6 +135,25 @@ def _launch_terminal(account_id: str) -> None:
                      cwd=str(tdir))
 
 
+def _seed_login(account_id: str, login: str, password: str, server: str) -> None:
+    """One-time GUI login (build 5836 dropped config auto-login). Persists the
+    account via 'save password' so the terminal reconnects on its own after."""
+    tdir = _terminal_dir(account_id)
+    env = {**os.environ,
+           'TERMINAL_PATH': str(tdir / 'terminal64.exe'),
+           'SEED_LOGIN': str(login), 'SEED_PASSWORD': str(password),
+           'SEED_SERVER': str(server)}
+    # give the terminal a moment to present its main window first
+    time.sleep(25)
+    try:
+        r = subprocess.run([PYTHON, str(Path(__file__).parent / 'login_seed.py')],
+                           env=env, timeout=120, capture_output=True, text=True)
+        print(f'[{account_id}] login_seed rc={r.returncode} {r.stdout.strip()[-200:]}',
+              flush=True)
+    except subprocess.TimeoutExpired:
+        print(f'[{account_id}] login_seed timed out', flush=True)
+
+
 def _spawn_worker(account_id: str, port: int) -> subprocess.Popen:
     env = {**os.environ,
            'WORKER_ACCOUNT_ID': account_id,
@@ -198,6 +217,9 @@ async def provision(request: Request):
         # then the terminal.
         procs[account_id] = _spawn_worker(account_id, port)
         _launch_terminal(account_id)
+        # build 5836 ignores config-file auto-login — drive the Navigator
+        # login dialog via message-based GUI automation (login_seed).
+        _seed_login(account_id, body['login'], body['password'], body['server'])
         info = await _worker_ready(port)
         registry.save()
         return {'status': 'CONNECTED', 'port': port,
