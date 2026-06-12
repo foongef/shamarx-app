@@ -4,3 +4,4 @@ MetaTrader5==5.0.4874; sys_platform == 'win32'
 httpx==0.28.1
 psutil==6.1.0
 pytest>=8
+pywinauto==0.6.8
