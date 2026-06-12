@@ -49,6 +49,19 @@ def main() -> int:
     print(f'terminal window: "{win.window_text()}" pid={pid}', flush=True)
 
     app = Application(backend='win32').connect(process=pid)
+    if os.getenv('MENUPROBE') == '1':
+        try:
+            mb = win.menu()
+            for item in mb.items():
+                print('MENU:', item.text(), flush=True)
+                try:
+                    for sub in item.sub_menu().items():
+                        print('   SUB:', repr(sub.text()), flush=True)
+                except Exception:
+                    pass
+        except Exception as e:
+            print('menu enumerate failed:', e, flush=True)
+        return 0
     # SetForegroundWindow is gated unless the calling thread "owns" the
     # foreground; an Alt tap releases that lock (documented workaround).
     try:
