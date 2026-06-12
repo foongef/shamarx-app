@@ -143,7 +143,7 @@ def _spawn_worker(account_id: str, port: int) -> subprocess.Popen:
     return subprocess.Popen([PYTHON, str(Path(__file__).parent / 'worker.py')], env=env)
 
 
-async def _worker_ready(port: int, timeout_s: int = 160) -> dict:
+async def _worker_ready(port: int, timeout_s: int = 220) -> dict:
     """Poll the worker until the terminal is logged in, or fail loud."""
     deadline = time.time() + timeout_s
     last: dict = {}

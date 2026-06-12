@@ -100,7 +100,7 @@ bridge = FileBridge(FILES_DIR)
 def _init_watch():
     """CONNECTED once the EA reports a broker-connected account; AUTH_FAILED
     if the EA is up but the terminal never authorizes within the budget."""
-    deadline = time.time() + 150
+    deadline = time.time() + 210
     ea_seen = False
     while time.time() < deadline:
         if bridge.connected:
