@@ -19,6 +19,18 @@ import time
 from pywinauto import Application, Desktop
 from pywinauto.keyboard import send_keys
 
+
+def _hide_own_console():
+    """Our cmd.exe console covers the terminal and steals coordinate clicks.
+    Minimize it so screenshots and click_input reach MT5."""
+    try:
+        import ctypes
+        hwnd = ctypes.windll.kernel32.GetConsoleWindow()
+        if hwnd:
+            ctypes.windll.user32.ShowWindow(hwnd, 6)  # SW_MINIMIZE
+    except Exception:
+        pass
+
 TERMINAL_PATH = os.getenv('TERMINAL_PATH', '')
 PROBE = os.getenv('PROBE', '')
 SHOT_PATH = os.getenv('SHOT_PATH', r'C:\shamarx-mt5\shot.png')
@@ -51,6 +63,7 @@ def find_terminal(timeout_s: int = 60):
 
 
 def main() -> int:
+    _hide_own_console()
     win = find_terminal()
     if win is None:
         print('terminal window not found', flush=True)
