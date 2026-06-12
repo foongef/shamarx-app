@@ -126,15 +126,24 @@ def _terminal_dir(account_id: str) -> Path:
     return TERMINALS_DIR / account_id
 
 
+def _launch_terminal(account_id: str) -> None:
+    """Works since the manager moved to an interactive-session scheduled task
+    (Session-0 services could never start GUI exes — Spec 4 forensics)."""
+    tdir = _terminal_dir(account_id)
+    cfg = tdir / 'config' / 'start.ini'
+    subprocess.Popen([str(tdir / 'terminal64.exe'), '/portable', f'/config:{cfg}'],
+                     cwd=str(tdir))
+
+
 def _spawn_worker(account_id: str, port: int) -> subprocess.Popen:
     env = {**os.environ,
            'WORKER_ACCOUNT_ID': account_id,
            'WORKER_PORT': str(port),
-           'TERMINAL_PATH': str(_terminal_dir(account_id) / 'terminal64.exe')}
+           'BRIDGE_PORT': str(port + 1000)}
     return subprocess.Popen([PYTHON, str(Path(__file__).parent / 'worker.py')], env=env)
 
 
-async def _worker_ready(port: int, timeout_s: int = 90) -> dict:
+async def _worker_ready(port: int, timeout_s: int = 160) -> dict:
     """Poll the worker until the terminal is logged in, or fail loud."""
     deadline = time.time() + timeout_s
     last: dict = {}
@@ -182,11 +191,18 @@ async def provision(request: Request):
         cfg = tdir / 'config' / 'start.ini'
         cfg.parent.mkdir(parents=True, exist_ok=True)
         cfg.write_text(
-            f"[Common]\nLogin={body['login']}\nPassword={body['password']}\nServer={body['server']}\n")
+            f"[Common]\nLogin={body['login']}\nPassword={body['password']}\nServer={body['server']}\n"
+            "[Experts]\nAllowLiveTrading=1\nEnabled=1\n"
+            "[StartUp]\nExpert=ShamarxBridge\nSymbol=EURUSD\nPeriod=M15\n")
+        # Bridge port file — the EA connects OUT to the worker's listener.
+        pf = tdir / 'MQL5' / 'Files' / 'shamarx_bridge.txt'
+        pf.parent.mkdir(parents=True, exist_ok=True)
+        pf.write_text(str(port + 1000))
 
-        # The WORKER launches the terminal via mt5.initialize() — a GUI exe
-        # Popen'd from a Session-0 service never starts.
+        # Worker FIRST (its listener must exist before the EA dials in),
+        # then the terminal.
         procs[account_id] = _spawn_worker(account_id, port)
+        _launch_terminal(account_id)
         info = await _worker_ready(port)
         registry.save()
         return {'status': 'CONNECTED', 'port': port,
@@ -216,6 +232,7 @@ async def restart(account_id: str, request: Request):
         p.kill()
     _kill_terminal(account_id)
     procs[account_id] = _spawn_worker(account_id, port)
+    _launch_terminal(account_id)
     info = await _worker_ready(port)
     return {'status': 'CONNECTED', **{k: info.get(k) for k in ('balance', 'equity')}}
 

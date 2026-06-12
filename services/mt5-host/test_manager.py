@@ -63,25 +63,20 @@ def test_capacity_verdict_scale_up_when_full_or_starved():
     assert capacity_verdict(1, 4, 2000, 400, 0.2, 2, 3)['verdict'] == 'SCALE_UP'   # disk < 5GB
 
 
-# ── worker translation helpers ────────────────────────────────────────────────
-from worker import mt5_position_to_dict, timeframe_to_mt5
+# ── worker bridge-protocol helpers ───────────────────────────────────────────
+from worker import position_row_to_dict, timeframe_check
 
 
-def test_position_translation():
-    class P:  # mimics MetaTrader5 position namedtuple
-        ticket = 111; symbol = 'EURUSD'; type = 0; volume = 0.10
-        price_open = 1.085; price_current = 1.086; sl = 1.08; tp = 1.09
-        profit = 10.0; time = 1717000000
-    d = mt5_position_to_dict(P)
+def test_position_row_translation():
+    d = position_row_to_dict('111,EURUSD,BUY,0.10,1.08500,1.08600,1.08000,1.09000,10.00,1717000000')
     assert d == {'ticket': 111, 'symbol': 'EURUSD', 'side': 'BUY', 'lotSize': 0.10,
                  'entryPrice': 1.085, 'currentPrice': 1.086, 'sl': 1.08, 'tp': 1.09,
                  'pnl': 10.0, 'openTime': '1717000000'}
 
 
-def test_timeframe_mapping():
-    assert timeframe_to_mt5('M15') == 15
-    assert timeframe_to_mt5('H1') == 16385
-    assert timeframe_to_mt5('D1') == 16408
+def test_timeframe_check():
+    assert timeframe_check('M15') == 'M15'
+    assert timeframe_check('D1') == 'D1'
     import pytest as _pytest
     with _pytest.raises(ValueError):
-        timeframe_to_mt5('M5')
+        timeframe_check('M5')
