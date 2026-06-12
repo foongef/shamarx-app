@@ -49,7 +49,13 @@ def main() -> int:
     print(f'terminal window: "{win.window_text()}" pid={pid}', flush=True)
 
     app = Application(backend='win32').connect(process=pid)
-    win.set_focus()
+    # SetForegroundWindow is gated unless the calling thread "owns" the
+    # foreground; an Alt tap releases that lock (documented workaround).
+    try:
+        send_keys('%')
+        win.set_focus()
+    except Exception as e:
+        print(f'focus best-effort: {e}', flush=True)
     time.sleep(1)
 
     # File menu -> first item starting with 'L' = "Login to Trade Account"
