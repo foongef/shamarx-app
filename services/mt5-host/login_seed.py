@@ -151,13 +151,20 @@ def main() -> int:
               ', '.join(repr(n.text()) for n in all_nodes[:12]), flush=True)
         return 3
     print(f'accounts node: "{accounts_node.text()}"', flush=True)
+    # Keyboard-only: select via TVM_SELECTITEM message (no mouse), then
+    # Shift+F10 opens the context menu for the selected item. click_input
+    # uses SetCursorPos which fails on a locked desktop.
     try:
         accounts_node.ensure_visible()
-        accounts_node.click_input()  # select first
-        time.sleep(0.4)
+        accounts_node.select()
+    except Exception as e:
+        print(f'node select best-effort: {e}', flush=True)
+    try:
+        tree.set_focus()
     except Exception:
         pass
-    accounts_node.click_input(button='right')
+    time.sleep(0.4)
+    send_keys('+{F10}')   # Shift+F10
     time.sleep(1.2)
 
     if os.getenv('STAGE') == 'menu':
@@ -235,7 +242,10 @@ def main() -> int:
                 ok = b
                 break
         if ok:
-            ok.click()
+            try:
+                ok.click()  # message-based, no cursor move
+            except Exception:
+                send_keys('{ENTER}')
             print('clicked OK', flush=True)
         else:
             send_keys('{ENTER}')
