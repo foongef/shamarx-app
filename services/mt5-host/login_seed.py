@@ -48,16 +48,27 @@ def esc_keys(text: str) -> str:
 
 
 def find_terminal(timeout_s: int = 60):
+    """The MT5 MAIN window (class 'MetaQuotes::MetaTrader::5.00'), not a child
+    dialog like the Login popup that also belongs to terminal64.exe."""
     import psutil
     deadline = time.time() + timeout_s
     while time.time() < deadline:
+        candidates = []
         for w in Desktop(backend='win32').windows():
             try:
                 exe = (psutil.Process(w.process_id()).exe() or '').lower()
-                if TERMINAL_PATH.lower() == exe and w.is_visible():
-                    return w
+                if TERMINAL_PATH.lower() != exe or not w.is_visible():
+                    continue
+                cls = w.class_name() or ''
+                if 'MetaQuotes' in cls or 'MetaTrader' in cls:
+                    return w  # the real main window class
+                candidates.append(w)
             except Exception:
                 continue
+        # fallback: longest title, excluding the "Login" dialog
+        named = [w for w in candidates if (w.window_text() or '') not in ('Login', '')]
+        if named:
+            return max(named, key=lambda w: len(w.window_text() or ''))
         time.sleep(2)
     return None
 
