@@ -163,19 +163,9 @@ def main() -> int:
             print('no context menu appeared', flush=True)
         return 0
 
-    # Context menu (#32768) → "Login to Trade Account"
-    menu = app.window(class_name='#32768')
-    if menu.exists():
-        clicked = False
-        for entry in menu.children():
-            if 'login' in (entry.window_text() or '').lower():
-                entry.click_input()
-                clicked = True
-                break
-        if not clicked:
-            send_keys('l')
-    else:
-        send_keys('l')
+    # Context menu order: [Open an Account, Login to Trade Account, ...].
+    # win32 popup items aren't text-enumerable, so select the 2nd by keyboard.
+    send_keys('{DOWN}{DOWN}{ENTER}')
     time.sleep(2)
 
     # ── Fill the login dialog (#32770) ────────────────────────────────────
@@ -190,6 +180,16 @@ def main() -> int:
         print('login dialog never appeared', flush=True)
         return 4
     print(f'dialog: "{dlg.window_text()}"', flush=True)
+
+    if os.getenv('STAGE') == 'dialog':
+        try:
+            win.capture_as_image().save(SHOT_PATH)
+            print(f'dialog screenshot: {SHOT_PATH}', flush=True)
+            print('combos=' + str(len(dlg.children(class_name='ComboBox'))) +
+                  ' edits=' + str(len(dlg.children(class_name='Edit'))), flush=True)
+        except Exception as e:
+            print('dialog probe failed:', e, flush=True)
+        return 0
 
     if os.getenv('DIALOG_SHOT') == '1':
         try:
