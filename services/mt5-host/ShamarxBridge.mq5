@@ -45,6 +45,9 @@ void EnsureConnected()
    if(sock == INVALID_HANDLE) return;
    if(!SocketConnect(sock, "127.0.0.1", bridgePort, 2000))
    {
+      static int lastErr = -1;
+      int err = GetLastError();
+      if(err != lastErr) { Print("bridge: SocketConnect failed, error ", err); lastErr = err; }
       SocketClose(sock);
       sock = INVALID_HANDLE;
    }
