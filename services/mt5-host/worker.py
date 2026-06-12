@@ -107,6 +107,7 @@ def _init_watch():
             ea_seen = True
             try:
                 f = bridge.call('account', timeout=5).split('|')
+                print(f'[worker {ACCOUNT_ID}] poll conn={f[0]} login={f[1]}', flush=True)
                 if f[0] == '1' and int(f[1]) > 0:
                     state.update(state='CONNECTED')
                     print(f'[worker {ACCOUNT_ID}] CONNECTED login={f[1]}', flush=True)
