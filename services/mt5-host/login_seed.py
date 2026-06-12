@@ -106,6 +106,11 @@ def main() -> int:
     password = os.environ['SEED_PASSWORD']
     server = os.environ['SEED_SERVER']
 
+    # Already logged into the target account? (title carries the login number)
+    if login in (win.window_text() or ''):
+        print('already logged into target account', flush=True)
+        return 0
+
     # Navigator is already open by default. The Navigator is a SysTreeView32
     # whose roots include an "Accounts" node.
     tree = None
