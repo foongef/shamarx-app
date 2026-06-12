@@ -143,15 +143,22 @@ def _seed_login(account_id: str, login: str, password: str, server: str) -> None
            'TERMINAL_PATH': str(tdir / 'terminal64.exe'),
            'SEED_LOGIN': str(login), 'SEED_PASSWORD': str(password),
            'SEED_SERVER': str(server)}
-    # give the terminal a moment to present its main window first
-    time.sleep(25)
-    try:
-        r = subprocess.run([PYTHON, str(Path(__file__).parent / 'login_seed.py')],
-                           env=env, timeout=120, capture_output=True, text=True)
-        print(f'[{account_id}] login_seed rc={r.returncode} {r.stdout.strip()[-200:]}',
-              flush=True)
-    except subprocess.TimeoutExpired:
-        print(f'[{account_id}] login_seed timed out', flush=True)
+    # give the terminal time to present its main window (fresh first-launch
+    # compiles the EA — ~90s); then run the GUI login, retrying once.
+    time.sleep(40)
+    log = ROOT / f'login_seed_{account_id}.log'
+    for attempt in range(2):
+        try:
+            r = subprocess.run([PYTHON, str(Path(__file__).parent / 'login_seed.py')],
+                               env=env, timeout=120, capture_output=True, text=True)
+            log.write_text(f'attempt {attempt} rc={r.returncode}\n'
+                           f'STDOUT:\n{r.stdout}\nSTDERR:\n{r.stderr}\n')
+            print(f'[{account_id}] login_seed attempt {attempt} rc={r.returncode}', flush=True)
+            if r.returncode == 0:
+                return
+        except subprocess.TimeoutExpired:
+            print(f'[{account_id}] login_seed timed out (attempt {attempt})', flush=True)
+        time.sleep(8)
 
 
 def _spawn_worker(account_id: str, port: int) -> subprocess.Popen:
