@@ -95,11 +95,8 @@ def main() -> int:
     password = os.environ['SEED_PASSWORD']
     server = os.environ['SEED_SERVER']
 
-    # Ctrl+N toggles the Navigator panel; ensure it's open.
-    send_keys('^n')
-    time.sleep(1.5)
-
-    # The Navigator is a SysTreeView32. Top node is "Accounts".
+    # Navigator is already open by default. The Navigator is a SysTreeView32
+    # whose roots include an "Accounts" node.
     tree = None
     for child in win.descendants():
         try:
@@ -131,6 +128,20 @@ def main() -> int:
     print(f'accounts node: "{accounts_node.text()}"', flush=True)
     accounts_node.click_input(button='right')
     time.sleep(1.2)
+
+    if os.getenv('STAGE') == 'menu':
+        menu = app.window(class_name='#32768')
+        if menu.exists():
+            for entry in menu.children():
+                print('MENUITEM:', repr(entry.window_text()), flush=True)
+            try:
+                win.capture_as_image().save(SHOT_PATH)
+                print(f'menu screenshot: {SHOT_PATH}', flush=True)
+            except Exception:
+                pass
+        else:
+            print('no context menu appeared', flush=True)
+        return 0
 
     # Context menu (#32768) → "Login to Trade Account"
     menu = app.window(class_name='#32768')
