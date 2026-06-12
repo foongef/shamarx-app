@@ -14,17 +14,17 @@ works there) with start.ini auto-login + [StartUp] Expert=ShamarxBridge.
 from __future__ import annotations
 
 import os
-import socket
 import threading
 import time
 import uuid
+from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException
 
 ACCOUNT_ID = os.getenv('WORKER_ACCOUNT_ID', '')
 PORT = int(os.getenv('WORKER_PORT', '9100'))
-BRIDGE_PORT = int(os.getenv('BRIDGE_PORT', str(PORT + 1000)))
+FILES_DIR = Path(os.getenv("TERMINAL_DIR", ".")) / "MQL5" / "Files"
 
 app = FastAPI()
 state = {'state': 'INITIALIZING', 'error': None}
@@ -48,88 +48,53 @@ def position_row_to_dict(row: str) -> dict:
     }
 
 
-class Bridge:
-    """Single-EA socket server with request/response correlation."""
+class FileBridge:
+    """Request/response over the terminal's MQL5\\Files sandbox.
 
-    def __init__(self, port: int):
-        self.port = port
-        self.conn: Optional[socket.socket] = None
+    SocketConnect is blocked headless (4014: destination whitelist is
+    GUI-only), so the EA polls shamarx_req.txt every 200ms and answers in
+    shamarx_resp.txt. One in-flight request at a time, serialized here -
+    ample for M15 cadence + 2s position polls.
+    """
+
+    def __init__(self, files_dir: Path):
+        self.dir = files_dir
+        self.req = files_dir / "shamarx_req.txt"
+        self.resp = files_dir / "shamarx_resp.txt"
+        self.alive = files_dir / "shamarx_alive.txt"
         self.lock = threading.Lock()
-        self.pending: dict[str, list] = {}   # id -> [event, response]
-        self.buf = b''
-        threading.Thread(target=self._serve, daemon=True).start()
-
-    def _serve(self):
-        srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        srv.bind(('127.0.0.1', self.port))
-        srv.listen(1)
-        print(f'[worker {ACCOUNT_ID}] bridge listening on 127.0.0.1:{self.port}', flush=True)
-        while True:
-            conn, _ = srv.accept()
-            print(f'[worker {ACCOUNT_ID}] EA connected', flush=True)
-            with self.lock:
-                if self.conn:
-                    try:
-                        self.conn.close()
-                    except OSError:
-                        pass
-                self.conn = conn
-                self.buf = b''
-            self._reader(conn)
-
-    def _reader(self, conn: socket.socket):
-        try:
-            while True:
-                data = conn.recv(65536)
-                if not data:
-                    break
-                self.buf += data
-                while b'\n' in self.buf:
-                    line, self.buf = self.buf.split(b'\n', 1)
-                    self._dispatch(line.decode('utf-8', 'replace').strip())
-        except OSError:
-            pass
-        print(f'[worker {ACCOUNT_ID}] EA disconnected', flush=True)
-        with self.lock:
-            if self.conn is conn:
-                self.conn = None
-
-    def _dispatch(self, line: str):
-        rid, _, rest = line.partition('|')
-        waiter = self.pending.get(rid)
-        if waiter:
-            waiter[1] = rest
-            waiter[0].set()
 
     @property
     def connected(self) -> bool:
-        return self.conn is not None
+        return self.alive.exists()
 
     def call(self, op: str, *args: str, timeout: float = 15.0) -> str:
-        """Returns the response payload after 'ok|'; raises on err/timeout."""
         with self.lock:
-            conn = self.conn
-        if conn is None:
-            raise ConnectionError('EA not connected')
-        rid = uuid.uuid4().hex[:8]
-        ev = threading.Event()
-        self.pending[rid] = [ev, None]
-        msg = '|'.join([rid, op, *args]) + '\n'
-        try:
-            conn.sendall(msg.encode('utf-8'))
-            if not ev.wait(timeout):
-                raise TimeoutError(f'bridge op {op} timed out after {timeout}s')
-            resp = self.pending[rid][1] or ''
-        finally:
-            self.pending.pop(rid, None)
-        status, _, payload = resp.partition('|')
-        if status != 'ok':
-            raise RuntimeError(f'bridge op {op} failed: {payload or resp}')
-        return payload
+            rid = uuid.uuid4().hex[:8]
+            self.resp.unlink(missing_ok=True)
+            self.dir.mkdir(parents=True, exist_ok=True)
+            tmp = self.req.with_suffix(".tmp")
+            tmp.write_text("|".join([rid, op, *args]) + "\n", encoding="utf-8")
+            os.replace(tmp, self.req)
+            deadline = time.time() + timeout
+            while time.time() < deadline:
+                try:
+                    raw = self.resp.read_text(encoding="utf-8", errors="replace").strip()
+                except (FileNotFoundError, PermissionError):
+                    time.sleep(0.05)
+                    continue
+                if not raw.startswith(rid + "|"):
+                    time.sleep(0.05)
+                    continue
+                _, _, rest = raw.partition("|")
+                status, _, payload = rest.partition("|")
+                if status != "ok":
+                    raise RuntimeError(f"bridge op {op} failed: {payload or rest}")
+                return payload
+            raise TimeoutError(f"bridge op {op} timed out after {timeout}s")
 
 
-bridge = Bridge(BRIDGE_PORT)
+bridge = FileBridge(FILES_DIR)
 
 
 def _init_watch():
@@ -146,7 +111,7 @@ def _init_watch():
                     state.update(state='CONNECTED')
                     print(f'[worker {ACCOUNT_ID}] CONNECTED login={f[1]}', flush=True)
                     return
-            except (ConnectionError, TimeoutError, RuntimeError) as e:
+            except (OSError, TimeoutError, RuntimeError) as e:
                 print(f'[worker {ACCOUNT_ID}] account poll: {e}', flush=True)
         time.sleep(3)
     state.update(
@@ -167,7 +132,7 @@ def init_status():
         try:
             f = bridge.call('account', timeout=5).split('|')
             body.update(balance=float(f[2]), equity=float(f[3]))
-        except (ConnectionError, TimeoutError, RuntimeError):
+        except (OSError, TimeoutError, RuntimeError):
             pass
     return body
 

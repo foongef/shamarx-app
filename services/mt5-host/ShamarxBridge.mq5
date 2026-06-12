@@ -1,10 +1,9 @@
 //+------------------------------------------------------------------+
 //| ShamarxBridge.mq5 — in-terminal bridge for MT5 Direct (Spec 4)   |
 //|                                                                  |
-//| Connects OUT to the worker's local listener (MQL5 sockets are    |
-//| client-only) and serves trading verbs over a pipe-delimited      |
-//| line protocol. Port comes from MQL5\Files\shamarx_bridge.txt,    |
-//| written by the terminal-manager at provision time.               |
+//| File transport via the MQL5\Files sandbox (SocketConnect is      |
+//| gated behind a GUI-only whitelist - error 4014 headless).        |
+//| Worker writes shamarx_req.txt; EA answers in shamarx_resp.txt.   |
 //|                                                                  |
 //| Request : <id>|<op>|<args...>\n                                  |
 //| Response: <id>|ok|<fields...>\n  or  <id>|err|<message>\n        |
@@ -13,78 +12,49 @@
 #include <Trade\Trade.mqh>
 
 CTrade  trade;
-int     sock = INVALID_HANDLE;
-int     bridgePort = 0;
-string  rxBuf = "";
+string  lastId = "";
 
 //+------------------------------------------------------------------+
 int OnInit()
 {
-   int fh = FileOpen("shamarx_bridge.txt", FILE_READ|FILE_TXT|FILE_ANSI);
-   if(fh == INVALID_HANDLE) { Print("bridge: port file missing"); return INIT_FAILED; }
-   bridgePort = (int)StringToInteger(FileReadString(fh));
-   FileClose(fh);
    trade.SetDeviationInPoints(20);
-   EventSetMillisecondTimer(250);
-   Print("bridge: init, will connect to 127.0.0.1:", bridgePort);
+   EventSetMillisecondTimer(200);
+   Print("bridge: init (file transport)");
+   // presence marker so the worker can detect the EA before first request
+   int fh = FileOpen("shamarx_alive.txt", FILE_WRITE|FILE_TXT|FILE_ANSI);
+   if(fh != INVALID_HANDLE) { FileWriteString(fh, "1"); FileClose(fh); }
    return INIT_SUCCEEDED;
 }
 
 void OnDeinit(const int reason)
 {
    EventKillTimer();
-   if(sock != INVALID_HANDLE) SocketClose(sock);
-}
-
-//+------------------------------------------------------------------+
-void EnsureConnected()
-{
-   if(sock != INVALID_HANDLE && SocketIsConnected(sock)) return;
-   if(sock != INVALID_HANDLE) SocketClose(sock);
-   sock = SocketCreate();
-   if(sock == INVALID_HANDLE) return;
-   if(!SocketConnect(sock, "127.0.0.1", bridgePort, 2000))
-   {
-      static int lastErr = -1;
-      int err = GetLastError();
-      if(err != lastErr) { Print("bridge: SocketConnect failed, error ", err); lastErr = err; }
-      SocketClose(sock);
-      sock = INVALID_HANDLE;
-   }
-   else
-      Print("bridge: connected to worker");
 }
 
 void Send(const string line)
 {
-   if(sock == INVALID_HANDLE) return;
-   string out = line + "\n";
-   uchar bytes[];
-   int len = StringToCharArray(out, bytes, 0, WHOLE_ARRAY, CP_UTF8) - 1;
-   SocketSend(sock, bytes, len);
+   FileDelete("shamarx_resp.txt");
+   int fh = FileOpen("shamarx_resp.txt", FILE_WRITE|FILE_TXT|FILE_ANSI);
+   if(fh == INVALID_HANDLE) { Print("bridge: resp write failed ", GetLastError()); return; }
+   FileWriteString(fh, line);
+   FileClose(fh);
 }
 
 //+------------------------------------------------------------------+
 void OnTimer()
 {
-   EnsureConnected();
-   if(sock == INVALID_HANDLE) return;
-
-   uint avail = SocketIsReadable(sock);
-   if(avail > 0)
-   {
-      uchar bytes[];
-      int got = SocketRead(sock, bytes, avail, 100);
-      if(got > 0) rxBuf += CharArrayToString(bytes, 0, got, CP_UTF8);
-   }
-   int nl;
-   while((nl = StringFind(rxBuf, "\n")) >= 0)
-   {
-      string line = StringSubstr(rxBuf, 0, nl);
-      rxBuf = StringSubstr(rxBuf, nl + 1);
-      StringTrimRight(line);
-      if(StringLen(line) > 0) Handle(line);
-   }
+   int fh = FileOpen("shamarx_req.txt", FILE_READ|FILE_TXT|FILE_ANSI|FILE_SHARE_READ|FILE_SHARE_WRITE);
+   if(fh == INVALID_HANDLE) return;
+   string line = FileReadString(fh);
+   FileClose(fh);
+   StringTrimRight(line);
+   if(StringLen(line) == 0) return;
+   int sep = StringFind(line, "|");
+   if(sep <= 0) return;
+   string rid = StringSubstr(line, 0, sep);
+   if(rid == lastId) return;
+   lastId = rid;
+   Handle(line);
 }
 
 //+------------------------------------------------------------------+

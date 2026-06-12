@@ -139,7 +139,7 @@ def _spawn_worker(account_id: str, port: int) -> subprocess.Popen:
     env = {**os.environ,
            'WORKER_ACCOUNT_ID': account_id,
            'WORKER_PORT': str(port),
-           'BRIDGE_PORT': str(port + 1000)}
+           'TERMINAL_DIR': str(_terminal_dir(account_id))}
     return subprocess.Popen([PYTHON, str(Path(__file__).parent / 'worker.py')], env=env)
 
 
@@ -194,11 +194,6 @@ async def provision(request: Request):
             f"[Common]\nLogin={body['login']}\nPassword={body['password']}\nServer={body['server']}\n"
             "[Experts]\nAllowLiveTrading=1\nEnabled=1\n"
             "[StartUp]\nExpert=ShamarxBridge\nSymbol=EURUSD\nPeriod=M15\n")
-        # Bridge port file — the EA connects OUT to the worker's listener.
-        pf = tdir / 'MQL5' / 'Files' / 'shamarx_bridge.txt'
-        pf.parent.mkdir(parents=True, exist_ok=True)
-        pf.write_text(str(port + 1000))
-
         # Worker FIRST (its listener must exist before the EA dials in),
         # then the terminal.
         procs[account_id] = _spawn_worker(account_id, port)
