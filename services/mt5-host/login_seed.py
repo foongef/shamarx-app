@@ -151,21 +151,24 @@ def main() -> int:
               ', '.join(repr(n.text()) for n in all_nodes[:12]), flush=True)
         return 3
     print(f'accounts node: "{accounts_node.text()}"', flush=True)
-    # Keyboard-only: select via TVM_SELECTITEM message (no mouse), then
-    # Shift+F10 opens the context menu for the selected item. click_input
-    # uses SetCursorPos which fails on a locked desktop.
+    # FULLY MESSAGE-BASED (display-less EC2 has no input desktop, so
+    # SendInput/SetCursorPos fail). TVM_SELECTITEM selects the node; then
+    # PostMessage WM_KEYDOWN/UP VK_RETURN to the tree triggers its default
+    # action = "Login to Trade Account" (Enter accelerator on a selected
+    # Accounts node).
+    import win32gui, win32con
+    TVM_SELECTITEM = 0x110B
+    TVGN_CARET = 0x0009
     try:
-        accounts_node.ensure_visible()
-        accounts_node.select()
+        h_tree = tree.handle
+        h_item = accounts_node.elem if hasattr(accounts_node, 'elem') else None
+        if h_item:
+            win32gui.SendMessage(h_tree, TVM_SELECTITEM, TVGN_CARET, h_item)
+        win32gui.PostMessage(h_tree, win32con.WM_KEYDOWN, win32con.VK_RETURN, 0)
+        win32gui.PostMessage(h_tree, win32con.WM_KEYUP, win32con.VK_RETURN, 0)
     except Exception as e:
-        print(f'node select best-effort: {e}', flush=True)
-    try:
-        tree.set_focus()
-    except Exception:
-        pass
-    time.sleep(0.4)
-    send_keys('+{F10}')   # Shift+F10
-    time.sleep(1.2)
+        print(f'message select/enter failed: {e}', flush=True)
+    time.sleep(1.5)
 
     if os.getenv('STAGE') == 'menu':
         menu = app.window(class_name='#32768')
@@ -217,16 +220,24 @@ def main() -> int:
             pass
 
     try:
+        import win32gui, win32con
         combos = dlg.children(class_name='ComboBox')
         edits = dlg.children(class_name='Edit')
+        def set_combo_text(combo, value):
+            # the editable part of a ComboBox is a child Edit
+            for c in combo.children():
+                if c.class_name() == 'Edit':
+                    win32gui.SendMessage(c.handle, win32con.WM_SETTEXT, 0, value)
+                    return
+            win32gui.SendMessage(combo.handle, win32con.WM_SETTEXT, 0, value)
         if combos:
-            combos[0].set_focus(); send_keys('^a{DEL}'); send_keys(esc_keys(login))
+            set_combo_text(combos[0], login)
         std_edits = [e for e in edits if e.parent().class_name() == '#32770']
         pw_edit = std_edits[0] if std_edits else (edits[0] if edits else None)
         if pw_edit:
-            pw_edit.set_focus(); send_keys('^a{DEL}'); send_keys(esc_keys(password))
+            win32gui.SendMessage(pw_edit.handle, win32con.WM_SETTEXT, 0, password)
         if len(combos) > 1:
-            combos[1].set_focus(); send_keys('^a{DEL}'); send_keys(esc_keys(server))
+            set_combo_text(combos[1], server)
         for cb in dlg.children(class_name='Button'):
             if 'save' in (cb.window_text() or '').lower():
                 try:
