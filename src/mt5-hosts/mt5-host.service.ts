@@ -70,7 +70,7 @@ export class Mt5HostService {
         this.http.post(
           `${this.baseUrl(host)}/terminals`,
           { accountId, ...creds },
-          { headers: this.headers(), timeout: 120_000 },
+          { headers: this.headers(), timeout: 240_000 },
         ),
       );
       await this.prisma.brokerAccount.update({
