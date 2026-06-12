@@ -156,51 +156,39 @@ def main() -> int:
         return 3
     print(f'accounts node: "{accounts_node.text()}"', flush=True)
     # FULLY MESSAGE-BASED (display-less EC2 has no input desktop, so
-    # SendInput/SetCursorPos fail). TVM_SELECTITEM selects the node; then
-    # PostMessage WM_KEYDOWN/UP VK_RETURN to the tree triggers its default
-    # action = "Login to Trade Account" (Enter accelerator on a selected
-    # Accounts node).
+    # SendInput/SetCursorPos fail). TVM_SELECTITEM selects the node; Enter
+    # posted to the tree triggers its default action = "Login to Trade
+    # Account" (the [Common] preload gives the Accounts node that default).
+    # The message-Enter is flaky, so retry until the Login dialog appears.
     import win32gui, win32con
     TVM_SELECTITEM = 0x110B
     TVGN_CARET = 0x0009
-    try:
-        h_tree = tree.handle
-        h_item = accounts_node.elem if hasattr(accounts_node, 'elem') else None
-        if h_item:
-            win32gui.SendMessage(h_tree, TVM_SELECTITEM, TVGN_CARET, h_item)
-        win32gui.PostMessage(h_tree, win32con.WM_KEYDOWN, win32con.VK_RETURN, 0)
-        win32gui.PostMessage(h_tree, win32con.WM_KEYUP, win32con.VK_RETURN, 0)
-    except Exception as e:
-        print(f'message select/enter failed: {e}', flush=True)
-    time.sleep(1.5)
+    h_tree = tree.handle
+    h_item = accounts_node.elem if hasattr(accounts_node, 'elem') else None
 
-    if os.getenv('STAGE') == 'menu':
-        menu = app.window(class_name='#32768')
-        if menu.exists():
-            for entry in menu.children():
-                print('MENUITEM:', repr(entry.window_text()), flush=True)
-            try:
-                win.capture_as_image().save(SHOT_PATH)
-                print(f'menu screenshot: {SHOT_PATH}', flush=True)
-            except Exception:
-                pass
-        else:
-            print('no context menu appeared', flush=True)
-        return 0
+    def fire_enter():
+        try:
+            if h_item:
+                win32gui.SendMessage(h_tree, TVM_SELECTITEM, TVGN_CARET, h_item)
+            win32gui.SendMessage(h_tree, win32con.WM_SETFOCUS, 0, 0)
+            win32gui.PostMessage(h_tree, win32con.WM_KEYDOWN, win32con.VK_RETURN, 0)
+            win32gui.PostMessage(h_tree, win32con.WM_KEYUP, win32con.VK_RETURN, 0)
+        except Exception as e:
+            print(f'fire_enter: {e}', flush=True)
 
-    # Context menu order: [Open an Account, Login to Trade Account, ...].
-    # win32 popup items aren't text-enumerable, so select the 2nd by keyboard.
-    send_keys('{DOWN}{DOWN}{ENTER}')
-    time.sleep(2)
-
-    # ── Fill the login dialog (#32770) ────────────────────────────────────
+    # ── Open + detect the login dialog (#32770), retrying the flaky Enter ──
     dlg = None
-    for _ in range(8):
-        d = app.window(class_name='#32770')
-        if d.exists() and d.is_visible():
-            dlg = d
+    for attempt in range(8):
+        fire_enter()
+        for _ in range(4):
+            d = app.window(class_name='#32770')
+            if d.exists() and d.is_visible() and (d.window_text() or '') == 'Login':
+                dlg = d
+                break
+            time.sleep(1)
+        if dlg:
+            print(f'login dialog opened (try {attempt})', flush=True)
             break
-        time.sleep(1)
     if dlg is None:
         print('login dialog never appeared', flush=True)
         return 4
