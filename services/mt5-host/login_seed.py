@@ -114,18 +114,38 @@ def main() -> int:
         tree.set_focus()
     except Exception:
         pass
-    items = tree.roots() if hasattr(tree, 'roots') else []
+    # Walk the tree: roots + their children. "Accounts" is a child of the
+    # "MetaTrader 5" root.
+    def walk(nodes):
+        for n in nodes:
+            yield n
+            try:
+                yield from walk(n.children())
+            except Exception:
+                pass
     accounts_node = None
-    for it in items:
-        if 'account' in (it.text() or '').lower():
-            accounts_node = it
-            break
-    if accounts_node is None and items:
-        accounts_node = items[0]
+    try:
+        all_nodes = list(walk(tree.roots()))
+    except Exception:
+        all_nodes = tree.roots()
+    for it in all_nodes:
+        try:
+            if (it.text() or '').strip().lower() == 'accounts':
+                accounts_node = it
+                break
+        except Exception:
+            continue
     if accounts_node is None:
-        print('accounts node not found in navigator', flush=True)
+        print('accounts node not found; tree was: ' +
+              ', '.join(repr(n.text()) for n in all_nodes[:12]), flush=True)
         return 3
     print(f'accounts node: "{accounts_node.text()}"', flush=True)
+    try:
+        accounts_node.ensure_visible()
+        accounts_node.click_input()  # select first
+        time.sleep(0.4)
+    except Exception:
+        pass
     accounts_node.click_input(button='right')
     time.sleep(1.2)
 
