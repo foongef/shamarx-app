@@ -214,11 +214,28 @@ def main() -> int:
                 try:
                     if cb.get_check_state() == 0:
                         cb.click()
+                        print('ticked Save password', flush=True)
                 except Exception:
                     pass
         time.sleep(0.5)
-        send_keys('{ENTER}')
-        print('dialog submitted', flush=True)
+        ok = None
+        for b in dlg.children(class_name='Button'):
+            if (b.window_text() or '').strip().lower() in ('ok', '&ok'):
+                ok = b
+                break
+        if ok:
+            ok.click()
+            print('clicked OK', flush=True)
+        else:
+            send_keys('{ENTER}')
+            print('pressed ENTER (no OK button found)', flush=True)
+        time.sleep(8)
+        if os.getenv('RESULT_SHOT') == '1':
+            try:
+                win.capture_as_image().save(SHOT_PATH)
+                print('result screenshot saved', flush=True)
+            except Exception:
+                pass
         return 0
     except Exception as e:
         print(f'control interaction failed: {e}', flush=True)
