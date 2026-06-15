@@ -26,9 +26,11 @@ SYMBOL_ALIASES = {
 }
 
 
-async def _async_post_form(url: str, data: Dict[str, str]) -> httpx.Response:
+async def _async_token_request(url: str, params: Dict[str, str]) -> httpx.Response:
+    # cTrader's token endpoint is a GET with query-string params (non-standard
+    # OAuth2) — a POST form body yields HTTP 400.
     async with httpx.AsyncClient(timeout=10.0) as client:
-        return await client.post(url, data=data)
+        return await client.get(url, params=params)
 
 
 def make_token_refresh_callback(account_id: str) -> Callable[[Dict[str, Any]], Awaitable[None]]:
@@ -347,7 +349,7 @@ class CTraderClient(Broker):
         token_url = os.getenv('CTRADER_TOKEN_URL', 'https://openapi.ctrader.com/apps/token')
         if not client_id or not client_secret:
             raise RuntimeError('CTRADER_CLIENT_ID/SECRET required for refresh')
-        res = await _async_post_form(token_url, {
+        res = await _async_token_request(token_url, {
             'grant_type': 'refresh_token',
             'refresh_token': self.refresh_token,
             'client_id': client_id,

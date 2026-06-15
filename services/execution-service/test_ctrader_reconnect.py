@@ -73,13 +73,13 @@ async def test_refresh_token_persists_via_callback(monkeypatch):
         def raise_for_status(self):
             pass
 
-    async def fake_post(url, data=None):
+    async def fake_get(url, params=None):
         return FakeResp()
 
     monkeypatch.setenv('CTRADER_CLIENT_ID', 'cid')
     monkeypatch.setenv('CTRADER_CLIENT_SECRET', 'csec')
     monkeypatch.setenv('CTRADER_TOKEN_URL', 'https://x/token')
-    monkeypatch.setattr('ctrader_client._async_post_form', fake_post)
+    monkeypatch.setattr('ctrader_client._async_token_request', fake_get)
 
     await c._refresh_token()
     assert c.access_token == 'new'

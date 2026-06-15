@@ -3,6 +3,7 @@ import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
 import { RedisService } from '@app/redis';
 import { firstValueFrom } from 'rxjs';
+import { AxiosError } from 'axios';
 import { randomBytes } from 'crypto';
 import { BrokerAccountsService } from '../broker-accounts.service';
 
@@ -134,22 +135,38 @@ export class BrokerOAuthService {
 
   private async exchangeCodeForTokens(code: string): Promise<{ accessToken: string; refreshToken: string; expiresAt: number }> {
     const tokenUrl = this.config.get<string>('CTRADER_TOKEN_URL') ?? 'https://openapi.ctrader.com/apps/token';
-    const res = await firstValueFrom(
-      this.http.post<{ accessToken: string; refreshToken: string; expiresIn: number }>(
-        tokenUrl,
-        new URLSearchParams({
-          grant_type: 'authorization_code',
-          code,
-          redirect_uri: this.config.getOrThrow<string>('CTRADER_REDIRECT_URI'),
-          client_id: this.config.getOrThrow<string>('CTRADER_CLIENT_ID'),
-          client_secret: this.config.getOrThrow<string>('CTRADER_CLIENT_SECRET'),
-        }).toString(),
-        { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } },
-      ),
-    );
+    // cTrader's token endpoint is a GET with query-string params — NOT a POST
+    // form body (non-standard OAuth2). A body request yields 400 because the
+    // required params never reach the server as query string.
+    let res;
+    try {
+      res = await firstValueFrom(
+        this.http.get<{ accessToken?: string; refreshToken?: string; expiresIn?: number; errorCode?: string; description?: string }>(
+          tokenUrl,
+          {
+            params: {
+              grant_type: 'authorization_code',
+              code,
+              redirect_uri: this.config.getOrThrow<string>('CTRADER_REDIRECT_URI'),
+              client_id: this.config.getOrThrow<string>('CTRADER_CLIENT_ID'),
+              client_secret: this.config.getOrThrow<string>('CTRADER_CLIENT_SECRET'),
+            },
+          },
+        ),
+      );
+    } catch (e) {
+      const body = (e as AxiosError)?.response?.data;
+      this.logger.error(`cTrader token exchange failed: ${body ? JSON.stringify(body) : (e as Error).message}`);
+      throw new BadRequestException('cTrader rejected the authorization code — please retry the connect.');
+    }
+    // cTrader can also return 200 with an error envelope rather than an HTTP error.
+    if (res.data.errorCode || !res.data.accessToken) {
+      this.logger.error(`cTrader token error: ${res.data.errorCode ?? 'no accessToken'} ${res.data.description ?? ''}`);
+      throw new BadRequestException(`cTrader: ${res.data.description ?? res.data.errorCode ?? 'token exchange failed'}`);
+    }
     return {
       accessToken: res.data.accessToken,
-      refreshToken: res.data.refreshToken,
+      refreshToken: res.data.refreshToken as string,
       expiresAt: Math.floor(Date.now() / 1000) + Number(res.data.expiresIn),
     };
   }

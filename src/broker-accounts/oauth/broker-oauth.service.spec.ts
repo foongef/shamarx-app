@@ -75,15 +75,17 @@ describe('BrokerOAuthService', () => {
 
     it('exchanges code, fetches accounts, stores session (TTL 1800), deletes state', async () => {
       await redis.set('oauth:ct:state:S1', JSON.stringify({ userId: 'u1' }), 600);
-      http.post.mockReturnValue(of({
-        data: { accessToken: 'AT', refreshToken: 'RT', expiresIn: 3600 },
-      }));
-      http.get.mockReturnValue(of({
-        data: { data: [
-          { ctidTraderAccountId: 1, accountNumber: '111', live: false, brokerName: 'IC' },
-          { ctidTraderAccountId: 2, accountNumber: '222', live: true, brokerName: 'IC' },
-        ]},
-      }));
+      // cTrader token exchange + accounts fetch are BOTH GETs, in that order.
+      http.get
+        .mockReturnValueOnce(of({
+          data: { accessToken: 'AT', refreshToken: 'RT', expiresIn: 3600 },
+        }))
+        .mockReturnValueOnce(of({
+          data: { data: [
+            { ctidTraderAccountId: 1, accountNumber: '111', live: false, brokerName: 'IC' },
+            { ctidTraderAccountId: 2, accountNumber: '222', live: true, brokerName: 'IC' },
+          ]},
+        }));
 
       const { sessionId, accounts: list } = await svc.handleCallback('CODE', 'S1');
 
