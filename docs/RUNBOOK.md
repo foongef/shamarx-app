@@ -576,7 +576,7 @@ delegates auth to Spotware.
 2. **Apps → Add new application**.
 3. Settings:
    - **Name:** Shamarx
-   - **Redirect URI (prod):** `https://app.shamarx.com/oauth/ctrader/callback`
+   - **Redirect URI (prod):** `https://shamarx.com/oauth/ctrader/callback`
    - **Redirect URI (dev):** `http://localhost:3000/oauth/ctrader/callback`
    - **Scopes:** `trading`, `accounts`
 4. Save the **Client ID** and **Client Secret**. Put them in AWS Secrets Manager:

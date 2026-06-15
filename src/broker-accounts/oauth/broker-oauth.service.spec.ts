@@ -37,7 +37,7 @@ describe('BrokerOAuthService', () => {
       getOrThrow: jest.fn((k: string) => ({
         CTRADER_CLIENT_ID: 'cid',
         CTRADER_CLIENT_SECRET: 'csec',
-        CTRADER_REDIRECT_URI: 'https://app.shamarx.com/oauth/ctrader/callback',
+        CTRADER_REDIRECT_URI: 'https://shamarx.com/oauth/ctrader/callback',
       } as Record<string, string>)[k]),
     };
 

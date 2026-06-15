@@ -47,7 +47,7 @@ describe('cTrader OAuth (e2e)', () => {
           load: [() => ({
             CTRADER_CLIENT_ID: 'cid',
             CTRADER_CLIENT_SECRET: 'csec',
-            CTRADER_REDIRECT_URI: 'https://app.shamarx.com/oauth/ctrader/callback',
+            CTRADER_REDIRECT_URI: 'https://shamarx.com/oauth/ctrader/callback',
             CTRADER_AUTH_BASE_URL: 'https://connect.spotware.com',
             CTRADER_TOKEN_URL: 'https://openapi.ctrader.com/apps/token',
             CTRADER_ACCOUNTS_URL: 'https://api.spotware.com/connect/tradingaccounts',
