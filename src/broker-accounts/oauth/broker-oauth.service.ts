@@ -173,11 +173,20 @@ export class BrokerOAuthService {
 
   private async fetchTradingAccounts(accessToken: string): Promise<SpotwareAccount[]> {
     const accountsUrl = this.config.get<string>('CTRADER_ACCOUNTS_URL') ?? 'https://api.spotware.com/connect/tradingaccounts';
-    const res = await firstValueFrom(
-      this.http.get<{ data: SpotwareAccount[] }>(accountsUrl, {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      }),
-    );
+    // Spotware's Connect REST API authenticates via an `oauth_token` query
+    // param — NOT an Authorization: Bearer header (which yields 400).
+    let res;
+    try {
+      res = await firstValueFrom(
+        this.http.get<{ data: SpotwareAccount[] }>(accountsUrl, {
+          params: { oauth_token: accessToken },
+        }),
+      );
+    } catch (e) {
+      const body = (e as AxiosError)?.response?.data;
+      this.logger.error(`cTrader account list failed: ${body ? JSON.stringify(body) : (e as Error).message}`);
+      throw new BadRequestException('cTrader authorized but returned no account list — please retry.');
+    }
     return res.data.data ?? [];
   }
 }
