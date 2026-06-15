@@ -178,7 +178,7 @@ export class BrokerOAuthService {
     let res;
     try {
       res = await firstValueFrom(
-        this.http.get<{ data: SpotwareAccount[] }>(accountsUrl, {
+        this.http.get<{ data: Array<SpotwareAccount & { accountId?: number }> }>(accountsUrl, {
           params: { oauth_token: accessToken },
         }),
       );
@@ -187,6 +187,13 @@ export class BrokerOAuthService {
       this.logger.error(`cTrader account list failed: ${body ? JSON.stringify(body) : (e as Error).message}`);
       throw new BadRequestException('cTrader authorized but returned no account list — please retry.');
     }
-    return res.data.data ?? [];
+    // Spotware's Connect REST names the unique id `accountId`; the rest of the
+    // system (selection key, finalize, ProtoBuf account auth) keys on
+    // `ctidTraderAccountId`. They are the same Spotware concept — normalize it
+    // here so a missing field doesn't collapse every row to undefined.
+    return (res.data.data ?? []).map((a) => ({
+      ...a,
+      ctidTraderAccountId: a.ctidTraderAccountId ?? (a.accountId as number),
+    }));
   }
 }

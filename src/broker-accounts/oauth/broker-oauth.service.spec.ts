@@ -81,15 +81,19 @@ describe('BrokerOAuthService', () => {
           data: { accessToken: 'AT', refreshToken: 'RT', expiresIn: 3600 },
         }))
         .mockReturnValueOnce(of({
+          // Real Spotware Connect REST shape: id is `accountId`, NOT ctidTraderAccountId.
           data: { data: [
-            { ctidTraderAccountId: 1, accountNumber: '111', live: false, brokerName: 'IC' },
-            { ctidTraderAccountId: 2, accountNumber: '222', live: true, brokerName: 'IC' },
+            { accountId: 101, accountNumber: '111', live: false, brokerName: 'IC' },
+            { accountId: 202, accountNumber: '222', live: true, brokerName: 'IC' },
           ]},
         }));
 
       const { sessionId, accounts: list } = await svc.handleCallback('CODE', 'S1');
 
       expect(list).toHaveLength(2);
+      // accountId is normalized to ctidTraderAccountId so selection/finalize work.
+      expect(list[0].ctidTraderAccountId).toBe(101);
+      expect(list[1].ctidTraderAccountId).toBe(202);
       expect(sessionId).toMatch(/^[A-Za-z0-9_-]+$/);
       expect(redis.del).toHaveBeenCalledWith('oauth:ct:state:S1');
       const sessionWrite = (redis.set as jest.Mock).mock.calls.find(([k]) => k === `oauth:ct:session:${sessionId}`);
