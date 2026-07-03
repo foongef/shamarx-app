@@ -7,7 +7,11 @@ def _client_with_symbols():
                       expires_at=0, account_kind='DEMO')
     c._symbol_id_by_name = {'EURUSD': 1, 'XAUUSD': 41, 'GBPUSD': 2, 'USDJPY': 3}
     c._symbol_name_by_id = {1: 'EURUSD', 41: 'XAUUSD', 2: 'GBPUSD', 3: 'USDJPY'}
-    c._symbol_digits = {'EURUSD': 5, 'XAUUSD': 2, 'GBPUSD': 5, 'USDJPY': 3}
+    c._symbol_details = {
+        1: {'symbolId': 1, 'digits': 5, 'lotSize': 10_000_000, 'minVolume': 100_000, 'stepVolume': 100_000},
+        41: {'symbolId': 41, 'digits': 2, 'lotSize': 10_000, 'minVolume': 100, 'stepVolume': 100},
+        3: {'symbolId': 3, 'digits': 3, 'lotSize': 10_000_000},
+    }
     return c
 
 
@@ -31,18 +35,35 @@ def test_to_ctrader_symbol_unknown_raises():
     assert 'NZDCHF' in str(exc.value)
 
 
-def test_to_ctrader_price_rounding():
+def test_lots_to_volume_uses_symbol_lot_size():
     c = _client_with_symbols()
-    assert c._to_ctrader_price('EURUSD', 1.08345) == 108345
-    assert c._to_ctrader_price('XAUUSD', 2050.55) == 205055
-    assert c._to_ctrader_price('USDJPY', 149.123) == 149123
+    # FX: 1 lot = 100_000 units = 10_000_000 cents of units
+    assert c._lots_to_volume(1, 0.01) == 100_000
+    assert c._lots_to_volume(1, 0.10) == 1_000_000
+    # XAUUSD: 1 lot = 100 oz = 10_000 cents of units
+    assert c._lots_to_volume(41, 0.05) == 500
+    assert c._lots_to_volume(41, 1.0) == 10_000
 
 
-def test_from_ctrader_price_round_trip():
+def test_lots_to_volume_clamps_to_min_and_step():
     c = _client_with_symbols()
-    for sym, price in [('EURUSD', 1.08345), ('XAUUSD', 2050.55), ('USDJPY', 149.123)]:
-        scaled = c._to_ctrader_price(sym, price)
-        assert c._from_ctrader_price(sym, scaled) == pytest.approx(price)
+    # Below minVolume → clamped up
+    assert c._lots_to_volume(1, 0.001) == 100_000
+    # Snapped to stepVolume
+    assert c._lots_to_volume(1, 0.0149) == 100_000
+    assert c._lots_to_volume(1, 0.015) == 200_000
+
+
+def test_lots_to_volume_defaults_when_details_missing():
+    c = _client_with_symbols()
+    # symbolId 2 (GBPUSD) has no details row → FX default lotSize applies
+    assert c._lots_to_volume(2, 0.01) == 100_000
+
+
+def test_volume_to_lots_round_trip():
+    c = _client_with_symbols()
+    for sid, lots in [(1, 0.01), (1, 0.5), (41, 0.05), (41, 2.0)]:
+        assert c._volume_to_lots(sid, c._lots_to_volume(sid, lots)) == pytest.approx(lots)
 
 
 def test_our_symbol_from_id():

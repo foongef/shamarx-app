@@ -43,7 +43,18 @@ PAYLOAD = {
     'TRADER_RES': 2122,
     'DEAL_LIST_REQ': 2133,
     'DEAL_LIST_RES': 2134,
+    'SYMBOL_BY_ID_REQ': 2116,
+    'SYMBOL_BY_ID_RES': 2117,
+    'ORDER_ERROR_EVENT': 2132,
+    'GET_TRENDBARS_REQ': 2137,
+    'GET_TRENDBARS_RES': 2138,
+    'OA_ERROR_RES': 2142,
 }
+
+# Any of these payload types is an error reply to a request. Verified live:
+# order rejections arrive as ORDER_ERROR_EVENT (2132), OA-level failures as
+# OA_ERROR_RES (2142), and framework failures as ERROR_RES (50).
+ERROR_PAYLOAD_TYPES = {50, 2132, 2142}
 
 
 @dataclass
@@ -81,7 +92,10 @@ class CTraderTransport:
     def __init__(self, host: str, port: int = 5036):
         self.url = f'wss://{host}:{port}'
         self._ws: Optional[WebSocketClientProtocol] = None
-        self._pending: Dict[str, asyncio.Future] = {}
+        # msg_id → Queue of correlated envelopes. A queue (not a future) because
+        # one request can produce several correlated frames — a market order
+        # yields ORDER_ACCEPTED then ORDER_FILLED, both with our clientMsgId.
+        self._pending: Dict[str, asyncio.Queue] = {}
         self._listeners: Dict[int, Callable[[Dict[str, Any]], None]] = {}
         self._reader_task: Optional[asyncio.Task] = None
         self._msg_seq = 0
@@ -99,6 +113,22 @@ class CTraderTransport:
     def on_event(self, payload_type: int, handler: Callable[[Dict[str, Any]], None]) -> None:
         self._listeners[payload_type] = handler
 
+    @staticmethod
+    def _raise_if_error(env: Dict[str, Any]) -> None:
+        if isinstance(env, Exception):
+            raise env
+        if env.get('payloadType') in ERROR_PAYLOAD_TYPES:
+            p = env.get('payload') or {}
+            raise CTraderApiError(p.get('errorCode', 'UNKNOWN'), p.get('description', ''))
+
+    def _register(self, payload_type: int, payload: Dict[str, Any]) -> tuple:
+        self._msg_seq += 1
+        msg_id = f'm{self._msg_seq}'
+        q: asyncio.Queue = asyncio.Queue()
+        self._pending[msg_id] = q
+        msg = ProtoMessage(payload_type=payload_type, payload=payload, client_msg_id=msg_id)
+        return msg_id, q, msg
+
     async def request(
         self,
         payload_type: int,
@@ -108,21 +138,48 @@ class CTraderTransport:
     ) -> Dict[str, Any]:
         if not self._ws:
             raise RuntimeError('Transport not connected')
-        self._msg_seq += 1
-        msg_id = f'm{self._msg_seq}'
-        msg = ProtoMessage(payload_type=payload_type, payload=payload, client_msg_id=msg_id)
-        fut: asyncio.Future = asyncio.get_running_loop().create_future()
-        self._pending[msg_id] = fut
+        msg_id, q, msg = self._register(payload_type, payload)
         try:
             await self._ws.send(msg.to_wire())
-            response = await asyncio.wait_for(fut, timeout=timeout)
-            if response.get('payloadType') == PAYLOAD['ERROR_RES']:
-                raise CTraderApiError(response['payload'].get('errorCode', 'UNKNOWN'),
-                                      response['payload'].get('description', ''))
+            response = await asyncio.wait_for(q.get(), timeout=timeout)
+            self._raise_if_error(response)
             if response.get('payloadType') != expected_response_type:
                 raise CTraderApiError('UNEXPECTED_TYPE',
                                       f"expected {expected_response_type}, got {response.get('payloadType')}")
-            return response['payload']
+            # Responses with an empty message body (e.g. APP_AUTH_RES 2101) omit
+            # the `payload` key entirely — verified against the live demo API.
+            return response.get('payload') or {}
+        finally:
+            self._pending.pop(msg_id, None)
+
+    async def request_until(
+        self,
+        payload_type: int,
+        payload: Dict[str, Any],
+        done: Callable[[Dict[str, Any]], bool],
+        timeout: float = 15.0,
+    ) -> list:
+        """Send a request and keep consuming correlated frames until `done(env)`
+        returns truthy. Needed for order flows: a market order emits
+        ORDER_ACCEPTED then ORDER_FILLED, both correlated to our clientMsgId.
+        Returns every collected envelope; raises on error frames / timeout."""
+        if not self._ws:
+            raise RuntimeError('Transport not connected')
+        msg_id, q, msg = self._register(payload_type, payload)
+        collected: list = []
+        try:
+            await self._ws.send(msg.to_wire())
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + timeout
+            while True:
+                remaining = deadline - loop.time()
+                if remaining <= 0:
+                    raise CTraderApiError('TIMEOUT', f'no terminal frame within {timeout}s')
+                env = await asyncio.wait_for(q.get(), timeout=remaining)
+                self._raise_if_error(env)
+                collected.append(env)
+                if done(env):
+                    return collected
         finally:
             self._pending.pop(msg_id, None)
 
@@ -142,8 +199,9 @@ class CTraderTransport:
                     continue
                 msg_id = env.get('clientMsgId')
                 payload_type = env.get('payloadType')
-                if msg_id and msg_id in self._pending:
-                    self._pending[msg_id].set_result(env)
+                pending_q = self._pending.get(msg_id) if msg_id else None
+                if pending_q is not None:
+                    pending_q.put_nowait(env)
                     continue
                 handler = self._listeners.get(payload_type)
                 if handler:
@@ -159,9 +217,8 @@ class CTraderTransport:
             _logger.error(f'cTrader reader loop crashed: {e}')
         finally:
             # Fail any pending requests so callers don't hang on a dead connection
-            for fut in self._pending.values():
-                if not fut.done():
-                    fut.set_exception(CTraderApiError('DISCONNECTED', 'WebSocket closed'))
+            for q in self._pending.values():
+                q.put_nowait(CTraderApiError('DISCONNECTED', 'WebSocket closed'))
             self._pending.clear()
 
 

@@ -1,14 +1,26 @@
+"""CTraderClient unit tests. Canned responses mirror REAL frames captured from
+the live Spotware demo API (2026-07-03 probe): tradeSide/executionType are
+ints, position/order/deal prices are absolute doubles, trendbars are
+low+delta ints at 1/100_000 scale, and volumes are in cents-of-units."""
 import asyncio
 import pytest
 from ctrader_client import CTraderClient
-from ctrader_protocol import PAYLOAD
+from ctrader_protocol import PAYLOAD, CTraderApiError
+
+# Real-shape symbol detail rows (SYMBOL_BY_ID_RES): FX lot = 10_000_000 cents
+# of units; XAUUSD lot = 100 oz = 10_000 cents of units.
+EURUSD_DETAILS = {'symbolId': 1, 'digits': 5, 'lotSize': 10_000_000, 'minVolume': 100_000, 'stepVolume': 100_000}
+XAUUSD_DETAILS = {'symbolId': 41, 'digits': 2, 'lotSize': 10_000, 'minVolume': 100, 'stepVolume': 100}
 
 
 class FakeTransport:
-    """Records sent messages, returns canned responses keyed by expected response type."""
+    """Records sent messages, returns canned responses keyed by expected
+    response type (request) or by request payload type (request_until)."""
 
-    def __init__(self, canned: dict[int, dict]):
-        self.canned = canned
+    def __init__(self, canned: dict[int, dict] | None = None, event_flows: dict[int, list] | None = None):
+        self.canned = canned or {}
+        # request payload type → list of envelopes to emit for request_until
+        self.event_flows = event_flows or {}
         self.sent: list[tuple[int, dict]] = []
         self.oneway: list[tuple[int, dict]] = []
         self.connected = False
@@ -30,6 +42,20 @@ class FakeTransport:
             raise AssertionError(f'No canned response for {expected_response_type}')
         return self.canned[expected_response_type]
 
+    async def request_until(self, payload_type, payload, done, timeout=15.0):
+        self.sent.append((payload_type, payload))
+        flow = self.event_flows.get(payload_type)
+        if flow is None:
+            raise AssertionError(f'No canned event flow for {payload_type}')
+        collected = []
+        for env in flow:
+            if isinstance(env, Exception):
+                raise env
+            collected.append(env)
+            if done(env):
+                return collected
+        raise CTraderApiError('TIMEOUT', 'no terminal frame in canned flow')
+
     async def send_oneway(self, payload_type, payload):
         self.oneway.append((payload_type, payload))
 
@@ -41,42 +67,49 @@ def _client():
     )
 
 
-async def test_initialize_sends_app_auth_then_account_auth_then_symbols(monkeypatch):
-    canned = {
-        PAYLOAD['APP_AUTH_RES']: {},
-        PAYLOAD['ACCOUNT_AUTH_RES']: {'ctidTraderAccountId': 42},
-        PAYLOAD['SYMBOLS_LIST_RES']: {'symbol': [
-            {'symbolId': 1, 'symbolName': 'EURUSD', 'digits': 5},
-            {'symbolId': 41, 'symbolName': 'XAUUSD', 'digits': 2},
-        ]},
-    }
-    transport = FakeTransport(canned)
-    c = _client()
-    monkeypatch.setenv('CTRADER_CLIENT_ID', 'cid'); monkeypatch.setenv('CTRADER_CLIENT_SECRET', 'csec')
+BASE_CANNED = {
+    PAYLOAD['APP_AUTH_RES']: {},  # real 2101 has NO payload at all
+    PAYLOAD['ACCOUNT_AUTH_RES']: {'ctidTraderAccountId': 42},
+    PAYLOAD['SYMBOLS_LIST_RES']: {'symbol': [
+        # Light list: NO digits/lotSize (verified live) — just id + name.
+        {'symbolId': 1, 'symbolName': 'EURUSD', 'enabled': True},
+        {'symbolId': 41, 'symbolName': 'XAUUSD', 'enabled': True},
+    ]},
+    PAYLOAD['SYMBOL_BY_ID_RES']: {'symbol': [EURUSD_DETAILS, XAUUSD_DETAILS]},
+}
+
+
+def _initialized_client(monkeypatch, extra_canned=None, event_flows=None):
+    canned = dict(BASE_CANNED)
+    canned.update(extra_canned or {})
+    transport = FakeTransport(canned, event_flows)
+    monkeypatch.setenv('CTRADER_CLIENT_ID', 'x'); monkeypatch.setenv('CTRADER_CLIENT_SECRET', 'y')
     monkeypatch.setattr('ctrader_client.CTraderTransport', lambda *a, **kw: transport)
+    return transport
 
+
+async def test_initialize_sends_auth_symbols_then_details(monkeypatch):
+    transport = _initialized_client(monkeypatch)
+    c = _client()
     await c.initialize()
-
     types_sent = [t for t, _ in transport.sent]
-    assert types_sent == [PAYLOAD['APP_AUTH_REQ'], PAYLOAD['ACCOUNT_AUTH_REQ'], PAYLOAD['SYMBOLS_LIST_REQ']]
+    assert types_sent == [
+        PAYLOAD['APP_AUTH_REQ'], PAYLOAD['ACCOUNT_AUTH_REQ'],
+        PAYLOAD['SYMBOLS_LIST_REQ'], PAYLOAD['SYMBOL_BY_ID_REQ'],
+    ]
     assert c._symbol_id_by_name == {'EURUSD': 1, 'XAUUSD': 41}
-    assert c._symbol_digits == {'EURUSD': 5, 'XAUUSD': 2}
+    assert c._symbol_details[1]['lotSize'] == 10_000_000
+    assert c._symbol_details[41]['lotSize'] == 10_000
     await c.close()
 
 
 async def test_initialize_uses_live_endpoint_for_live_kind(monkeypatch):
-    canned = {
-        PAYLOAD['APP_AUTH_RES']: {},
-        PAYLOAD['ACCOUNT_AUTH_RES']: {},
-        PAYLOAD['SYMBOLS_LIST_RES']: {'symbol': []},
-    }
     captured = {}
     def fake_transport(host, port=5036):
         captured['host'] = host
-        return FakeTransport(canned)
+        return FakeTransport(dict(BASE_CANNED))
     monkeypatch.setenv('CTRADER_CLIENT_ID', 'x'); monkeypatch.setenv('CTRADER_CLIENT_SECRET', 'y')
     monkeypatch.setattr('ctrader_client.CTraderTransport', fake_transport)
-
     c = _client()
     c.account_kind = 'LIVE'
     await c.initialize()
@@ -85,19 +118,16 @@ async def test_initialize_uses_live_endpoint_for_live_kind(monkeypatch):
 
 
 async def test_initialize_closes_transport_on_auth_failure(monkeypatch):
-    """If auth fails, transport must be closed and self._transport reset to None."""
     class FailingTransport(FakeTransport):
         async def request(self, payload_type, payload, expected_response_type, timeout=10.0):
             self.sent.append((payload_type, payload))
             if payload_type == PAYLOAD['ACCOUNT_AUTH_REQ']:
-                from ctrader_protocol import CTraderApiError
                 raise CTraderApiError('CH_CLIENT_AUTH_FAILURE', 'bad token')
             return self.canned.get(expected_response_type, {})
 
     transport = FailingTransport({PAYLOAD['APP_AUTH_RES']: {}})
     monkeypatch.setenv('CTRADER_CLIENT_ID', 'x'); monkeypatch.setenv('CTRADER_CLIENT_SECRET', 'y')
     monkeypatch.setattr('ctrader_client.CTraderTransport', lambda *a, **kw: transport)
-
     c = _client()
     with pytest.raises(Exception):
         await c.initialize()
@@ -106,115 +136,207 @@ async def test_initialize_closes_transport_on_auth_failure(monkeypatch):
     assert c._heartbeat_task is None
 
 
-def _initialized_client(monkeypatch, extra_canned=None):
-    canned = {
-        PAYLOAD['APP_AUTH_RES']: {},
-        PAYLOAD['ACCOUNT_AUTH_RES']: {},
-        PAYLOAD['SYMBOLS_LIST_RES']: {'symbol': [
-            {'symbolId': 1, 'symbolName': 'EURUSD', 'digits': 5},
-            {'symbolId': 41, 'symbolName': 'XAUUSD', 'digits': 2},
-        ]},
-    }
-    canned.update(extra_canned or {})
-    transport = FakeTransport(canned)
-    monkeypatch.setenv('CTRADER_CLIENT_ID', 'x'); monkeypatch.setenv('CTRADER_CLIENT_SECRET', 'y')
-    monkeypatch.setattr('ctrader_client.CTraderTransport', lambda *a, **kw: transport)
-    return transport
+# Real ORDER_ACCEPTED → ORDER_FILLED flow (trimmed from live capture).
+def _order_flow(position_id=649155875, fill_price=1.14463, volume=100000):
+    return [
+        {'payloadType': 2126, 'payload': {
+            'executionType': 2,  # ORDER_ACCEPTED
+            'position': {'positionId': position_id, 'tradeData': {'symbolId': 1, 'volume': 0, 'tradeSide': 1}, 'price': 0.0},
+            'order': {'orderId': 990178770, 'orderStatus': 1, 'positionId': position_id},
+        }},
+        {'payloadType': 2126, 'payload': {
+            'executionType': 3,  # ORDER_FILLED
+            'position': {'positionId': position_id,
+                         'tradeData': {'symbolId': 1, 'volume': volume, 'tradeSide': 1},
+                         'price': fill_price, 'moneyDigits': 2},
+            'order': {'orderId': 990178770, 'orderStatus': 2, 'executionPrice': fill_price, 'positionId': position_id},
+            'deal': {'dealId': 916431992, 'positionId': position_id, 'volume': volume,
+                     'executionPrice': fill_price, 'tradeSide': 1, 'moneyDigits': 2},
+        }},
+    ]
 
 
-async def test_place_order_translates_request(monkeypatch):
+def _amend_flow():
+    return [{'payloadType': 2126, 'payload': {'executionType': 4}}]  # ORDER_REPLACED
+
+
+async def test_place_order_real_semantics(monkeypatch):
     from models import OrderRequest
-    transport = _initialized_client(monkeypatch, extra_canned={
-        PAYLOAD['EXECUTION_EVENT']: {
-            'order': {'orderId': 9876543210, 'positionId': 1234567},
-            'executionType': 'ORDER_FILLED',
-            'position': {'positionId': 1234567},
-        },
+    transport = _initialized_client(monkeypatch, event_flows={
+        PAYLOAD['NEW_ORDER_REQ']: _order_flow(volume=1_000_000),
+        PAYLOAD['AMEND_POSITION_SLTP_REQ']: _amend_flow(),
     })
     c = _client()
     await c.initialize()
     req = OrderRequest(symbol='EURUSD', side='BUY', lotSize=0.10,
                        entryPrice=1.08300, slPrice=1.08000, tpPrice=1.09000)
     res = await c.place_order(req)
+
     new_order_call = next(p for t, p in transport.sent if t == PAYLOAD['NEW_ORDER_REQ'])
     assert new_order_call['symbolId'] == 1
     assert new_order_call['orderType'] == 'MARKET'
     assert new_order_call['tradeSide'] == 'BUY'
-    assert new_order_call['volume'] == 10
-    assert new_order_call['stopLoss'] == 108000
-    assert new_order_call['takeProfit'] == 109000
-    assert res.mt5_ticket == 1234567
+    # 0.10 lots × lotSize 10_000_000 = 1_000_000 cents of units
+    assert new_order_call['volume'] == 1_000_000
+    # MARKET orders take RELATIVE SL/TP at 1/100_000 scale, no absolute prices
+    assert 'stopLoss' not in new_order_call and 'takeProfit' not in new_order_call
+    assert new_order_call['relativeStopLoss'] == 300   # |1.08300-1.08000|×1e5
+    assert new_order_call['relativeTakeProfit'] == 700  # |1.09000-1.08300|×1e5
+
+    # Post-fill amend pins the exact absolute strategy levels
+    amend_call = next(p for t, p in transport.sent if t == PAYLOAD['AMEND_POSITION_SLTP_REQ'])
+    assert amend_call['positionId'] == 649155875
+    assert amend_call['stopLoss'] == pytest.approx(1.08000)
+    assert amend_call['takeProfit'] == pytest.approx(1.09000)
+
+    assert res.mt5_ticket == 649155875
     assert res.status == 'FILLED'
     await c.close()
 
 
-async def test_close_position_sends_volume_zero(monkeypatch):
-    transport = _initialized_client(monkeypatch, extra_canned={
-        PAYLOAD['EXECUTION_EVENT']: {'executionType': 'ORDER_FILLED', 'position': {'positionId': 555}},
+async def test_place_order_xauusd_volume_uses_symbol_lot_size(monkeypatch):
+    from models import OrderRequest
+    flow = _order_flow()
+    flow[1]['payload']['position']['tradeData']['symbolId'] = 41
+    flow[1]['payload']['deal']['symbolId'] = 41
+    transport = _initialized_client(monkeypatch, event_flows={
+        PAYLOAD['NEW_ORDER_REQ']: flow,
+        PAYLOAD['AMEND_POSITION_SLTP_REQ']: _amend_flow(),
     })
     c = _client()
     await c.initialize()
+    req = OrderRequest(symbol='XAUUSD', side='SELL', lotSize=0.05,
+                       entryPrice=2050.00, slPrice=2060.00, tpPrice=2030.00)
+    await c.place_order(req)
+    call = next(p for t, p in transport.sent if t == PAYLOAD['NEW_ORDER_REQ'])
+    # 0.05 lots × lotSize 10_000 = 500 cents of units — NOT the FX conversion
+    assert call['volume'] == 500
+    await c.close()
+
+
+async def test_place_order_rejected_via_order_error_event(monkeypatch):
+    from models import OrderRequest
+    transport = _initialized_client(monkeypatch, event_flows={
+        PAYLOAD['NEW_ORDER_REQ']: [
+            CTraderApiError('INVALID_REQUEST', 'SL/TP in absolute values are allowed only for ...'),
+        ],
+    })
+    c = _client()
+    await c.initialize()
+    req = OrderRequest(symbol='EURUSD', side='BUY', lotSize=0.01,
+                       entryPrice=1.1, slPrice=1.09, tpPrice=1.11)
+    res = await c.place_order(req)
+    assert res.status == 'REJECTED'
+    assert 'INVALID_REQUEST' in res.message
+    await c.close()
+
+
+async def test_place_order_survives_amend_failure(monkeypatch):
+    """If the post-fill absolute amend fails, the order is still FILLED —
+    the relative protection from the order itself stays active."""
+    from models import OrderRequest
+    transport = _initialized_client(monkeypatch, event_flows={
+        PAYLOAD['NEW_ORDER_REQ']: _order_flow(),
+        PAYLOAD['AMEND_POSITION_SLTP_REQ']: [CTraderApiError('TIMEOUT', 'no frame')],
+    })
+    c = _client()
+    await c.initialize()
+    req = OrderRequest(symbol='EURUSD', side='BUY', lotSize=0.01,
+                       entryPrice=1.14463, slPrice=1.13463, tpPrice=1.15463)
+    res = await c.place_order(req)
+    assert res.status == 'FILLED'
+    assert res.mt5_ticket == 649155875
+    await c.close()
+
+
+async def test_close_position_sends_cached_volume(monkeypatch):
+    transport = _initialized_client(monkeypatch, event_flows={
+        PAYLOAD['CLOSE_POSITION_REQ']: [
+            {'payloadType': 2126, 'payload': {'executionType': 2}},
+            {'payloadType': 2126, 'payload': {
+                'executionType': 3,
+                'deal': {'executionPrice': 1.14464, 'moneyDigits': 2,
+                         'closePositionDetail': {'grossProfit': 1, 'commission': -6, 'swap': 0}},
+            }},
+        ],
+    })
+    c = _client()
+    await c.initialize()
+    c._position_volume_cache[555] = 100000
     res = await c.close_position(555)
     close_call = next(p for t, p in transport.sent if t == PAYLOAD['CLOSE_POSITION_REQ'])
     assert close_call['positionId'] == 555
-    assert close_call['volume'] == 0
-    assert res['status'] in ('CLOSED', 'OK')
+    assert close_call['volume'] == 100000  # real volume — 0 is rejected by the API
+    assert res['status'] == 'CLOSED'
+    assert res['closePrice'] == pytest.approx(1.14464)
+    assert res['pnl'] == pytest.approx(0.01)
     await c.close()
 
 
-async def test_modify_position_sends_sl_tp(monkeypatch):
+async def test_close_position_reconciles_when_volume_unknown(monkeypatch):
     transport = _initialized_client(monkeypatch, extra_canned={
-        PAYLOAD['EXECUTION_EVENT']: {'executionType': 'AMENDED', 'position': {'positionId': 555}},
+        PAYLOAD['RECONCILE_RES']: {'position': [
+            {'positionId': 777, 'tradeData': {'symbolId': 1, 'tradeSide': 2, 'volume': 200000, 'openTimestamp': 1},
+             'price': 1.1, 'stopLoss': 1.11, 'takeProfit': 1.09},
+        ]},
+    }, event_flows={
+        PAYLOAD['CLOSE_POSITION_REQ']: [{'payloadType': 2126, 'payload': {'executionType': 3, 'deal': {}}}],
     })
     c = _client()
     await c.initialize()
-    c._position_symbol_cache = {555: 'EURUSD'}
-    await c.modify_position(555, sl_price=1.07500, tp_price=1.09500)
-    amend_call = next(p for t, p in transport.sent if t == PAYLOAD['AMEND_POSITION_SLTP_REQ'])
-    assert amend_call['positionId'] == 555
-    assert amend_call['stopLoss'] == 107500
-    assert amend_call['takeProfit'] == 109500
+    await c.close_position(777)
+    close_call = next(p for t, p in transport.sent if t == PAYLOAD['CLOSE_POSITION_REQ'])
+    assert close_call['volume'] == 200000
     await c.close()
 
 
-async def test_get_positions_translates_response(monkeypatch):
-    transport = _initialized_client(monkeypatch, extra_canned={
-        PAYLOAD['RECONCILE_RES']: {
-            'position': [
-                {
-                    'positionId': 100,
-                    'tradeData': {'symbolId': 1, 'tradeSide': 'BUY', 'volume': 10, 'openTimestamp': 1717000000000},
-                    'price': 108300, 'stopLoss': 108000, 'takeProfit': 109000,
-                    'commission': -5, 'swap': 0, 'usedMargin': 100,
-                },
-            ],
-        },
+async def test_modify_position_sends_absolute_doubles(monkeypatch):
+    transport = _initialized_client(monkeypatch, event_flows={
+        PAYLOAD['AMEND_POSITION_SLTP_REQ']: _amend_flow(),
+    })
+    c = _client()
+    await c.initialize()
+    await c.modify_position(555, sl_price=1.07500, tp_price=1.09500)
+    amend_call = next(p for t, p in transport.sent if t == PAYLOAD['AMEND_POSITION_SLTP_REQ'])
+    assert amend_call['positionId'] == 555
+    assert amend_call['stopLoss'] == pytest.approx(1.07500)   # absolute double, NOT ×10^digits
+    assert amend_call['takeProfit'] == pytest.approx(1.09500)
+    await c.close()
+
+
+async def test_get_positions_translates_real_response(monkeypatch):
+    # Trimmed real RECONCILE_RES from the live capture
+    _initialized_client(monkeypatch, extra_canned={
+        PAYLOAD['RECONCILE_RES']: {'ctidTraderAccountId': 42, 'position': [
+            {'positionId': 649155875,
+             'tradeData': {'symbolId': 1, 'volume': 100000, 'tradeSide': 1, 'openTimestamp': 1783075061310},
+             'positionStatus': 1, 'price': 1.14463, 'stopLoss': 1.13463, 'takeProfit': 1.15463,
+             'usedMargin': 572, 'moneyDigits': 2},
+        ]},
     })
     c = _client()
     await c.initialize()
     positions = await c.get_positions()
     assert len(positions) == 1
     p = positions[0]
-    assert p['ticket'] == 100
+    assert p['ticket'] == 649155875
     assert p['symbol'] == 'EURUSD'
-    assert p['side'] == 'BUY'
-    assert p['lotSize'] == pytest.approx(0.10)
-    assert p['entryPrice'] == pytest.approx(1.08300)
-    assert p['sl'] == pytest.approx(1.08000)
-    assert p['tp'] == pytest.approx(1.09000)
+    assert p['side'] == 'BUY'                      # tradeSide 1 → BUY
+    assert p['lotSize'] == pytest.approx(0.01)     # 100000 / 10_000_000
+    assert p['entryPrice'] == pytest.approx(1.14463)  # already a double
+    assert p['sl'] == pytest.approx(1.13463)
+    assert p['tp'] == pytest.approx(1.15463)
     await c.close()
 
 
 async def test_get_positions_filters_by_symbol(monkeypatch):
-    transport = _initialized_client(monkeypatch, extra_canned={
-        PAYLOAD['RECONCILE_RES']: {
-            'position': [
-                {'positionId': 100, 'tradeData': {'symbolId': 1, 'tradeSide': 'BUY', 'volume': 10, 'openTimestamp': 0},
-                 'price': 108000, 'stopLoss': 0, 'takeProfit': 0, 'commission': 0, 'swap': 0, 'usedMargin': 0},
-                {'positionId': 101, 'tradeData': {'symbolId': 41, 'tradeSide': 'SELL', 'volume': 5, 'openTimestamp': 0},
-                 'price': 205000, 'stopLoss': 0, 'takeProfit': 0, 'commission': 0, 'swap': 0, 'usedMargin': 0},
-            ],
-        },
+    _initialized_client(monkeypatch, extra_canned={
+        PAYLOAD['RECONCILE_RES']: {'position': [
+            {'positionId': 100, 'tradeData': {'symbolId': 1, 'tradeSide': 1, 'volume': 100000, 'openTimestamp': 0},
+             'price': 1.08, 'stopLoss': 0, 'takeProfit': 0},
+            {'positionId': 101, 'tradeData': {'symbolId': 41, 'tradeSide': 2, 'volume': 100, 'openTimestamp': 0},
+             'price': 2050.0, 'stopLoss': 0, 'takeProfit': 0},
+        ]},
     })
     c = _client()
     await c.initialize()
@@ -222,6 +344,8 @@ async def test_get_positions_filters_by_symbol(monkeypatch):
     xau = await c.get_positions('XAUUSD')
     assert [p['ticket'] for p in eur] == [100]
     assert [p['ticket'] for p in xau] == [101]
+    assert xau[0]['side'] == 'SELL'
+    assert xau[0]['lotSize'] == pytest.approx(0.01)  # 100 / 10_000
     await c.close()
 
 
@@ -241,27 +365,24 @@ async def test_get_account_info_translates(monkeypatch):
 
 
 async def test_get_position_close_info_returns_close_detail(monkeypatch):
+    # Real deal shape: executionPrice is a double on the DEAL; monetary values
+    # scale by moneyDigits.
     _initialized_client(monkeypatch, extra_canned={
-        PAYLOAD['DEAL_LIST_RES']: {
-            'deal': [
-                {
-                    'positionId': 100, 'symbolId': 1, 'executionTimestamp': 1717000050000,
-                    'commission': -3,
-                    'closePositionDetail': {
-                        'executionPrice': 108550, 'grossProfit': 250, 'swap': 0, 'closeReason': 'TAKE_PROFIT',
-                    },
-                },
-            ],
-        },
+        PAYLOAD['DEAL_LIST_RES']: {'deal': [
+            {'positionId': 100, 'symbolId': 1, 'executionTimestamp': 1783075077340,
+             'executionPrice': 1.14464, 'commission': -3, 'moneyDigits': 2,
+             'closePositionDetail': {'grossProfit': 250, 'commission': -6, 'swap': 0,
+                                     'closedVolume': 100000, 'moneyDigits': 2}},
+        ]},
     })
     c = _client()
     await c.initialize()
     info = await c.get_position_close_info(100)
     assert info is not None
     assert info['ticket'] == 100
-    assert info['closePrice'] == pytest.approx(1.08550)
+    assert info['closePrice'] == pytest.approx(1.14464)
     assert info['pnl'] == pytest.approx(2.50)
-    assert info['reason'] == 'TAKE_PROFIT'
+    assert info['commission'] == pytest.approx(-0.06)
     await c.close()
 
 
@@ -273,4 +394,39 @@ async def test_get_position_close_info_returns_none_when_no_match(monkeypatch):
     await c.initialize()
     info = await c.get_position_close_info(999)
     assert info is None
+    await c.close()
+
+
+async def test_get_candles_decodes_trendbars(monkeypatch):
+    # Real trendbar shape from the live capture: low + deltas at 1e5 scale,
+    # openTime in utcTimestampInMinutes.
+    _initialized_client(monkeypatch, extra_canned={
+        PAYLOAD['GET_TRENDBARS_RES']: {'period': 7, 'trendbar': [
+            {'volume': 437, 'low': 114417, 'deltaOpen': 6, 'deltaClose': 32, 'deltaHigh': 37,
+             'utcTimestampInMinutes': 29717550},
+            {'volume': 373, 'low': 114440, 'deltaOpen': 8, 'deltaClose': 21, 'deltaHigh': 22,
+             'utcTimestampInMinutes': 29717565},
+        ]},
+    })
+    c = _client()
+    await c.initialize()
+    candles = await c.get_candles('EURUSD', 'M15', 10)
+    assert len(candles) == 2
+    first = candles[0]
+    assert first.open == pytest.approx(1.14423)
+    assert first.high == pytest.approx(1.14454)
+    assert first.low == pytest.approx(1.14417)
+    assert first.close == pytest.approx(1.14449)
+    assert first.open_time == '2026-07-03T04:30:00.000Z'  # 29717550 min × 60_000 ms
+    assert first.timeframe == 'M15'
+    assert first.symbol == 'EURUSD'
+    await c.close()
+
+
+async def test_get_candles_rejects_unknown_timeframe(monkeypatch):
+    _initialized_client(monkeypatch)
+    c = _client()
+    await c.initialize()
+    with pytest.raises(ValueError):
+        await c.get_candles('EURUSD', 'M7', 10)
     await c.close()

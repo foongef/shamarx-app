@@ -8,6 +8,7 @@ import asyncio
 import logging
 import os
 import time
+from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Dict, List, Optional, TypeVar
 
 import httpx
@@ -24,6 +25,33 @@ SYMBOL_ALIASES = {
     'GBPUSD': ['GBP/USD'],
     'USDJPY': ['USD/JPY'],
 }
+
+# ProtoOAExecutionType values (verified against the live demo API).
+EXEC_ACCEPTED = 2
+EXEC_FILLED = 3
+EXEC_REPLACED = 4
+EXEC_CANCELLED = 5
+EXEC_EXPIRED = 6
+EXEC_REJECTED = 7
+EXEC_PARTIAL_FILL = 11
+_ORDER_TERMINAL = {EXEC_FILLED, EXEC_CANCELLED, EXEC_EXPIRED, EXEC_REJECTED}
+
+# ProtoOATradeSide: requests accept enum names; responses return ints.
+TRADE_SIDE_BY_INT = {1: 'BUY', 2: 'SELL'}
+
+# All spot/trendbar prices and relative SL/TP distances are in 1/100_000 of
+# the quote price — a FIXED scale, independent of symbol digits (verified:
+# EURUSD trendbar low=114417 → 1.14417; relativeStopLoss=1000 → 100 pips).
+PRICE_SCALE = 100_000
+
+TIMEFRAME_MS = {
+    'M1': 60_000, 'M5': 5 * 60_000, 'M15': 15 * 60_000, 'M30': 30 * 60_000,
+    'H1': 3_600_000, 'H4': 4 * 3_600_000, 'D1': 24 * 3_600_000,
+}
+
+# Fallback lotSize (cents of units): 1 FX lot = 100_000 units = 10_000_000.
+# Real values come from SYMBOL_BY_ID details fetched at initialize.
+DEFAULT_LOT_SIZE_CENTS = 10_000_000
 
 
 async def _async_token_request(url: str, params: Dict[str, str]) -> httpx.Response:
@@ -89,8 +117,9 @@ class CTraderClient(Broker):
 
         self._symbol_id_by_name: Dict[str, int] = {}
         self._symbol_name_by_id: Dict[int, str] = {}
-        self._symbol_digits: Dict[str, int] = {}
+        self._symbol_details: Dict[int, Dict[str, Any]] = {}  # symbolId → full ProtoOASymbol
         self._position_symbol_cache: Dict[int, str] = {}
+        self._position_volume_cache: Dict[int, int] = {}  # positionId → volume (cents of units)
 
     @classmethod
     def from_creds(cls, creds: Dict[str, Any]) -> 'CTraderClient':
@@ -115,13 +144,25 @@ class CTraderClient(Broker):
     def _our_symbol_from_id(self, symbol_id: int) -> str:
         return self._symbol_name_by_id.get(symbol_id, str(symbol_id))
 
-    def _to_ctrader_price(self, symbol: str, price: float) -> int:
-        digits = self._symbol_digits.get(symbol, 5)
-        return int(round(price * (10 ** digits)))
+    def _lot_size_cents(self, symbol_id: int) -> int:
+        details = self._symbol_details.get(symbol_id) or {}
+        return int(details.get('lotSize') or DEFAULT_LOT_SIZE_CENTS)
 
-    def _from_ctrader_price(self, symbol: str, price_int: int) -> float:
-        digits = self._symbol_digits.get(symbol, 5)
-        return price_int / (10 ** digits)
+    def _lots_to_volume(self, symbol_id: int, lots: float) -> int:
+        """Lots → ProtoOA volume (cents of units): 0.01 lot EURUSD = 100_000.
+        Clamped to minVolume and snapped to stepVolume when known."""
+        details = self._symbol_details.get(symbol_id) or {}
+        volume = int(round(lots * self._lot_size_cents(symbol_id)))
+        step = int(details.get('stepVolume') or 0)
+        if step > 0:
+            volume = max(step, int(round(volume / step)) * step)
+        min_vol = int(details.get('minVolume') or 0)
+        if min_vol > 0:
+            volume = max(volume, min_vol)
+        return volume
+
+    def _volume_to_lots(self, symbol_id: int, volume: int) -> float:
+        return volume / self._lot_size_cents(symbol_id)
 
     # ----- Stubs (filled in subsequent tasks) -----
     async def initialize(self) -> None:
@@ -160,7 +201,24 @@ class CTraderClient(Broker):
                 sid = int(s['symbolId'])
                 self._symbol_id_by_name[name] = sid
                 self._symbol_name_by_id[sid] = name
-                self._symbol_digits[name] = int(s.get('digits', 5))
+
+            # The light symbols list carries NO digits/lotSize/minVolume —
+            # fetch full details for the symbols we trade (needed for correct
+            # lots→volume conversion; XAUUSD lot ≠ FX lot).
+            wanted_ids = []
+            for our_name in SYMBOL_ALIASES:
+                try:
+                    wanted_ids.append(self._to_ctrader_symbol(our_name))
+                except ValueError:
+                    continue
+            if wanted_ids:
+                details_res = await self._transport.request(
+                    PAYLOAD['SYMBOL_BY_ID_REQ'],
+                    {'ctidTraderAccountId': self.ctid_trader_account_id, 'symbolId': wanted_ids},
+                    PAYLOAD['SYMBOL_BY_ID_RES'],
+                )
+                for s in details_res.get('symbol', []):
+                    self._symbol_details[int(s['symbolId'])] = s
         except Exception:
             # Clean up the transport so we don't leak a connected socket
             try:
@@ -187,30 +245,75 @@ class CTraderClient(Broker):
         from models import OrderResponse
         assert self._transport is not None
         symbol_id = self._to_ctrader_symbol(request.symbol)
-        volume = int(round(request.lot_size * 100))
+        volume = self._lots_to_volume(symbol_id, request.lot_size)
         side = request.side.value if hasattr(request.side, 'value') else str(request.side)
+
+        # MARKET orders reject absolute SL/TP ("allowed only for LIMIT, STOP,
+        # STOP_LIMIT" — verified live). Send RELATIVE distances (1/100_000 of
+        # price, anchored to the fill price), then amend the open position to
+        # the strategy's exact absolute levels once filled.
+        entry_ref = float(request.entry_price or 0)
         payload = {
             'ctidTraderAccountId': self.ctid_trader_account_id,
             'symbolId': symbol_id,
             'orderType': 'MARKET',
             'tradeSide': side,
             'volume': volume,
-            'stopLoss': self._to_ctrader_price(request.symbol, request.sl_price),
-            'takeProfit': self._to_ctrader_price(request.symbol, request.tp_price),
         }
-        res = await self._transport.request(
-            PAYLOAD['NEW_ORDER_REQ'], payload, PAYLOAD['EXECUTION_EVENT'],
+        if request.comment:
+            payload['comment'] = request.comment
+        if entry_ref > 0 and request.sl_price:
+            payload['relativeStopLoss'] = max(1, int(round(abs(entry_ref - request.sl_price) * PRICE_SCALE)))
+        if entry_ref > 0 and request.tp_price:
+            payload['relativeTakeProfit'] = max(1, int(round(abs(request.tp_price - entry_ref) * PRICE_SCALE)))
+
+        try:
+            envs = await self._transport.request_until(
+                PAYLOAD['NEW_ORDER_REQ'], payload,
+                done=lambda env: (env.get('payload') or {}).get('executionType') in _ORDER_TERMINAL,
+            )
+        except CTraderApiError as e:
+            _logger.error(f'CTrader place_order rejected: {e}')
+            return OrderResponse(orderId='', mt5Ticket=None, status='REJECTED', message=str(e))
+
+        final = envs[-1].get('payload') or {}
+        exec_type = final.get('executionType')
+        deal = final.get('deal') or {}
+        position = final.get('position') or {}
+        position_id = position.get('positionId') or deal.get('positionId')
+        if exec_type != EXEC_FILLED or not position_id:
+            return OrderResponse(
+                orderId=str((final.get('order') or {}).get('orderId', '')),
+                mt5Ticket=None,
+                status='REJECTED',
+                message=f'executionType={exec_type}',
+            )
+
+        position_id = int(position_id)
+        self._position_symbol_cache[position_id] = request.symbol
+        self._position_volume_cache[position_id] = int(
+            (position.get('tradeData') or {}).get('volume') or volume,
         )
-        exec_type = res.get('executionType')
-        position_id = res.get('position', {}).get('positionId')
-        if position_id:
-            self._position_symbol_cache[int(position_id)] = request.symbol
-        status = 'FILLED' if exec_type == 'ORDER_FILLED' else 'REJECTED'
+
+        # Pin SL/TP to the exact strategy levels. If the amend fails we keep
+        # the relative protection already attached at fill — never naked.
+        if request.sl_price or request.tp_price:
+            try:
+                await self._amend_sltp(position_id, request.sl_price, request.tp_price)
+            except Exception as e:
+                _logger.warning(
+                    f'CTrader post-fill SL/TP amend failed for position={position_id} '
+                    f'(relative protection stays active): {e}'
+                )
+
+        fill_price = deal.get('executionPrice') or position.get('price')
+        status = 'FILLED'
+        exec_type = 'ORDER_FILLED'
         return OrderResponse(
-            orderId=str(res.get('order', {}).get('orderId', '')),
-            mt5Ticket=int(position_id) if position_id else None,
+            orderId=str((final.get('order') or {}).get('orderId', '')),
+            mt5Ticket=position_id,
             status=status,
-            message=str(res.get('errorCode') or exec_type or ''),
+            message=f'{exec_type} @ {fill_price}',
         )
 
     async def get_positions(self, symbol: Optional[str] = None) -> list:
@@ -227,55 +330,79 @@ class CTraderClient(Broker):
             sym = self._our_symbol_from_id(sym_id)
             if symbol and sym != symbol:
                 continue
-            entry_price = self._from_ctrader_price(sym, int(p.get('price', 0)))
+            # Position/order/deal prices are absolute doubles (verified live);
+            # only trendbars and relative SL/TP use the 1e5 integer scale.
+            entry_price = float(p.get('price', 0) or 0)
+            volume = int(td.get('volume', 0) or 0)
+            open_ts = int(td.get('openTimestamp', 0) or 0)
             positions.append({
                 'ticket': int(p['positionId']),
                 'symbol': sym,
-                'side': td.get('tradeSide', ''),
-                'lotSize': int(td.get('volume', 0)) / 100.0,
+                'side': TRADE_SIDE_BY_INT.get(td.get('tradeSide'), str(td.get('tradeSide', ''))),
+                'lotSize': self._volume_to_lots(sym_id, volume),
                 'entryPrice': entry_price,
                 'currentPrice': entry_price,  # cTrader reconcile doesn't include current; strategy doesn't depend on it
-                'sl': self._from_ctrader_price(sym, int(p.get('stopLoss', 0))),
-                'tp': self._from_ctrader_price(sym, int(p.get('takeProfit', 0))),
+                'sl': float(p.get('stopLoss', 0) or 0),
+                'tp': float(p.get('takeProfit', 0) or 0),
                 'pnl': 0.0,
-                'openTime': str(td.get('openTimestamp', 0)),
+                'openTime': str(open_ts),
             })
             self._position_symbol_cache[int(p['positionId'])] = sym
+            self._position_volume_cache[int(p['positionId'])] = volume
         return positions
 
     async def close_position(self, ticket: int) -> dict:
         assert self._transport is not None
-        res = await self._transport.request(
+        ticket = int(ticket)
+        # ProtoOAClosePositionReq requires the ACTUAL volume to close — 0 is
+        # rejected. Use the cached volume; reconcile if we don't have it.
+        volume = self._position_volume_cache.get(ticket)
+        if not volume:
+            await self.get_positions()
+            volume = self._position_volume_cache.get(ticket)
+        if not volume:
+            raise CTraderApiError('POSITION_NOT_FOUND', f'ticket={ticket}')
+        envs = await self._transport.request_until(
             PAYLOAD['CLOSE_POSITION_REQ'],
-            {'ctidTraderAccountId': self.ctid_trader_account_id, 'positionId': int(ticket), 'volume': 0},
-            PAYLOAD['EXECUTION_EVENT'],
+            {'ctidTraderAccountId': self.ctid_trader_account_id, 'positionId': ticket, 'volume': volume},
+            done=lambda env: (env.get('payload') or {}).get('executionType') in _ORDER_TERMINAL,
         )
-        exec_type = res.get('executionType', 'UNKNOWN')
-        self._position_symbol_cache.pop(int(ticket), None)
-        return {'status': 'CLOSED' if exec_type == 'ORDER_FILLED' else exec_type}
+        final = envs[-1].get('payload') or {}
+        exec_type = final.get('executionType')
+        if exec_type == EXEC_FILLED:
+            self._position_symbol_cache.pop(ticket, None)
+            self._position_volume_cache.pop(ticket, None)
+            deal = final.get('deal') or {}
+            cpd = deal.get('closePositionDetail') or {}
+            money_digits = int(deal.get('moneyDigits', 2))
+            return {
+                'status': 'CLOSED',
+                'closePrice': float(deal.get('executionPrice', 0) or 0),
+                'pnl': int(cpd.get('grossProfit', 0) or 0) / (10 ** money_digits),
+            }
+        return {'status': f'executionType={exec_type}'}
+
+    async def _amend_sltp(self, position_id: int, sl_price: float, tp_price: float) -> None:
+        """AMEND_POSITION_SLTP takes ABSOLUTE double prices (verified live);
+        the response is an EXECUTION_EVENT with executionType ORDER_REPLACED."""
+        assert self._transport is not None
+        payload = {
+            'ctidTraderAccountId': self.ctid_trader_account_id,
+            'positionId': int(position_id),
+        }
+        if sl_price:
+            payload['stopLoss'] = float(sl_price)
+        if tp_price:
+            payload['takeProfit'] = float(tp_price)
+        await self._transport.request_until(
+            PAYLOAD['AMEND_POSITION_SLTP_REQ'], payload,
+            done=lambda env: (env.get('payload') or {}).get('executionType') in (
+                EXEC_REPLACED, EXEC_CANCELLED, EXEC_REJECTED,
+            ),
+        )
 
     async def modify_position(self, ticket: int, sl_price: float, tp_price: float) -> dict:
-        assert self._transport is not None
-        symbol = self._position_symbol_cache.get(int(ticket))
-        if not symbol:
-            positions = await self.get_positions()
-            for p in positions:
-                if p.get('ticket') == int(ticket):
-                    symbol = p.get('symbol')
-                    self._position_symbol_cache[int(ticket)] = symbol
-                    break
-        if not symbol:
-            raise CTraderApiError('POSITION_NOT_FOUND', f'ticket={ticket}')
-        await self._transport.request(
-            PAYLOAD['AMEND_POSITION_SLTP_REQ'],
-            {
-                'ctidTraderAccountId': self.ctid_trader_account_id,
-                'positionId': int(ticket),
-                'stopLoss': self._to_ctrader_price(symbol, sl_price),
-                'takeProfit': self._to_ctrader_price(symbol, tp_price),
-            },
-            PAYLOAD['EXECUTION_EVENT'],
-        )
+        await self._amend_sltp(int(ticket), sl_price, tp_price)
         return {'status': 'OK'}
 
     async def get_account_info(self) -> object:
@@ -325,18 +452,68 @@ class CTraderClient(Broker):
             if deal.get('closePositionDetail') is None:
                 continue
             cpd = deal['closePositionDetail']
-            sym_id = int(deal.get('symbolId', 0))
-            sym = self._our_symbol_from_id(sym_id)
+            # Monetary fields are ints scaled by moneyDigits (verified live:
+            # grossProfit=1, moneyDigits=2 → $0.01). executionPrice is an
+            # absolute double on the DEAL, not on closePositionDetail.
+            money_digits = int(deal.get('moneyDigits', 2))
+            divisor = 10 ** money_digits
             return {
                 'ticket': int(ticket),
-                'closePrice': self._from_ctrader_price(sym, int(cpd.get('executionPrice', 0))),
+                'closePrice': float(deal.get('executionPrice', 0) or 0),
                 'closeTime': str(deal.get('executionTimestamp', 0)),
-                'pnl': int(cpd.get('grossProfit', 0)) / 100.0,
-                'commission': int(deal.get('commission', 0)) / 100.0,
-                'swap': int(cpd.get('swap', 0)) / 100.0,
+                'pnl': int(cpd.get('grossProfit', 0) or 0) / divisor,
+                'commission': int(cpd.get('commission', deal.get('commission', 0)) or 0) / divisor,
+                'swap': int(cpd.get('swap', 0) or 0) / divisor,
                 'reason': cpd.get('closeReason', 'UNKNOWN'),
             }
         return None
+
+    async def get_candles(self, symbol: str, timeframe: str, count: int) -> list:
+        """Recent OHLC bars via ProtoOAGetTrendbars (2137/2138). Used as the
+        market-data failover when the primary MetaApi feed is down.
+
+        Wire format (verified live): request accepts the period as an enum
+        NAME string ('M15'); bars come compressed as {low, deltaOpen,
+        deltaHigh, deltaClose, utcTimestampInMinutes, volume} with prices in
+        1/100_000 units. The most recent bar may still be forming — callers
+        (CandleService) already drop in-progress bars by openTime."""
+        from models import CandleData
+        assert self._transport is not None
+        tf = timeframe.upper()
+        tf_ms = TIMEFRAME_MS.get(tf)
+        if not tf_ms:
+            raise ValueError(f'Unsupported timeframe {timeframe}')
+        symbol_id = self._to_ctrader_symbol(symbol)
+        now_ms = int(time.time() * 1000)
+        res = await self._transport.request(
+            PAYLOAD['GET_TRENDBARS_REQ'],
+            {
+                'ctidTraderAccountId': self.ctid_trader_account_id,
+                'symbolId': symbol_id,
+                'period': tf,
+                'fromTimestamp': now_ms - tf_ms * (count + 3),
+                'toTimestamp': now_ms,
+            },
+            PAYLOAD['GET_TRENDBARS_RES'],
+            timeout=20.0,
+        )
+        candles = []
+        for b in res.get('trendbar', []):
+            low = int(b.get('low', 0))
+            open_ms = int(b.get('utcTimestampInMinutes', 0)) * 60_000
+            candles.append(CandleData(
+                symbol=symbol,
+                timeframe=tf,
+                openTime=datetime.fromtimestamp(open_ms / 1000, tz=timezone.utc)
+                    .strftime('%Y-%m-%dT%H:%M:%S.000Z'),
+                open=(low + int(b.get('deltaOpen', 0))) / PRICE_SCALE,
+                high=(low + int(b.get('deltaHigh', 0))) / PRICE_SCALE,
+                low=low / PRICE_SCALE,
+                close=(low + int(b.get('deltaClose', 0))) / PRICE_SCALE,
+                volume=float(b.get('volume', 0)),
+            ))
+        candles.sort(key=lambda c: c.open_time)
+        return candles[-count:]
 
     async def _ensure_fresh_token(self) -> None:
         """Refresh proactively if the access token expires in <60s."""
@@ -398,7 +575,7 @@ class CTraderClient(Broker):
                 return await fn()
             except CTraderApiError as e:
                 last_exc = e
-                if e.code == 'CH_CLIENT_AUTH_FAILURE':
+                if e.code in ('CH_CLIENT_AUTH_FAILURE', 'CH_ACCESS_TOKEN_INVALID'):
                     _logger.warning(f'{op_name}: auth failure → refresh + reconnect')
                     await self._refresh_token()
                     await self._reconnect()
