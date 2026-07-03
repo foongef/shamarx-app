@@ -114,6 +114,11 @@ class CTraderClient(Broker):
         self._transport: Optional[CTraderTransport] = None
         self._heartbeat_task: Optional[asyncio.Task] = None
         self._closed = False
+        # Trendbar throttle: Spotware rate-limits historical-data requests
+        # (BLOCKED_PAYLOAD_TYPE observed live when the candle cron bursts
+        # 8 pair×timeframe fetches at once). Space them out client-side.
+        self._trendbar_lock = asyncio.Lock()
+        self._last_trendbar_at = 0.0
 
         self._symbol_id_by_name: Dict[str, int] = {}
         self._symbol_name_by_id: Dict[int, str] = {}
@@ -468,6 +473,14 @@ class CTraderClient(Broker):
             }
         return None
 
+    async def _throttle_trendbars(self, min_interval: float = 0.3) -> None:
+        async with self._trendbar_lock:
+            now = asyncio.get_running_loop().time()
+            wait = self._last_trendbar_at + min_interval - now
+            if wait > 0:
+                await asyncio.sleep(wait)
+            self._last_trendbar_at = asyncio.get_running_loop().time()
+
     async def get_candles(self, symbol: str, timeframe: str, count: int) -> list:
         """Recent OHLC bars via ProtoOAGetTrendbars (2137/2138). Used as the
         market-data failover when the primary MetaApi feed is down.
@@ -485,18 +498,28 @@ class CTraderClient(Broker):
             raise ValueError(f'Unsupported timeframe {timeframe}')
         symbol_id = self._to_ctrader_symbol(symbol)
         now_ms = int(time.time() * 1000)
-        res = await self._transport.request(
-            PAYLOAD['GET_TRENDBARS_REQ'],
-            {
-                'ctidTraderAccountId': self.ctid_trader_account_id,
-                'symbolId': symbol_id,
-                'period': tf,
-                'fromTimestamp': now_ms - tf_ms * (count + 3),
-                'toTimestamp': now_ms,
-            },
-            PAYLOAD['GET_TRENDBARS_RES'],
-            timeout=20.0,
-        )
+        payload = {
+            'ctidTraderAccountId': self.ctid_trader_account_id,
+            'symbolId': symbol_id,
+            'period': tf,
+            'fromTimestamp': now_ms - tf_ms * (count + 3),
+            'toTimestamp': now_ms,
+        }
+        res = None
+        for attempt in range(2):
+            await self._throttle_trendbars()
+            try:
+                res = await self._transport.request(
+                    PAYLOAD['GET_TRENDBARS_REQ'], payload,
+                    PAYLOAD['GET_TRENDBARS_RES'], timeout=20.0,
+                )
+                break
+            except CTraderApiError as e:
+                if e.code == 'BLOCKED_PAYLOAD_TYPE' and attempt == 0:
+                    _logger.warning(f'trendbars rate-limited for {symbol} {tf} — backing off 2.5s')
+                    await asyncio.sleep(2.5)
+                    continue
+                raise
         candles = []
         for b in res.get('trendbar', []):
             low = int(b.get('low', 0))

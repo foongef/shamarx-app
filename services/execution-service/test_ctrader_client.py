@@ -430,3 +430,56 @@ async def test_get_candles_rejects_unknown_timeframe(monkeypatch):
     with pytest.raises(ValueError):
         await c.get_candles('EURUSD', 'M7', 10)
     await c.close()
+
+
+async def test_get_candles_spaces_out_requests(monkeypatch):
+    """Trendbar requests are throttled to ≥0.3s apart — Spotware rate-limits
+    bursts (BLOCKED_PAYLOAD_TYPE observed live when the cron fires 8 at once)."""
+    _initialized_client(monkeypatch, extra_canned={
+        PAYLOAD['GET_TRENDBARS_RES']: {'trendbar': []},
+    })
+    c = _client()
+    await c.initialize()
+    loop = asyncio.get_running_loop()
+    start = loop.time()
+    await asyncio.gather(
+        c.get_candles('EURUSD', 'M15', 5),
+        c.get_candles('EURUSD', 'H1', 3),
+        c.get_candles('XAUUSD', 'M15', 5),
+    )
+    assert loop.time() - start >= 0.6  # 3 calls → ≥2 spacing gaps
+    await c.close()
+
+
+async def test_get_candles_retries_once_on_rate_limit(monkeypatch):
+    class RateLimitedOnce(FakeTransport):
+        def __init__(self, canned):
+            super().__init__(canned)
+            self.trendbar_calls = 0
+
+        async def request(self, payload_type, payload, expected_response_type, timeout=10.0):
+            if payload_type == PAYLOAD['GET_TRENDBARS_REQ']:
+                self.trendbar_calls += 1
+                if self.trendbar_calls == 1:
+                    raise CTraderApiError('BLOCKED_PAYLOAD_TYPE', 'You are being rate limited')
+            return await super().request(payload_type, payload, expected_response_type, timeout)
+
+    canned = dict(BASE_CANNED)
+    canned[PAYLOAD['GET_TRENDBARS_RES']] = {'trendbar': [
+        {'volume': 1, 'low': 114417, 'deltaOpen': 0, 'deltaClose': 0, 'deltaHigh': 0,
+         'utcTimestampInMinutes': 29717550},
+    ]}
+    transport = RateLimitedOnce(canned)
+    monkeypatch.setenv('CTRADER_CLIENT_ID', 'x'); monkeypatch.setenv('CTRADER_CLIENT_SECRET', 'y')
+    monkeypatch.setattr('ctrader_client.CTraderTransport', lambda *a, **kw: transport)
+    monkeypatch.setattr('ctrader_client.asyncio.sleep', _instant_sleep)
+    c = _client()
+    await c.initialize()
+    candles = await c.get_candles('EURUSD', 'M15', 5)
+    assert transport.trendbar_calls == 2
+    assert len(candles) == 1
+    await c.close()
+
+
+async def _instant_sleep(_secs):
+    return None
