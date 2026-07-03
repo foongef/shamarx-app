@@ -64,6 +64,11 @@ class BrokerClientRegistry:
     def known_accounts(self) -> list:
         return list(self._clients.keys())
 
+    def peek(self, account_id: str) -> Optional[Broker]:
+        """Return the already-initialized client for account_id, or None.
+        Never creates — used by the candle-fallback path which has no creds."""
+        return self._clients.get(account_id)
+
 
 # Module-level singleton — main.py / routes.py imports this.
 registry = BrokerClientRegistry()

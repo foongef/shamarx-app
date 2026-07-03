@@ -194,6 +194,39 @@ async def resolve_client(
     return await registry.get_or_create(account_id, creds, x_broker, x_broker_mode)
 
 
+async def _fallback_candles(symbol: str, timeframe: str, count: int) -> list[CandleData]:
+    """Market-data failover: when the primary MetaApi feed is down, serve
+    candles from any connected cTrader client in the registry. The per-account
+    snapshot pollers keep a client warm whenever a CTRADER account is enabled,
+    so within ~1min of boot a fallback source exists. Loud error-level logging:
+    a cross-feed candle source is an emergency continuity measure (wick-level
+    differences can flip edge-triggered sweep detections), not a silent peer."""
+    for account_id in registry.known_accounts():
+        client = registry.peek(account_id)
+        if client is None or not hasattr(client, "get_candles"):
+            continue
+        # Skip MetaApi-backed clients — they share the same dead upstream.
+        if type(client).__name__ == "MetaApiMT5":
+            continue
+        try:
+            candles = await client.get_candles(symbol, timeframe, count)
+            if candles:
+                _logger.error(
+                    f"CANDLE FALLBACK ACTIVE: primary (MetaApi) feed down — serving "
+                    f"{symbol} {timeframe} from {type(client).__name__} account={account_id}"
+                )
+                r = _get_redis()
+                if r:
+                    try:
+                        r.set(f"live:candle-fallback:{symbol}:{timeframe}", type(client).__name__, ex=300)
+                    except Exception:
+                        pass
+                return candles
+        except Exception as e:
+            _logger.warning(f"candle fallback via account={account_id} failed: {e}")
+    return []
+
+
 @candles_router.get("", response_model=list[CandleData])
 async def get_candles(
     symbol: str = Query(default="XAUUSD"),
@@ -201,17 +234,43 @@ async def get_candles(
     count: int = Query(default=100, ge=1, le=1000),
 ):
     mode = get_mode()
+    if mode != "metaapi":
+        try:
+            return get_mock().get_candles(symbol, timeframe, count)
+        except Exception as e:
+            _logger.warning(f"get_candles (mock) failed for {symbol} {timeframe}: {e}")
+            return []
     try:
-        if mode == "metaapi":
-            return await get_metaapi().get_candles(symbol, timeframe, count)
-        return get_mock().get_candles(symbol, timeframe, count)
+        candles = await get_metaapi().get_candles(symbol, timeframe, count)
+        if candles:
+            return candles
+        _logger.warning(f"primary candle feed returned EMPTY for {symbol} {timeframe} — trying fallback")
     except Exception as e:
-        _logger.warning(f"get_candles failed for {symbol} {timeframe}: {e}")
+        _logger.warning(f"primary candle feed failed for {symbol} {timeframe}: {e} — trying fallback")
+    try:
+        return await _fallback_candles(symbol, timeframe, count)
+    except Exception as e:
+        _logger.error(f"candle fallback failed for {symbol} {timeframe}: {e}")
         # Return empty list — calling code should preserve last-known data
         return []
 
 
 account_scoped_router = APIRouter()
+
+
+@account_scoped_router.get("/{account_id}/candles", response_model=list[CandleData])
+async def get_account_candles(
+    account_id: str,
+    client: Broker = Depends(resolve_client),
+    symbol: str = Query(default="XAUUSD"),
+    timeframe: str = Query(default="M15"),
+    count: int = Query(default=100, ge=1, le=1000),
+):
+    """Candles from a specific account's broker connection (diagnostics +
+    explicit-source fetches). The engine's shared feed stays GET /candles."""
+    if not hasattr(client, "get_candles"):
+        raise HTTPException(501, f"{type(client).__name__} does not support candles")
+    return await client.get_candles(symbol, timeframe, count)
 
 
 @account_scoped_router.get("/{account_id}/positions", response_model=list[Position])
