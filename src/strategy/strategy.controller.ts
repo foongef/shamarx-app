@@ -60,8 +60,27 @@ export class StrategyController {
     try {
       const res = await firstValueFrom(this.httpService.get(`${SERVICE_URLS.EXECUTION}/account`));
       account = res.data;
-    } catch { /* ignore — broker may be down */ }
-    return { ...status, account };
+    } catch { /* broker unreachable — surfaced via accountStale below */ }
+
+    // Broker unreachable → serve the last-known-good reading so the UI can
+    // show a dimmed stale value + timestamp instead of pretending it's $0.00.
+    let accountStale = null;
+    if (!account) {
+      const snap = await this.prisma.equitySnapshot.findFirst({
+        where: { source: 'live', mode: 'metaapi' },
+        orderBy: { takenAt: 'desc' },
+        select: { balance: true, equity: true, openPositions: true, takenAt: true },
+      });
+      if (snap) {
+        accountStale = {
+          balance: snap.balance,
+          equity: snap.equity,
+          openPositions: snap.openPositions,
+          at: snap.takenAt,
+        };
+      }
+    }
+    return { ...status, account, accountStale };
   }
 
   @Post('live/start')
@@ -219,6 +238,48 @@ export class StrategyController {
       metaApiMode = res.data?.mode ?? 'unknown';
     } catch { /* unreachable */ }
 
+    // Candle-source failover: the execution service sets a 5-min-TTL redis
+    // flag per symbol/timeframe whenever it serves candles from the fallback
+    // (cTrader trendbars) instead of the primary MetaApi feed.
+    const fallbackPairs: string[] = [];
+    for (const sym of pairs) {
+      const flag =
+        (await this.redis.get(`live:candle-fallback:${sym}:M15`)) ??
+        (await this.redis.get(`live:candle-fallback:${sym}:H1`));
+      if (flag) fallbackPairs.push(sym);
+    }
+
+    // Per-account broker connectivity, derived from the equity-snapshot cron
+    // (1/min per enabled account; skipped on broker failure — so a growing
+    // age means the broker is unreachable). Only meaningful while the engine
+    // is running: snapshots pause when it's stopped.
+    const engineRunning = this.control.isRunning();
+    const enabledAccounts = await this.prisma.brokerAccount.findMany({
+      where: { isEnabled: true },
+      select: { id: true, name: true, broker: true },
+    });
+    const ACCOUNT_STALE_SEC = 3 * 60;
+    const accounts = await Promise.all(
+      enabledAccounts.map(async (a) => {
+        const snap = await this.prisma.equitySnapshot.findFirst({
+          where: { accountId: a.id },
+          orderBy: { takenAt: 'desc' },
+          select: { takenAt: true },
+        });
+        const ageSec = snap
+          ? Math.round((Date.now() - snap.takenAt.getTime()) / 1000)
+          : null;
+        return {
+          ...a,
+          lastSeenAt: snap?.takenAt ?? null,
+          connected: engineRunning
+            ? ageSec !== null && ageSec <= ACCOUNT_STALE_SEC
+            : null, // engine stopped — connectivity unknown, don't cry wolf
+        };
+      }),
+    );
+    const unreachable = accounts.filter((a) => a.connected === false);
+
     // Health verdict: a healthy cron polls every 60s, so ingestion within
     // the last 2 minutes means the loop is alive. Allow a bit of slack
     // (3min) to absorb cron jitter and broker latency.
@@ -226,21 +287,42 @@ export class StrategyController {
     const stalePairs = candleAges.filter(
       (c) => c.ageSec === null || c.ageSec > STALE_THRESHOLD_SEC,
     );
-    const verdict =
+
+    // Three states: unhealthy = the loop itself is broken (no candles / no
+    // execution service); degraded = trading continues but something needs
+    // attention (candles on fallback feed, or a broker unreachable).
+    const unhealthyReason =
       !executionReachable
         ? 'execution-service unreachable'
         : stalePairs.length === pairs.length
           ? 'no fresh candles for any pair'
           : stalePairs.length > 0
             ? `stale: ${stalePairs.map((s) => s.symbol).join(', ')}`
-            : 'healthy';
+            : null;
+    const degradedReasons: string[] = [];
+    if (fallbackPairs.length > 0) {
+      degradedReasons.push('candles on fallback feed (MetaApi down)');
+    }
+    for (const a of unreachable) {
+      degradedReasons.push(`${a.name} unreachable`);
+    }
+
+    const health: 'healthy' | 'degraded' | 'unhealthy' = unhealthyReason
+      ? 'unhealthy'
+      : degradedReasons.length > 0
+        ? 'degraded'
+        : 'healthy';
+    const verdict = unhealthyReason ?? (degradedReasons.join(' · ') || 'healthy');
 
     return {
       verdict,
-      healthy: verdict === 'healthy',
+      health,
+      healthy: health === 'healthy', // kept for backward compat
       executionReachable,
       executionMode: metaApiMode,
       pairs: candleAges,
+      candleFallback: fallbackPairs,
+      accounts,
       checkedAt: new Date().toISOString(),
     };
   }

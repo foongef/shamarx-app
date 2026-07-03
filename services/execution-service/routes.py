@@ -155,8 +155,12 @@ async def get_account():
         return get_mock().get_account_info()
     except Exception as e:
         _logger.warning(f"get_account failed: {e}")
-        # Return a clearly-zeroed snapshot rather than 500ing — frontend handles it
-        return AccountInfo(balance=0, equity=0, margin=0, freeMargin=0, openPositions=0)
+        # 503, NOT a zeroed snapshot: a $0.00 balance is a legitimate account
+        # state and callers can't tell it apart from "broker unreachable".
+        # Every consumer (status endpoint, risk service, session start/stop,
+        # equity snapshots) already try/catches this call and keeps its
+        # last-known/default value instead of recording a bogus zero.
+        raise HTTPException(status_code=503, detail=f"broker unreachable: {e}")
 
 
 @account_router.post("/mock/reset")

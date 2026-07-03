@@ -121,7 +121,21 @@ export class BrokerAccountsService {
       where: { userId },
       orderBy: [{ sortIndex: 'asc' }, { createdAt: 'asc' }],
     });
-    return rows.map((r: any) => this.toSafe(r));
+    // lastSeenAt = newest equity snapshot per account. The snapshot cron
+    // (1/min while the engine runs) skips unreachable brokers, so a stale
+    // lastSeenAt is the UI's "broker unreachable" signal.
+    const lastSeen = await this.prisma.equitySnapshot.groupBy({
+      by: ['accountId'],
+      where: { accountId: { in: rows.map((r: any) => r.id) } },
+      _max: { takenAt: true },
+    });
+    const lastSeenById = new Map(
+      lastSeen.map((s: any) => [s.accountId, s._max.takenAt]),
+    );
+    return rows.map((r: any) => ({
+      ...this.toSafe(r),
+      lastSeenAt: lastSeenById.get(r.id) ?? null,
+    }));
   }
 
   async findOneForUser(userId: string, id: string) {
