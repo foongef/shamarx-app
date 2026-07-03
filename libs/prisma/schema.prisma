@@ -371,6 +371,27 @@ model RiskConfig {
   updatedAt            DateTime @updatedAt
 }
 
+/// Decision log — one row per orchestrator evaluation (live per-account and
+/// replay). Powers live-vs-replay parity diffing: join live and replay rows
+/// on (symbol, barTime) and find the first bar where `decision` differs.
+/// Pruned after 45 days by DecisionLogService.
+model DecisionLog {
+  id              String   @id @default(uuid())
+  source          String   @default("live") // 'live' | 'replay'
+  accountId       String? // BrokerAccount id (live rows)
+  replaySessionId String? // LiveReplaySession id (replay rows)
+  symbol          String
+  barTime         DateTime // openTime of the newest CLOSED M15 bar evaluated
+  decision        String // SIGNAL | no-sweep | pending-only | cooldown | error
+  signalSide      String? // BUY | SELL when decision=SIGNAL
+  context         Json     @default("{}")
+  createdAt       DateTime @default(now())
+
+  @@index([symbol, barTime])
+  @@index([source, createdAt])
+  @@index([replaySessionId])
+}
+
 model JournalEntry {
   id             String   @id @default(uuid())
   tradeId        String   @unique

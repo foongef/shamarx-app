@@ -49,6 +49,7 @@ describe('LiveStrategyService — per-user gates', () => {
       {} as any, // BrokerAccountsService
       {} as any, // BrokerHttpClient
       {} as any, // LiveSmcOrchestratorRegistry
+      { record: () => undefined } as any, // DecisionLogService
     );
   });
 

@@ -4,6 +4,7 @@ import { Worker } from 'node:worker_threads';
 import * as path from 'node:path';
 import { LiveSmcOrchestrator } from '../../strategy/live/live-smc-orchestrator';
 import { ReplayEngine, CandleBundle, ReplayResult } from './replay-engine';
+import { DecisionLogService } from '../../strategy/live/decision-log.service';
 import { StartReplayDto, REPLAY_DEFAULT_PAIRS } from './dto/start-replay.dto';
 import { BacktestCandle } from '../engine/types';
 import { HTF_WARMUP_DAYS } from '../engine/warmup-constants';
@@ -23,6 +24,7 @@ export class LiveReplayService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly orchestrator: LiveSmcOrchestrator,
+    private readonly decisionLog: DecisionLogService,
   ) {}
 
   async createAndRun(dto: StartReplayDto): Promise<{ id: string; status: string }> {
@@ -63,12 +65,17 @@ export class LiveReplayService {
         }
       }
 
+      // Decision logging for parity diffing — only for parity-sized windows;
+      // a multi-year replay would emit hundreds of thousands of rows.
+      const windowDays =
+        (new Date(dto.endDate).getTime() - new Date(dto.startDate).getTime()) / 86_400_000;
       const cfg = {
         startDate: dto.startDate,
         endDate: dto.endDate,
         initialBalance: dto.initialBalance,
         riskPercent: dto.riskPercent,
         pairs,
+        logDecisions: windowDays <= 92,
       };
 
       // Run on a worker thread so the live-trading thread (NestJS event loop)
@@ -77,6 +84,33 @@ export class LiveReplayService {
       const result = USE_WORKER
         ? await this.runOnWorker(sessionId, cfg, candles)
         : await new ReplayEngine(this.orchestrator).run(cfg, candles);
+
+      // Persist per-bar decisions (chunked) so live-vs-replay divergence is a
+      // SQL join on (symbol, barTime) instead of guesswork.
+      if (result.decisions?.length) {
+        try {
+          for (let i = 0; i < result.decisions.length; i += 1000) {
+            await this.decisionLog.recordBatch(
+              result.decisions.slice(i, i + 1000).map((d) => ({
+                source: 'replay' as const,
+                replaySessionId: sessionId,
+                symbol: d.symbol,
+                barTime: new Date(d.barTime),
+                decision: d.decision,
+                signalSide: d.signalSide,
+                context: d.context,
+              })),
+            );
+          }
+          this.logger.log(
+            `Replay ${sessionId}: persisted ${result.decisions.length} decision-log rows`,
+          );
+        } catch (err) {
+          this.logger.warn(
+            `Replay ${sessionId}: decision-log persist failed: ${(err as Error).message}`,
+          );
+        }
+      }
 
       // Persist trades. We write CLOSED rows (entries that closed during the
       // run) — the broker emits a closed-position event that already has both

@@ -28,6 +28,18 @@ export interface ReplayConfig {
   pairs: string[];
   /** Hard cap on simultaneous open positions across all pairs. Default 4. */
   maxOpenPositions?: number;
+  /** Record one DecisionLog row per evaluation (live-vs-replay parity
+   *  diffing). The service enables this for windows <= ~3 months; a 2-year
+   *  replay would emit ~280k rows for no analytical gain. */
+  logDecisions?: boolean;
+}
+
+export interface ReplayDecision {
+  symbol: string;
+  barTime: string; // M15 openTime evaluated
+  decision: string; // SIGNAL | no-sweep | pending-only | cooldown
+  signalSide: string | null;
+  context: Record<string, unknown>;
 }
 
 /** Optional progress reporter — called every YIELD_EVERY events. Worker uses
@@ -47,6 +59,8 @@ export interface ReplayResult {
   closed: ClosedPosition[];
   finalBalance: number;
   maxConcurrent: number;
+  /** Present when cfg.logDecisions — persisted to DecisionLog by the service. */
+  decisions?: ReplayDecision[];
   metrics: {
     tradesCount: number;
     winsCount: number;
@@ -128,6 +142,7 @@ export class ReplayEngine {
 
     const opened: SimulatedPosition[] = [];
     const closed: ClosedPosition[] = [];
+    const decisions: ReplayDecision[] | null = cfg.logDecisions ? [] : null;
 
     let i = 0;
     const total = timeline.length;
@@ -197,6 +212,37 @@ export class ReplayEngine {
         indicators[symbol],
         cur,
       );
+      if (decisions) {
+        const tel = this.orchestrator.getTelemetry()[symbol];
+        const decision = signal
+          ? 'SIGNAL'
+          : (tel?.cooldownBarsRemaining ?? 0) > 0
+            ? 'cooldown'
+            : (tel?.pendingCount ?? 0) > 0
+              ? 'pending-only'
+              : 'no-sweep';
+        decisions.push({
+          symbol,
+          barTime: candle.openTime,
+          decision,
+          signalSide: signal?.side ?? null,
+          context: {
+            lastM15: bundle.m15[cur.m15 - 1]?.openTime ?? null,
+            lastH1: bundle.h1[cur.h1 - 1]?.openTime ?? null,
+            lastD1: bundle.d1[cur.d1 - 1]?.openTime ?? null,
+            equity: broker.getEquity(),
+            openDirections: Array.from(broker.getOpenDirections(symbol)),
+            totalOpenPositions: broker.totalOpenCount(),
+            riskPercent: cfg.riskPercent,
+            pendingCount: tel?.pendingCount ?? 0,
+            cooldownBarsRemaining: tel?.cooldownBarsRemaining ?? 0,
+            ...(signal
+              ? { entry: signal.entryPrice, sl: signal.slPrice, tp: signal.tpPrice, mode: signal.mode }
+              : {}),
+          },
+        });
+      }
+
       if (!signal) continue;
 
       // 4. Place order via simulated broker — opens 1 position per leg.
@@ -237,6 +283,7 @@ export class ReplayEngine {
       closed,
       finalBalance,
       maxConcurrent: broker.getMaxConcurrent(),
+      ...(decisions ? { decisions } : {}),
       metrics: {
         tradesCount: closedAll.length,
         winsCount: wins,

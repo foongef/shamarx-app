@@ -21,6 +21,8 @@ import { LiveControlService } from './live/live-control.service';
 import { EquitySnapshotService } from './live/equity-snapshot.service';
 import { LiveAnalyticsService } from './live/live-analytics.service';
 import { BrokerHttpClient } from './live/broker-http-client';
+import { DecisionLogService } from './live/decision-log.service';
+import { ExitReconciliationService } from './live/exit-reconciliation.service';
 import { LiveSmcOrchestratorRegistry } from './live/live-smc-orchestrator-registry';
 
 @Module({
@@ -39,6 +41,8 @@ import { LiveSmcOrchestratorRegistry } from './live/live-smc-orchestrator-regist
     EquitySnapshotService,
     LiveAnalyticsService,
     BrokerHttpClient,
+    DecisionLogService,
+    ExitReconciliationService,
     LiveSmcOrchestratorRegistry,
     {
       provide: 'ORCHESTRATOR_FACTORY',

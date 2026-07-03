@@ -32,6 +32,7 @@ import { JournalService } from '../../journal/journal.service';
 import { BrokerAccountsService } from '../../broker-accounts/broker-accounts.service';
 import { BrokerHttpClient } from './broker-http-client';
 import { LiveSmcOrchestratorRegistry } from './live-smc-orchestrator-registry';
+import { DecisionLogService } from './decision-log.service';
 import { getPreset, StrategyPreset } from '../presets';
 import type { BrokerAccount, User } from '@prisma/client';
 
@@ -264,6 +265,7 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
     private readonly brokerAccounts: BrokerAccountsService,
     private readonly brokerHttp: BrokerHttpClient,
     private readonly orchestratorRegistry: LiveSmcOrchestratorRegistry,
+    private readonly decisionLog: DecisionLogService,
   ) {
     this.liveMode = (this.config.get<string>('LIVE_MODE') || 'false').toLowerCase() === 'true';
     const pairsCsv = this.config.get<string>('STRATEGY_PAIRS') || 'XAUUSD,EURUSD,GBPUSD,USDJPY';
@@ -608,6 +610,43 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
       nowIso: evalTs,
       maxOpenPositions: preset.maxOpenPositions,
     });
+
+    // Decision log — one row per evaluation, for live-vs-replay parity
+    // diffing. Same inputs the orchestrator saw; never throws.
+    try {
+      const tel = orchestrator.getTelemetry()[symbol];
+      const decision = signal
+        ? 'SIGNAL'
+        : (tel?.cooldownBarsRemaining ?? 0) > 0
+          ? 'cooldown'
+          : (tel?.pendingCount ?? 0) > 0
+            ? 'pending-only'
+            : 'no-sweep';
+      this.decisionLog.record({
+        source: 'live',
+        accountId: account.id,
+        symbol,
+        barTime: new Date(evalTs),
+        decision,
+        signalSide: signal?.side ?? null,
+        context: {
+          lastM15: m15[m15.length - 1]?.openTime ?? null,
+          lastH1: h1[h1.length - 1]?.openTime ?? null,
+          lastD1: d1[d1.length - 1]?.openTime ?? null,
+          equity: accountInfo.equity,
+          openDirections: openPositions.map((p: any) => p.side),
+          totalOpenPositions: allOpenPositions.length,
+          riskPercent: preset.riskPercent,
+          pendingCount: tel?.pendingCount ?? 0,
+          cooldownBarsRemaining: tel?.cooldownBarsRemaining ?? 0,
+          ...(signal
+            ? { entry: signal.entryPrice, sl: signal.slPrice, tp: signal.tpPrice, mode: signal.mode }
+            : {}),
+        },
+      });
+    } catch (err) {
+      this.logger.debug(`decision-log record failed: ${(err as Error).message}`);
+    }
 
     if (!signal) {
       this.logger.debug(`[${account.name}/${symbol}] no signal`);
