@@ -66,8 +66,11 @@ export class StrategyController {
     // show a dimmed stale value + timestamp instead of pretending it's $0.00.
     let accountStale = null;
     if (!account) {
+      // Scope to the METAAPI-broker account: `mode` records the engine
+      // config (stamped on every account's snapshot), not the broker — the
+      // newest mode='metaapi' row may belong to a cTrader account.
       const snap = await this.prisma.equitySnapshot.findFirst({
-        where: { source: 'live', mode: 'metaapi' },
+        where: { source: 'live', mode: 'metaapi', account: { broker: 'METAAPI' } },
         orderBy: { takenAt: 'desc' },
         select: { balance: true, equity: true, openPositions: true, takenAt: true },
       });
