@@ -6,12 +6,12 @@ import { SERVICE_URLS } from '@app/common';
 import { BrokerAccountsService } from '../../broker-accounts/broker-accounts.service';
 import { CryptoService } from '../../crypto/crypto.service';
 
-interface BrokerPosition {
+export interface BrokerPosition {
   ticket: number; symbol: string; side: string; lotSize: number;
   entryPrice: number; currentPrice: number; sl: number; tp: number; pnl: number; openTime: string;
 }
 
-interface AccountInfo { balance: number; equity: number; margin: number; freeMargin: number; }
+export interface AccountInfo { balance: number; equity: number; margin: number; freeMargin: number; }
 
 interface OrderResponse { orderId: string; mt5Ticket: number | null; status: string; message?: string; }
 

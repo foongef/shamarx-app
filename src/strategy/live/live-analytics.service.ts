@@ -126,10 +126,10 @@ export class LiveAnalyticsService {
     };
   }
 
-  /** Trades for a single session. */
-  async sessionTrades(userId: string, sessionId: string) {
+  /** Trades for a single session, optionally scoped to one account. */
+  async sessionTrades(userId: string, sessionId: string, accountId?: string) {
     return this.prisma.trade.findMany({
-      where: { sessionId, account: { userId } },
+      where: { sessionId, account: { userId }, ...(accountId ? { accountId } : {}) },
       orderBy: { createdAt: 'desc' },
     });
   }
@@ -144,9 +144,9 @@ export class LiveAnalyticsService {
   }
 
   /** Aggregate stats across ALL sessions (or filtered). */
-  async sessionStats(userId: string, sessionId: string): Promise<LiveStats> {
+  async sessionStats(userId: string, sessionId: string, accountId?: string): Promise<LiveStats> {
     const trades = await this.prisma.trade.findMany({
-      where: { sessionId, account: { userId } },
+      where: { sessionId, account: { userId }, ...(accountId ? { accountId } : {}) },
     });
     return this.compute(trades);
   }
@@ -162,10 +162,12 @@ export class LiveAnalyticsService {
     limit?: number;
     sessionId?: string;
     mode?: 'mock' | 'metaapi';
+    accountId?: string;
   }) {
     const where: Record<string, unknown> = {
       source: 'live',
       account: { userId: opts.userId },
+      ...(opts.accountId ? { accountId: opts.accountId } : {}),
     };
 
     if (opts.sessionId) {

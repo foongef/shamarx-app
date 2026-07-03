@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, NotFoundException, Param, Post, Query } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
@@ -10,6 +10,7 @@ import { Roles } from '../auth/guards/roles.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { AuthenticatedUser } from '../auth/auth.service';
 import { LiveStrategyService } from './live/live-strategy.service';
+import { BrokerHttpClient } from './live/broker-http-client';
 import { PositionMonitorService } from './live/position-monitor.service';
 import { LiveControlService } from './live/live-control.service';
 import { LiveAnalyticsService } from './live/live-analytics.service';
@@ -27,6 +28,7 @@ export class StrategyController {
     private readonly httpService: HttpService,
     private readonly prisma: PrismaService,
     private readonly redis: RedisService,
+    private readonly brokerHttp: BrokerHttpClient,
   ) {}
 
   @Public()
@@ -184,6 +186,7 @@ export class StrategyController {
     @Query('hours') hours?: string,
     @Query('sessionId') sessionId?: string,
     @Query('mode') mode?: 'mock' | 'metaapi',
+    @Query('accountId') accountId?: string,
   ) {
     // If no explicit mode and no sessionId, scope to the current engine mode
     // so mock-test snapshots don't pollute the metaapi account arc.
@@ -194,6 +197,7 @@ export class StrategyController {
         hours: hours ? parseInt(hours, 10) : undefined,
         sessionId,
         mode: effectiveMode,
+        accountId,
       }),
     };
   }
@@ -355,21 +359,64 @@ export class StrategyController {
   }
 
   @Get('live/sessions/:id/trades')
-  @ApiOperation({ summary: 'Trades for one session' })
+  @ApiOperation({ summary: 'Trades for one session (optionally one account)' })
   async sessionTrades(
     @CurrentUser() me: AuthenticatedUser,
     @Param('id') id: string,
+    @Query('accountId') accountId?: string,
   ) {
-    return { trades: await this.analytics.sessionTrades(me.id, id) };
+    return { trades: await this.analytics.sessionTrades(me.id, id, accountId) };
   }
 
   @Get('live/sessions/:id/stats')
-  @ApiOperation({ summary: 'Aggregate stats for one session' })
+  @ApiOperation({ summary: 'Aggregate stats for one session (optionally one account)' })
   async sessionStats(
     @CurrentUser() me: AuthenticatedUser,
     @Param('id') id: string,
+    @Query('accountId') accountId?: string,
   ) {
-    return this.analytics.sessionStats(me.id, id);
+    return this.analytics.sessionStats(me.id, id, accountId);
+  }
+
+  @Get('live/accounts/:accountId/overview')
+  @ApiOperation({
+    summary:
+      'Per-account live snapshot: broker account info + open positions, with last-known-good fallback when the broker is unreachable',
+  })
+  async accountOverview(
+    @CurrentUser() me: AuthenticatedUser,
+    @Param('accountId') accountId: string,
+  ) {
+    const acct = await this.prisma.brokerAccount.findFirst({
+      where: { id: accountId, userId: me.id },
+      select: { id: true, name: true, broker: true, isEnabled: true },
+    });
+    if (!acct) throw new NotFoundException(`BrokerAccount ${accountId} not found`);
+
+    let live = null;
+    let positions: unknown[] = [];
+    try {
+      live = await this.brokerHttp.fetchAccount(accountId);
+      positions = await this.brokerHttp.fetchOpenPositions(accountId);
+    } catch { /* broker unreachable — stale fallback below */ }
+
+    let accountStale = null;
+    if (!live) {
+      const snap = await this.prisma.equitySnapshot.findFirst({
+        where: { accountId },
+        orderBy: { takenAt: 'desc' },
+        select: { balance: true, equity: true, openPositions: true, takenAt: true },
+      });
+      if (snap) {
+        accountStale = {
+          balance: snap.balance,
+          equity: snap.equity,
+          openPositions: snap.openPositions,
+          at: snap.takenAt,
+        };
+      }
+    }
+    return { account: acct, live, positions, accountStale };
   }
 
   @Post('live/evaluate/:symbol')
