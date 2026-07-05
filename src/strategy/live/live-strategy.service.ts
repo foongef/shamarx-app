@@ -545,8 +545,12 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
       return;
     }
     await Promise.all(
-      accounts.map((acct: any) =>
-        this.evaluatePairForAccount(symbol, acct).catch((err) =>
+      accounts.map((acct: any, i: number) =>
+        // Telemetry (activity feed / counters) is a GLOBAL per-bar view — emit
+        // from the first enabled account only, or every bar would double up
+        // per account. Without this the feed froze at the fan-out cutover
+        // (stuck replaying June 8 events) because only the legacy path emitted.
+        this.evaluatePairForAccount(symbol, acct, i === 0).catch((err) =>
           this.logger.error(
             `[${acct.name}/${symbol}] evaluate failed: ${(err as Error).message}`,
           ),
@@ -562,6 +566,7 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
   async evaluatePairForAccount(
     symbol: string,
     account: BrokerAccountWithUser,
+    emitTelemetry = false,
   ): Promise<SmcLiveSignal | null> {
     if (!account.user) {
       this.logger.warn(`account=${account.id} has no user — skipping`);
@@ -577,7 +582,7 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
     if (!preset.pairs.includes(symbol)) {
       return null;
     }
-    return this.evaluatePairForAccountInternal(symbol, account, preset);
+    return this.evaluatePairForAccountInternal(symbol, account, preset, emitTelemetry);
   }
 
   /**
@@ -589,6 +594,7 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
     symbol: string,
     account: { id: string; name: string; user: { email: string } },
     preset: StrategyPreset,
+    emitTelemetry = false,
   ): Promise<SmcLiveSignal | null> {
     const [m15, h1, d1, openPositions, allOpenPositions, accountInfo] = await Promise.all([
       this.fetchCandles(symbol, Timeframe.M15, M15_BUFFER),
@@ -601,6 +607,7 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
 
     const evalTs = m15[m15.length - 1]?.openTime ?? new Date().toISOString();
     const orchestrator = await this.orchestratorRegistry.getOrCreate(account.id);
+    const pendingBefore = orchestrator.getTelemetry()[symbol]?.pendingCount ?? 0;
 
     const signal = orchestrator.evaluate(symbol, m15, h1, d1, {
       accountEquity: accountInfo.equity,
@@ -610,6 +617,32 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
       nowIso: evalTs,
       maxOpenPositions: preset.maxOpenPositions,
     });
+
+    // Telemetry feed (activity feed + counters) — mirrors the legacy path's
+    // events so the Engine Worker view stays live under fan-out.
+    if (emitTelemetry) {
+      const post = orchestrator.getTelemetry()[symbol];
+      const pendingAfter = post?.pendingCount ?? 0;
+      if (pendingAfter > pendingBefore && post!.pending.length > 0) {
+        const fresh = post!.pending[post!.pending.length - 1];
+        this.pushEvent({
+          ts: evalTs, symbol, type: 'sweep-detected',
+          direction: fresh.direction, mode: fresh.mode, entryHint: fresh.entryHint,
+        });
+      }
+      if (signal) {
+        this.pushEvent({
+          ts: evalTs, symbol, type: 'signal-fired',
+          side: signal.side, mode: signal.mode, entryPrice: signal.entryPrice,
+        });
+      } else {
+        const decision =
+          (post?.cooldownBarsRemaining ?? 0) > 0 ? 'cooldown'
+          : pendingAfter > 0 ? 'pending-only'
+          : 'no-sweep';
+        this.pushEvent({ ts: evalTs, symbol, type: 'eval', decision });
+      }
+    }
 
     // Decision log — one row per evaluation, for live-vs-replay parity
     // diffing. Same inputs the orchestrator saw; never throws.

@@ -84,6 +84,7 @@ describe('LiveStrategyService — per-user gates', () => {
       'EURUSD',
       acct,
       expect.objectContaining({ riskPercent: 1.0 }),
+      false, // emitTelemetry — only the first enabled account emits
     );
   });
 });
