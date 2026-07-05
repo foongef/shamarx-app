@@ -107,22 +107,50 @@ export class LiveAnalyticsService {
   }
 
   /** Recompute trades count + wins + losses + realizedPnl from Trade rows.
-   *  Returns the session with overridden aggregate fields. */
+   *  Returns the session with overridden aggregate fields plus a per-account
+   *  P&L breakdown (the fan-out engine trades every enabled account on the
+   *  same signals — one session-level number hides who earned what). */
   private async recomputeSessionAggregates<T extends { id: string }>(session: T) {
     const trades = await this.prisma.trade.findMany({
       where: { sessionId: session.id },
-      select: { pnl: true, status: true },
+      select: {
+        pnl: true, status: true, accountId: true,
+        account: { select: { name: true, broker: true } },
+      },
     });
     const closed = trades.filter((t) => t.status === 'CLOSED');
     const realized = closed
       .filter((t) => t.pnl !== null)
       .reduce((sum, t) => sum + (t.pnl ?? 0), 0);
+
+    const byAccount = new Map<string, {
+      accountId: string | null; name: string; broker: string;
+      tradesCount: number; realizedPnl: number;
+    }>();
+    for (const t of trades) {
+      const key = t.accountId ?? 'unassigned';
+      const agg = byAccount.get(key) ?? {
+        accountId: t.accountId,
+        name: t.account?.name ?? 'Unassigned',
+        broker: t.account?.broker ?? '—',
+        tradesCount: 0,
+        realizedPnl: 0,
+      };
+      agg.tradesCount++;
+      if (t.status === 'CLOSED' && t.pnl !== null) agg.realizedPnl += t.pnl;
+      byAccount.set(key, agg);
+    }
+    const perAccount = Array.from(byAccount.values())
+      .map((a) => ({ ...a, realizedPnl: Math.round(a.realizedPnl * 100) / 100 }))
+      .sort((a, b) => b.realizedPnl - a.realizedPnl);
+
     return {
       ...session,
       tradesCount: trades.length,
       winsCount: closed.filter((t) => (t.pnl ?? 0) > 0).length,
       lossesCount: closed.filter((t) => (t.pnl ?? 0) < 0).length,
       realizedPnl: Math.round(realized * 100) / 100,
+      perAccount,
     };
   }
 
