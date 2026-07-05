@@ -112,7 +112,14 @@ export class LiveAnalyticsService {
    *  same signals — one session-level number hides who earned what). */
   private async recomputeSessionAggregates<T extends { id: string }>(session: T) {
     const trades = await this.prisma.trade.findMany({
-      where: { sessionId: session.id },
+      where: {
+        sessionId: session.id,
+        // ORPHAN rows are reconciliation artifacts (pnl=0, no broker fill,
+        // no account stamp) — excluded here for consistency with compute()
+        // so session counts and the per-account breakdown reflect real
+        // trades only (they surfaced as a bogus "Unassigned" account chip).
+        OR: [{ exitReason: null }, { exitReason: { not: 'ORPHAN' } }],
+      },
       select: {
         pnl: true, status: true, accountId: true,
         account: { select: { name: true, broker: true } },
