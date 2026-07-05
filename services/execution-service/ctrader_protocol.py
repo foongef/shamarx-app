@@ -104,6 +104,18 @@ class CTraderTransport:
         self._ws = await websockets.connect(self.url, subprotocols=['spotware-connect'])
         self._reader_task = asyncio.create_task(self._reader_loop())
 
+    @property
+    def is_alive(self) -> bool:
+        """False once the reader loop has exited — i.e. the server closed the
+        socket (cTrader demo sends 1000 'Bye' over the weekend) or it errored.
+        Used by the client to reconnect-on-demand instead of serving 500s
+        forever from a cached-but-dead connection."""
+        return (
+            self._ws is not None
+            and self._reader_task is not None
+            and not self._reader_task.done()
+        )
+
     async def close(self) -> None:
         if self._reader_task:
             self._reader_task.cancel()

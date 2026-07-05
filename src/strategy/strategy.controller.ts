@@ -116,16 +116,41 @@ export class StrategyController {
   }
 
   @Get('live/candles')
-  @ApiOperation({ summary: 'Recent candles for a symbol/timeframe (proxy)' })
+  @ApiOperation({ summary: 'Recent candles for a symbol/timeframe' })
   async candles(
     @Query('symbol') symbol: string,
     @Query('timeframe') timeframe = 'M15',
     @Query('count') count = '100',
   ) {
+    const take = Math.min(parseInt(count, 10) || 100, 1000);
+    // Serve from the Candle table — the engine's single source of truth.
+    // A live broker fetch here would blank the chart whenever brokers are
+    // down, which is exactly when you want to SEE the last data.
+    const rows = await this.prisma.candle.findMany({
+      where: { symbol: (symbol || '').toUpperCase(), timeframe },
+      orderBy: { openTime: 'desc' },
+      take,
+    });
+    if (rows.length > 0) {
+      return {
+        candles: rows.reverse().map((r) => ({
+          symbol: r.symbol,
+          timeframe: r.timeframe,
+          openTime: r.openTime.toISOString(),
+          open: r.open,
+          high: r.high,
+          low: r.low,
+          close: r.close,
+          volume: r.volume,
+        })),
+      };
+    }
+    // Table empty for this symbol/timeframe (e.g. fresh install) — fall back
+    // to a direct broker fetch.
     try {
       const res = await firstValueFrom(
         this.httpService.get(`${SERVICE_URLS.EXECUTION}/candles`, {
-          params: { symbol, timeframe, count: parseInt(count, 10) },
+          params: { symbol, timeframe, count: take },
         }),
       );
       return { candles: res.data || [] };

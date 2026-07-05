@@ -17,6 +17,8 @@ class FakeTransport:
     """Records sent messages, returns canned responses keyed by expected
     response type (request) or by request payload type (request_until)."""
 
+    is_alive = True  # real transports expose this; dead-transport tests flip it
+
     def __init__(self, canned: dict[int, dict] | None = None, event_flows: dict[int, list] | None = None):
         self.canned = canned or {}
         # request payload type → list of envelopes to emit for request_until
@@ -483,3 +485,59 @@ async def test_get_candles_retries_once_on_rate_limit(monkeypatch):
 
 async def _instant_sleep(_secs):
     return None
+
+
+async def test_read_op_reconnects_after_weekend_disconnect(monkeypatch):
+    """cTrader closes the socket on weekends (1000 'Bye'); the cached client
+    must reconnect on the next call instead of 500ing forever."""
+    transport = _initialized_client(monkeypatch, extra_canned={
+        PAYLOAD['TRADER_RES']: {'trader': {'balance': 99995, 'moneyDigits': 2}},
+        PAYLOAD['RECONCILE_RES']: {'position': []},
+    })
+    c = _client()
+    await c.initialize()
+
+    calls = {'n': 0}
+    real_request = transport.request
+
+    async def flaky_request(payload_type, payload, expected_response_type, timeout=10.0):
+        if payload_type == PAYLOAD['TRADER_REQ'] and calls['n'] == 0:
+            calls['n'] += 1
+            raise CTraderApiError('DISCONNECTED', 'WebSocket closed')
+        return await real_request(payload_type, payload, expected_response_type, timeout)
+
+    transport.request = flaky_request
+    reconnects = []
+
+    async def fake_reconnect():
+        reconnects.append(1)
+
+    c._reconnect = fake_reconnect
+    info = await c.get_account_info()
+    assert len(reconnects) == 1
+    assert info.balance == pytest.approx(999.95)
+    await c.close()
+
+
+async def test_place_order_reconnects_dead_transport_before_send(monkeypatch):
+    from models import OrderRequest
+    transport = _initialized_client(monkeypatch, event_flows={
+        PAYLOAD['NEW_ORDER_REQ']: _order_flow(),
+        PAYLOAD['AMEND_POSITION_SLTP_REQ']: _amend_flow(),
+    })
+    c = _client()
+    await c.initialize()
+    transport.is_alive = False  # weekend disconnect
+    reconnects = []
+
+    async def fake_reconnect():
+        reconnects.append(1)
+        transport.is_alive = True
+
+    c._reconnect = fake_reconnect
+    req = OrderRequest(symbol='EURUSD', side='BUY', lotSize=0.01,
+                       entryPrice=1.14463, slPrice=1.13463, tpPrice=1.15463)
+    res = await c.place_order(req)
+    assert len(reconnects) == 1  # reconnected BEFORE sending — never mid-flight retry
+    assert res.status == 'FILLED'
+    await c.close()

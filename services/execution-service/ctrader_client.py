@@ -246,7 +246,7 @@ class CTraderClient(Broker):
             except Exception as e:
                 _logger.warning(f'CTrader heartbeat failed: {e}')
 
-    async def place_order(self, request) -> object:
+    async def _place_order_impl(self, request) -> object:
         from models import OrderResponse
         assert self._transport is not None
         symbol_id = self._to_ctrader_symbol(request.symbol)
@@ -321,7 +321,7 @@ class CTraderClient(Broker):
             message=f'{exec_type} @ {fill_price}',
         )
 
-    async def get_positions(self, symbol: Optional[str] = None) -> list:
+    async def _get_positions_impl(self, symbol: Optional[str] = None) -> list:
         assert self._transport is not None
         res = await self._transport.request(
             PAYLOAD['RECONCILE_REQ'],
@@ -356,14 +356,14 @@ class CTraderClient(Broker):
             self._position_volume_cache[int(p['positionId'])] = volume
         return positions
 
-    async def close_position(self, ticket: int) -> dict:
+    async def _close_position_impl(self, ticket: int) -> dict:
         assert self._transport is not None
         ticket = int(ticket)
         # ProtoOAClosePositionReq requires the ACTUAL volume to close — 0 is
         # rejected. Use the cached volume; reconcile if we don't have it.
         volume = self._position_volume_cache.get(ticket)
         if not volume:
-            await self.get_positions()
+            await self._get_positions_impl()
             volume = self._position_volume_cache.get(ticket)
         if not volume:
             raise CTraderApiError('POSITION_NOT_FOUND', f'ticket={ticket}')
@@ -406,11 +406,56 @@ class CTraderClient(Broker):
             ),
         )
 
-    async def modify_position(self, ticket: int, sl_price: float, tp_price: float) -> dict:
+    async def _modify_position_impl(self, ticket: int, sl_price: float, tp_price: float) -> dict:
         await self._amend_sltp(int(ticket), sl_price, tp_price)
         return {'status': 'OK'}
 
+    # ----- Public API — reconnect-aware wrappers -----
+    # The cTrader server closes the WebSocket on weekends / idle (1000 "Bye");
+    # the registry caches this client, so without these wrappers every call
+    # after a disconnect would 500 forever off a dead transport.
+    #
+    # Read-only ops retry through _with_reconnect (safe to repeat). Mutating
+    # ops only reconnect BEFORE sending — a retry after an ambiguous mid-
+    # flight failure could double-execute (e.g. two market orders).
+
+    async def _ensure_connected(self) -> None:
+        if self._transport is None or not self._transport.is_alive:
+            _logger.warning(
+                f'CTraderClient: transport dead for account={self.ctid_trader_account_id} — reconnecting',
+            )
+            await self._ensure_fresh_token()
+            await self._reconnect()
+
+    async def get_positions(self, symbol: Optional[str] = None) -> list:
+        return await self._with_reconnect(
+            'get_positions', lambda: self._get_positions_impl(symbol), max_attempts=3)
+
     async def get_account_info(self) -> object:
+        return await self._with_reconnect(
+            'get_account_info', self._get_account_info_impl, max_attempts=3)
+
+    async def get_position_close_info(self, ticket: int) -> Optional[dict]:
+        return await self._with_reconnect(
+            'get_position_close_info', lambda: self._get_position_close_info_impl(ticket), max_attempts=3)
+
+    async def get_candles(self, symbol: str, timeframe: str, count: int) -> list:
+        return await self._with_reconnect(
+            'get_candles', lambda: self._get_candles_impl(symbol, timeframe, count), max_attempts=3)
+
+    async def place_order(self, request) -> object:
+        await self._ensure_connected()
+        return await self._place_order_impl(request)
+
+    async def close_position(self, ticket: int) -> dict:
+        await self._ensure_connected()
+        return await self._close_position_impl(ticket)
+
+    async def modify_position(self, ticket: int, sl_price: float, tp_price: float) -> dict:
+        await self._ensure_connected()
+        return await self._modify_position_impl(ticket, sl_price, tp_price)
+
+    async def _get_account_info_impl(self) -> object:
         from models import AccountInfo
         assert self._transport is not None
         trader_res = await self._transport.request(
@@ -438,7 +483,7 @@ class CTraderClient(Broker):
             openPositions=open_positions,
         )
 
-    async def get_position_close_info(self, ticket: int) -> Optional[dict]:
+    async def _get_position_close_info_impl(self, ticket: int) -> Optional[dict]:
         assert self._transport is not None
         now_ms = int(time.time() * 1000)
         seven_days_ms = 7 * 24 * 3600 * 1000
@@ -481,7 +526,7 @@ class CTraderClient(Broker):
                 await asyncio.sleep(wait)
             self._last_trendbar_at = asyncio.get_running_loop().time()
 
-    async def get_candles(self, symbol: str, timeframe: str, count: int) -> list:
+    async def _get_candles_impl(self, symbol: str, timeframe: str, count: int) -> list:
         """Recent OHLC bars via ProtoOAGetTrendbars (2137/2138). Used as the
         market-data failover when the primary MetaApi feed is down.
 
@@ -601,6 +646,12 @@ class CTraderClient(Broker):
                 if e.code in ('CH_CLIENT_AUTH_FAILURE', 'CH_ACCESS_TOKEN_INVALID'):
                     _logger.warning(f'{op_name}: auth failure → refresh + reconnect')
                     await self._refresh_token()
+                    await self._reconnect()
+                    continue
+                if e.code == 'DISCONNECTED':
+                    # Server closed the socket (weekend "Bye" / idle timeout) —
+                    # reconnect and retry; the cached client must self-heal.
+                    _logger.warning(f'{op_name}: transport disconnected → reconnect')
                     await self._reconnect()
                     continue
                 raise
