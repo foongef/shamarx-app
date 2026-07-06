@@ -328,6 +328,12 @@ async def test_get_positions_translates_real_response(monkeypatch):
     assert p['entryPrice'] == pytest.approx(1.14463)  # already a double
     assert p['sl'] == pytest.approx(1.13463)
     assert p['tp'] == pytest.approx(1.15463)
+    # openTimestamp 1783075061310 ms → ISO, not a raw digit string that the
+    # UI's new Date() renders as "Invalid Date"
+    assert p['openTime'] == '2026-07-03T10:37:41.000Z'
+    # no DB in unit tests → current falls back to entry, pnl 0
+    assert p['currentPrice'] == pytest.approx(1.14463)
+    assert p['pnl'] == 0.0
     await c.close()
 
 

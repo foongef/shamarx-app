@@ -321,6 +321,25 @@ class CTraderClient(Broker):
             message=f'{exec_type} @ {fill_price}',
         )
 
+    async def _latest_stored_close(self, symbol: str) -> Optional[float]:
+        """Newest M15 close from the shared Candle table — cheap local query,
+        used to estimate current price / unrealized P&L for display (cTrader's
+        reconcile carries no live prices, and per-poll trendbar fetches would
+        hit Spotware's rate limit). Returns None outside the API service
+        context (e.g. unit tests without DATABASE_URL)."""
+        try:
+            from db import get_pool
+            pool = await get_pool()
+            async with pool.acquire() as conn:
+                row = await conn.fetchrow(
+                    'SELECT close FROM "Candle" WHERE symbol=$1 AND timeframe=$2 '
+                    'ORDER BY "openTime" DESC LIMIT 1',
+                    symbol, 'M15',
+                )
+                return float(row['close']) if row else None
+        except Exception:
+            return None
+
     async def _get_positions_impl(self, symbol: Optional[str] = None) -> list:
         assert self._transport is not None
         res = await self._transport.request(
@@ -329,6 +348,7 @@ class CTraderClient(Broker):
             PAYLOAD['RECONCILE_RES'],
         )
         positions = []
+        close_cache: Dict[str, Optional[float]] = {}
         for p in res.get('position', []):
             td = p.get('tradeData', {})
             sym_id = int(td.get('symbolId', 0))
@@ -340,17 +360,35 @@ class CTraderClient(Broker):
             entry_price = float(p.get('price', 0) or 0)
             volume = int(td.get('volume', 0) or 0)
             open_ts = int(td.get('openTimestamp', 0) or 0)
+            # openTimestamp is epoch-ms — the UI does new Date(openTime), so a
+            # raw digit-string renders as "Invalid Date". Emit ISO like MetaApi.
+            open_iso = (
+                datetime.fromtimestamp(open_ts / 1000, tz=timezone.utc)
+                .strftime('%Y-%m-%dT%H:%M:%S.000Z') if open_ts else ''
+            )
+            # Estimate current price / unrealized P&L from the latest stored
+            # M15 close (<=15min stale; honest-ish, unlike a hardcoded $0.00).
+            if sym not in close_cache:
+                close_cache[sym] = await self._latest_stored_close(sym)
+            current = close_cache[sym] or entry_price
+            lots = self._volume_to_lots(sym_id, volume)
+            side = TRADE_SIDE_BY_INT.get(td.get('tradeSide'), str(td.get('tradeSide', '')))
+            diff = (current - entry_price) if side == 'BUY' else (entry_price - current)
+            lot_units = 100 if sym == 'XAUUSD' else 100_000
+            raw_pnl = diff * lots * lot_units
+            if sym.endswith('JPY') and current:
+                raw_pnl /= current
             positions.append({
                 'ticket': int(p['positionId']),
                 'symbol': sym,
-                'side': TRADE_SIDE_BY_INT.get(td.get('tradeSide'), str(td.get('tradeSide', ''))),
-                'lotSize': self._volume_to_lots(sym_id, volume),
+                'side': side,
+                'lotSize': lots,
                 'entryPrice': entry_price,
-                'currentPrice': entry_price,  # cTrader reconcile doesn't include current; strategy doesn't depend on it
+                'currentPrice': current,
                 'sl': float(p.get('stopLoss', 0) or 0),
                 'tp': float(p.get('takeProfit', 0) or 0),
-                'pnl': 0.0,
-                'openTime': str(open_ts),
+                'pnl': round(raw_pnl, 2),
+                'openTime': open_iso,
             })
             self._position_symbol_cache[int(p['positionId'])] = sym
             self._position_volume_cache[int(p['positionId'])] = volume
