@@ -141,7 +141,7 @@ export class PositionMonitorService implements OnModuleInit {
       where: { symbol, status: 'OPEN', mt5Ticket: { not: null } },
     });
 
-    await this.reconcileTrades(symbol, dbOpenTrades, brokerTicketSet);
+    await this.reconcileTrades(symbol, dbOpenTrades, brokerTicketSet, null);
   }
 
   /**
@@ -161,7 +161,7 @@ export class PositionMonitorService implements OnModuleInit {
       where: { symbol, status: 'OPEN', mt5Ticket: { not: null }, accountId: account.id },
     });
 
-    await this.reconcileTrades(symbol, dbOpenTrades, brokerTicketSet);
+    await this.reconcileTrades(symbol, dbOpenTrades, brokerTicketSet, account.id);
   }
 
   /**
@@ -183,6 +183,7 @@ export class PositionMonitorService implements OnModuleInit {
       tpPrice: number;
     }>,
     brokerTicketSet: Set<number>,
+    accountId: string | null,
   ): Promise<void> {
     for (const trade of dbOpenTrades) {
       if (trade.mt5Ticket && brokerTicketSet.has(trade.mt5Ticket)) {
@@ -211,6 +212,7 @@ export class PositionMonitorService implements OnModuleInit {
         trade.entryPrice,
         trade.slPrice,
         trade.tpPrice,
+        accountId,
       );
     }
   }
@@ -230,28 +232,47 @@ export class PositionMonitorService implements OnModuleInit {
     entryPrice: number,
     slPrice: number,
     tpPrice: number,
+    accountId: string | null = null,
   ): Promise<void> {
     try {
-      // 1. Try to fetch the REAL close info from broker history (MetaApi deals
-      //    or mock close-history). This gives accurate close price + realized
-      //    P&L (including commission and swap on metaapi).
+      // 1. Try to fetch the REAL close info from broker history. Fan-out
+      //    trades go through the trade's OWN account (cTrader deal history /
+      //    per-account MetaApi) — the legacy global endpoint only knows the
+      //    default MetaApi connection, which guaranteed *_EST estimates for
+      //    every cTrader close. Accepts both response shapes:
+      //    {closePrice, realizedPnl, exitReason} and {closePrice, pnl, reason}.
       let closePrice: number | null = null;
       let pnl: number | null = null;
       let exitReason: string = 'CLOSED';
       let closedAt: Date = new Date();
 
       try {
-        const histRes = await firstValueFrom(
-          this.httpService.get(`${SERVICE_URLS.EXECUTION}/positions/${ticket}/history`),
-        );
-        const h = histRes.data;
+        let h: any = null;
+        if (accountId) {
+          h = await this.brokerHttp.fetchPositionHistory(accountId, ticket).catch(() => null);
+        }
+        if (!h) {
+          const histRes = await firstValueFrom(
+            this.httpService.get(`${SERVICE_URLS.EXECUTION}/positions/${ticket}/history`),
+          );
+          h = histRes.data;
+        }
         if (h && typeof h === 'object') {
           if (typeof h.closePrice === 'number') closePrice = h.closePrice;
-          if (typeof h.realizedPnl === 'number') pnl = h.realizedPnl;
-          if (h.exitReason) exitReason = String(h.exitReason);
+          const rawPnl = typeof h.realizedPnl === 'number' ? h.realizedPnl
+            : typeof h.pnl === 'number' ? h.pnl : null;
+          if (rawPnl !== null) pnl = rawPnl;
+          const rawReason = h.exitReason ?? h.reason;
+          if (rawReason) {
+            const r = String(rawReason).toUpperCase();
+            exitReason = r.includes('TP') || r.includes('TAKE') ? 'TP'
+              : r.includes('SL') || r.includes('STOP') ? 'SL'
+              : String(rawReason);
+          }
           if (h.closeTime) {
-            const t = new Date(h.closeTime);
-            if (!isNaN(t.getTime())) closedAt = t;
+            const rawT = h.closeTime;
+            const t = /^\d+$/.test(String(rawT)) ? new Date(Number(rawT)) : new Date(rawT);
+            if (!isNaN(t.getTime()) && t.getTime() > 0) closedAt = t;
           }
         }
       } catch (err) {

@@ -16,6 +16,11 @@ export class SpreadService {
 
   @Cron('*/5 * * * * *') // Every 5 seconds
   async pollSpread() {
+    // Dead code guard: the /account endpoint has never returned bid/ask, so
+    // this poll has never stored a real spread — and at 5s cadence it floods
+    // the logs with 503s whenever the default broker is down. Off unless
+    // explicitly enabled for future tick-endpoint work.
+    if ((process.env.ENABLE_SPREAD_POLL || 'false').toLowerCase() !== 'true') return;
     try {
       const response = await firstValueFrom(
         this.httpService.get(`${SERVICE_URLS.EXECUTION}/account`),
