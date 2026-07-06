@@ -387,6 +387,7 @@ export class StrategyController {
   ) {
     const sessions = await this.analytics.listSessions({
       userId: me.id,
+      isAdmin: me.role === 'SUPERADMIN',
       limit: limit ? parseInt(limit, 10) : 50,
     });
     return { sessions };
@@ -398,7 +399,7 @@ export class StrategyController {
     @CurrentUser() me: AuthenticatedUser,
     @Param('id') id: string,
   ) {
-    const session = await this.analytics.getSession(me.id, id);
+    const session = await this.analytics.getSession(me.id, id, me.role === 'SUPERADMIN');
     if (!session) return { session: null };
     return { session };
   }

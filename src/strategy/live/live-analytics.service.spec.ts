@@ -170,3 +170,68 @@ describe('LiveAnalyticsService — ORPHAN exclusion (2026-06-08 regression)', ()
     ]);
   });
 });
+
+describe('LiveAnalyticsService — participant session scoping (tenancy)', () => {
+  function svc(over: any = {}) {
+    const prisma = {
+      liveSession: {
+        findUnique: over.findUnique ?? jest.fn(),
+        findMany: over.findMany ?? jest.fn().mockResolvedValue([]),
+      },
+      brokerAccount: { count: over.acctCount ?? jest.fn().mockResolvedValue(0) },
+      trade: {
+        findMany: over.tradeFindMany ?? jest.fn().mockResolvedValue([]),
+        count: over.tradeCount ?? jest.fn().mockResolvedValue(0),
+      },
+    } as any;
+    return { service: new LiveAnalyticsService(prisma), prisma };
+  }
+
+  it('getSession: non-owner with an enabled account can open the RUNNING session, scoped to their trades', async () => {
+    const { service, prisma } = svc({
+      findUnique: jest.fn().mockResolvedValue({ id: 'sess-1', status: 'RUNNING', startedAt: new Date() }),
+      acctCount: jest.fn().mockResolvedValue(1),
+      tradeCount: jest.fn().mockResolvedValue(0),
+      tradeFindMany: jest.fn().mockResolvedValue([]),
+    });
+    const res = await service.getSession('grace', 'sess-1', false);
+    expect(res).not.toBeNull();
+    // Aggregates must be scoped to Grace's account, never global.
+    const where = prisma.trade.findMany.mock.calls[0][0].where;
+    expect(where.account).toEqual({ userId: 'grace' });
+  });
+
+  it('getSession: non-owner with no account and no trades in an ENDED session → null', async () => {
+    const { service } = svc({
+      findUnique: jest.fn().mockResolvedValue({ id: 'sess-1', status: 'ENDED', startedAt: new Date() }),
+      acctCount: jest.fn().mockResolvedValue(0),
+      tradeCount: jest.fn().mockResolvedValue(0),
+    });
+    expect(await service.getSession('stranger', 'sess-1', false)).toBeNull();
+  });
+
+  it('getSession: admin sees the global (owner-scoped) session, aggregates NOT filtered by viewer', async () => {
+    const { service, prisma } = svc({
+      findUnique: jest.fn(),
+      tradeFindMany: jest.fn().mockResolvedValue([]),
+    });
+    // admin path uses findFirst on the prisma mock — add it
+    prisma.liveSession.findFirst = jest.fn().mockResolvedValue({ id: 'sess-1', status: 'RUNNING', startedAt: new Date() });
+    await service.getSession('owner', 'sess-1', true);
+    const where = prisma.trade.findMany.mock.calls[0][0].where;
+    expect(where.account).toBeUndefined(); // global, not viewer-scoped
+  });
+
+  it('listSessions: participant query targets running + own-traded sessions', async () => {
+    const { service, prisma } = svc({
+      acctCount: jest.fn().mockResolvedValue(1),
+      findMany: jest.fn().mockResolvedValue([]),
+    });
+    await service.listSessions({ userId: 'grace', isAdmin: false });
+    const where = prisma.liveSession.findMany.mock.calls[0][0].where;
+    expect(where.OR).toEqual(expect.arrayContaining([
+      { trades: { some: { account: { userId: 'grace' } } } },
+      { status: 'RUNNING' },
+    ]));
+  });
+});

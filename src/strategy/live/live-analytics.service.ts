@@ -91,26 +91,52 @@ export class LiveAnalyticsService {
     return this.compute(trades);
   }
 
-  /** List all live sessions, newest first. Aggregates always recomputed
-   *  from Trade rows so post-reconcile stats reflect the latest truth. */
-  async listSessions(opts: { userId: string; limit?: number }) {
+  /** List live sessions, newest first, aggregates recomputed from Trade rows.
+   *
+   *  Sessions are the ADMIN's engine-run concept (one central Start→Stop that
+   *  governs everyone). A regular user doesn't OWN sessions but participates
+   *  via their account's trades — so they see the sessions their account
+   *  traded in PLUS the currently-running session (to watch live before their
+   *  first fill), with all aggregates scoped to their own account. Admins see
+   *  every owned session with global aggregates. */
+  async listSessions(opts: { userId: string; isAdmin?: boolean; limit?: number }) {
     const limit = Math.min(opts.limit ?? 50, 200);
+    if (opts.isAdmin) {
+      const sessions = await this.prisma.liveSession.findMany({
+        where: { account: { userId: opts.userId } },
+        orderBy: { startedAt: 'desc' },
+        take: limit,
+      });
+      return Promise.all(sessions.map((s) => this.recomputeSessionAggregates(s)));
+    }
+    // Participant view: sessions this user's accounts traded in, + the running
+    // engine session if they have an enabled account.
+    const hasEnabled = await this.prisma.brokerAccount.count({
+      where: { userId: opts.userId, isEnabled: true },
+    });
     const sessions = await this.prisma.liveSession.findMany({
-      where: { account: { userId: opts.userId } },
+      where: {
+        OR: [
+          { trades: { some: { account: { userId: opts.userId } } } },
+          ...(hasEnabled > 0 ? [{ status: 'RUNNING' as const }] : []),
+        ],
+      },
       orderBy: { startedAt: 'desc' },
       take: limit,
     });
-    const enriched = await Promise.all(
-      sessions.map((s) => this.recomputeSessionAggregates(s)),
+    return Promise.all(
+      sessions.map((s) => this.recomputeSessionAggregates(s, opts.userId)),
     );
-    return enriched;
   }
 
   /** Recompute trades count + wins + losses + realizedPnl from Trade rows.
    *  Returns the session with overridden aggregate fields plus a per-account
    *  P&L breakdown (the fan-out engine trades every enabled account on the
    *  same signals — one session-level number hides who earned what). */
-  private async recomputeSessionAggregates<T extends { id: string }>(session: T) {
+  private async recomputeSessionAggregates<T extends { id: string }>(
+    session: T,
+    viewerUserId?: string,
+  ) {
     const trades = await this.prisma.trade.findMany({
       where: {
         sessionId: session.id,
@@ -119,6 +145,9 @@ export class LiveAnalyticsService {
         // so session counts and the per-account breakdown reflect real
         // trades only (they surfaced as a bogus "Unassigned" account chip).
         OR: [{ exitReason: null }, { exitReason: { not: 'ORPHAN' } }],
+        // Non-admin viewer: scope to THEIR trades so the session-level P&L
+        // never sums other tenants' accounts.
+        ...(viewerUserId ? { account: { userId: viewerUserId } } : {}),
       },
       select: {
         pnl: true, status: true, accountId: true,
@@ -169,13 +198,28 @@ export class LiveAnalyticsService {
     });
   }
 
-  /** Single session detail with live-recomputed counters from Trade rows. */
-  async getSession(userId: string, sessionId: string) {
-    const s = await this.prisma.liveSession.findFirst({
-      where: { id: sessionId, account: { userId } },
-    });
+  /** Single session detail with live-recomputed counters from Trade rows.
+   *  Admins get the global view of any session they own; a regular user can
+   *  open a session their account traded in (or the running engine session if
+   *  they have an enabled account), scoped to their own trades. */
+  async getSession(userId: string, sessionId: string, isAdmin = false) {
+    if (isAdmin) {
+      const s = await this.prisma.liveSession.findFirst({
+        where: { id: sessionId, account: { userId } },
+      });
+      return s ? this.recomputeSessionAggregates(s) : null;
+    }
+    const s = await this.prisma.liveSession.findUnique({ where: { id: sessionId } });
     if (!s) return null;
-    return this.recomputeSessionAggregates(s);
+    const participated = await this.prisma.trade.count({
+      where: { sessionId, account: { userId } },
+    });
+    const hasEnabled =
+      s.status === 'RUNNING'
+        ? await this.prisma.brokerAccount.count({ where: { userId, isEnabled: true } })
+        : 0;
+    if (participated === 0 && hasEnabled === 0) return null;
+    return this.recomputeSessionAggregates(s, userId);
   }
 
   /** Aggregate stats across ALL sessions (or filtered). */
