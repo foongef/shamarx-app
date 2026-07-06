@@ -56,8 +56,19 @@ export class StrategyController {
 
   @Get('live/status')
   @ApiOperation({ summary: 'Live engine on/off + active config' })
-  async status() {
+  async status(@CurrentUser() me: AuthenticatedUser) {
     const status = this.control.status();
+
+    // TENANCY: the `account` fields describe the PLATFORM-DEFAULT MetaApi
+    // connection (the house account) — legacy single-account view. Exposing
+    // it to every authenticated user leaked the owner's equity/balance to
+    // other tenants. Engine on/off + config stay visible to everyone (the
+    // engine is shared); account money is SUPERADMIN-only. Regular users see
+    // their own accounts via /live/accounts/:id/overview (ownership-checked).
+    if (me.role !== 'SUPERADMIN') {
+      return { ...status, account: null, accountStale: null };
+    }
+
     let account = null;
     try {
       const res = await firstValueFrom(this.httpService.get(`${SERVICE_URLS.EXECUTION}/account`));
@@ -105,8 +116,12 @@ export class StrategyController {
   }
 
   @Get('live/positions')
-  @ApiOperation({ summary: 'Currently open positions across all pairs' })
-  async openPositions() {
+  @ApiOperation({ summary: 'Open positions on the platform-default account (house view)' })
+  async openPositions(@CurrentUser() me: AuthenticatedUser) {
+    // TENANCY: this is the legacy global endpoint — the DEFAULT MetaApi
+    // account's positions, i.e. the house account. Users get their own
+    // positions via /live/accounts/:id/overview.
+    if (me.role !== 'SUPERADMIN') return { positions: [] };
     try {
       const res = await firstValueFrom(this.httpService.get(`${SERVICE_URLS.EXECUTION}/positions`));
       return { positions: res.data || [] };
@@ -232,7 +247,7 @@ export class StrategyController {
     summary:
       'Trading loop health — distinct from frontend chart polling. Shows whether the candle-ingestion → SMC-evaluation → broker-execution pipeline is alive.',
   })
-  async loopHealth() {
+  async loopHealth(@CurrentUser() me: AuthenticatedUser) {
     const pairs = (process.env.STRATEGY_PAIRS || 'XAUUSD,EURUSD,GBPUSD,USDJPY')
       .split(',')
       .map((s) => s.trim().toUpperCase())
@@ -286,8 +301,13 @@ export class StrategyController {
     // age means the broker is unreachable). Only meaningful while the engine
     // is running: snapshots pause when it's stopped.
     const engineRunning = this.control.isRunning();
+    // TENANCY: users see connectivity for THEIR accounts only; SUPERADMIN
+    // sees the whole fleet.
     const enabledAccounts = await this.prisma.brokerAccount.findMany({
-      where: { isEnabled: true },
+      where: {
+        isEnabled: true,
+        ...(me.role === 'SUPERADMIN' ? {} : { userId: me.id }),
+      },
       select: { id: true, name: true, broker: true },
     });
     const ACCOUNT_STALE_SEC = 3 * 60;
