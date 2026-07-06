@@ -232,3 +232,20 @@ describe('PositionMonitorService.reconcileTrades — absence confirmation (2026-
     expect(finalized).toEqual(['t1']);
   });
 });
+
+describe('inferExitReason', () => {
+  const { inferExitReason } = jest.requireActual('./position-monitor.service');
+  // GBPUSD BUY: sl 1.33269, tp 1.33412 — real first cTrader trade
+  it('close on the TP price → TP', () => {
+    expect(inferExitReason(1.33412, 1.33269, 1.33412)).toBe('TP');
+  });
+  it('close on the SL price → SL', () => {
+    expect(inferExitReason(1.33269, 1.33269, 1.33412)).toBe('SL');
+  });
+  it('mid-range close (manual/forced) stays CLOSED', () => {
+    expect(inferExitReason(1.33340, 1.33269, 1.33412)).toBe('CLOSED');
+  });
+  it('degenerate sl==tp stays CLOSED', () => {
+    expect(inferExitReason(1.1, 1.1, 1.1)).toBe('CLOSED');
+  });
+});

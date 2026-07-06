@@ -40,6 +40,22 @@ interface BrokerPosition {
  * HTTP 200 until its terminal state sync completes. On 2026-06-08 one such
  * read orphaned all 60 open trades at pnl=0 in a single pass.
  */
+/** Infer SL/TP from the close price when the broker doesn't say (cTrader's
+ *  deal history has no closeReason). "Close enough" = within 25% of the
+ *  SL↔TP span of that boundary; anything in the middle stays CLOSED. */
+export function inferExitReason(
+  closePrice: number,
+  slPrice: number,
+  tpPrice: number,
+): 'TP' | 'SL' | 'CLOSED' {
+  const span = Math.abs(tpPrice - slPrice);
+  if (!isFinite(span) || span <= 0) return 'CLOSED';
+  const tol = span * 0.25;
+  if (Math.abs(closePrice - tpPrice) <= tol) return 'TP';
+  if (Math.abs(closePrice - slPrice) <= tol) return 'SL';
+  return 'CLOSED';
+}
+
 const ABSENCE_CONFIRMATIONS = 3;
 
 @Injectable()
@@ -277,6 +293,12 @@ export class PositionMonitorService implements OnModuleInit {
         }
       } catch (err) {
         this.logger.debug(`history fetch for ${ticket} failed: ${(err as Error).message}`);
+      }
+
+      // Broker gave a real close price but no usable reason (cTrader deal
+      // history carries none) — infer from where it closed.
+      if (closePrice !== null && exitReason !== 'TP' && exitReason !== 'SL') {
+        exitReason = inferExitReason(closePrice, slPrice, tpPrice);
       }
 
       // 2. If broker history wasn't available (e.g. close still propagating),
