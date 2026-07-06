@@ -92,6 +92,10 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
    *  Capped at TELEMETRY_RING_SIZE to keep memory bounded; oldest events drop. */
   private events: TelemetryEvent[] = [];
 
+  /** Per-(symbol) marker of the last bar an activity-feed event was emitted
+   *  for — dedupes fan-out telemetry across accounts. */
+  private lastTelemetryBar = new Map<string, string>();
+
   /** Per-pair last-evaluation snapshot — small map, dashboard reads this for
    *  the pair scanner strip's "X seconds ago" badges. */
   private lastEval = new Map<string, { ts: string; decision: 'no-sweep' | 'pending-only' | 'cooldown' }>();
@@ -545,12 +549,14 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
       return;
     }
     await Promise.all(
-      accounts.map((acct: any, i: number) =>
-        // Telemetry (activity feed / counters) is a GLOBAL per-bar view — emit
-        // from the first enabled account only, or every bar would double up
-        // per account. Without this the feed froze at the fan-out cutover
-        // (stuck replaying June 8 events) because only the legacy path emitted.
-        this.evaluatePairForAccount(symbol, acct, i === 0).catch((err) =>
+      accounts.map((acct: any) =>
+        // Telemetry (activity feed / counters) is a GLOBAL per-bar view.
+        // Every account is ALLOWED to emit; evaluatePairForAccountInternal
+        // dedupes per (symbol, bar) so exactly one event lands per bar —
+        // whichever account completes first. Pinning the emitter to a fixed
+        // account silenced the feed whenever that account's broker was down
+        // (its evaluation throws before reaching the emit).
+        this.evaluatePairForAccount(symbol, acct, true).catch((err) =>
           this.logger.error(
             `[${acct.name}/${symbol}] evaluate failed: ${(err as Error).message}`,
           ),
@@ -619,8 +625,10 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
     });
 
     // Telemetry feed (activity feed + counters) — mirrors the legacy path's
-    // events so the Engine Worker view stays live under fan-out.
-    if (emitTelemetry) {
+    // events so the Engine Worker view stays live under fan-out. Deduped per
+    // (symbol, bar): only the first account to finish this bar emits.
+    if (emitTelemetry && this.lastTelemetryBar.get(symbol) !== evalTs) {
+      this.lastTelemetryBar.set(symbol, evalTs);
       const post = orchestrator.getTelemetry()[symbol];
       const pendingAfter = post?.pendingCount ?? 0;
       if (pendingAfter > pendingBefore && post!.pending.length > 0) {
