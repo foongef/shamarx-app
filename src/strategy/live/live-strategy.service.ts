@@ -57,6 +57,15 @@ const TELEMETRY_FEED_KEY = 'live:telemetry:feed';
 
 const TELEMETRY_RING_SIZE = 200;
 
+/** Shared-signal mode: signals are computed against this notional equity and
+ *  the engine risk%, then re-scaled per account — the notional lot sizes are
+ *  never sent to a broker. */
+const SHARED_SIGNAL_NOTIONAL_EQUITY = 10_000;
+/** Skip a signal for an account when broker-minimum lots would inflate its
+ *  risk beyond this multiple of the preset target (0.625 = risk may exceed
+ *  target by up to 1.6x before we skip). */
+const MIN_LOT_RISK_TOLERANCE = 0.625;
+
 /** Debounce window for orchestrator-state persistence. 4 pairs evaluating at
  *  the same M15 boundary mark dirty within ~50ms of each other; coalescing
  *  them into one Redis write keeps the write rate at ~16/hour instead of ~64. */
@@ -120,6 +129,15 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
 
   private get fanOutEnabled(): boolean {
     return (this.config.get<string>('ENABLE_MULTI_ACCOUNT_FANOUT') || 'false').toLowerCase() === 'true';
+  }
+
+  /** Shared-signal mode: ONE canonical orchestrator computes each signal
+   *  (identical side/entry/SL/TP for every tenant); accounts then decide
+   *  independently whether and how big to execute. Kills the per-account
+   *  orchestrator drift that produced OPPOSITE trades between accounts
+   *  (2026-07-07: one account SELL @13:00 while the other went BUY). */
+  private get sharedSignalsEnabled(): boolean {
+    return (this.config.get<string>('ENABLE_SHARED_SIGNALS') || 'false').toLowerCase() === 'true';
   }
 
   private markPersistDirty(): void {
@@ -548,6 +566,9 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
       this.logger.debug(`[${symbol}] no enabled accounts — skipping`);
       return;
     }
+    if (this.sharedSignalsEnabled) {
+      return this.evaluatePairSharedSignal(symbol, accounts as BrokerAccountWithUser[]);
+    }
     await Promise.all(
       accounts.map((acct: any) =>
         // Telemetry (activity feed / counters) is a GLOBAL per-bar view.
@@ -563,6 +584,221 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
         ),
       ),
     );
+  }
+
+  /**
+   * SHARED-SIGNAL path: one canonical evaluation per (symbol, bar) on the
+   * singleton orchestrator (the same instance the replay engine semantics
+   * were validated against, whose state is Redis-persisted and which
+   * position-monitor already feeds exits/cooldowns into). Strategy-level
+   * context comes from the DB so it is identical for every account:
+   *   - openDirections  = sides of OPEN trades on this symbol (any account)
+   *   - totalOpen       = distinct symbols with OPEN trades
+   *   - sizing          = NOTIONAL equity; discarded and re-sized per account
+   * The pending sweep is only consumed (recordEntry) once >=1 account
+   * actually executed — an all-skips bar keeps the setup alive for retry,
+   * matching the existing successfulLegs>0 semantics.
+   */
+  async evaluatePairSharedSignal(
+    symbol: string,
+    accounts: BrokerAccountWithUser[],
+  ): Promise<void> {
+    const [m15, h1, d1] = await Promise.all([
+      this.fetchCandles(symbol, Timeframe.M15, M15_BUFFER),
+      this.fetchCandles(symbol, Timeframe.H1, H1_BUFFER),
+      this.fetchCandles(symbol, Timeframe.D1, D1_BUFFER),
+    ]);
+    const evalTs = m15[m15.length - 1]?.openTime ?? new Date().toISOString();
+
+    const [openHere, openAll] = await Promise.all([
+      this.prisma.trade.findMany({
+        where: { symbol, status: 'OPEN' },
+        select: { side: true },
+      }),
+      this.prisma.trade.findMany({
+        where: { status: 'OPEN' },
+        select: { symbol: true },
+        distinct: ['symbol'],
+      }),
+    ]);
+
+    const pendingBefore = this.orchestrator.getTelemetry()[symbol]?.pendingCount ?? 0;
+    const signal = this.orchestrator.evaluate(symbol, m15, h1, d1, {
+      accountEquity: SHARED_SIGNAL_NOTIONAL_EQUITY,
+      openDirections: new Set(openHere.map((t) => t.side as 'BUY' | 'SELL')),
+      totalOpenPositions: openAll.length,
+      riskPercent: this.liveControl.getRiskPercent(),
+      nowIso: evalTs,
+      maxOpenPositions: 4,
+    });
+    this.markPersistDirty();
+
+    // Telemetry — one event per bar, no per-account dedup gymnastics needed.
+    const post = this.orchestrator.getTelemetry()[symbol];
+    const pendingAfter = post?.pendingCount ?? 0;
+    if (pendingAfter > pendingBefore && post!.pending.length > 0) {
+      const fresh = post!.pending[post!.pending.length - 1];
+      this.pushEvent({
+        ts: evalTs, symbol, type: 'sweep-detected',
+        direction: fresh.direction, mode: fresh.mode, entryHint: fresh.entryHint,
+      });
+    }
+    if (signal) {
+      this.pushEvent({
+        ts: evalTs, symbol, type: 'signal-fired',
+        side: signal.side, mode: signal.mode, entryPrice: signal.entryPrice,
+      });
+    } else {
+      const decision =
+        (post?.cooldownBarsRemaining ?? 0) > 0 ? 'cooldown'
+        : pendingAfter > 0 ? 'pending-only'
+        : 'no-sweep';
+      this.pushEvent({ ts: evalTs, symbol, type: 'eval', decision });
+    }
+
+    // Canonical decision-log row (accountId null = the strategy brain).
+    this.decisionLog.record({
+      source: 'live',
+      accountId: null,
+      symbol,
+      barTime: new Date(evalTs),
+      decision: signal
+        ? 'SIGNAL'
+        : (post?.cooldownBarsRemaining ?? 0) > 0 ? 'cooldown'
+        : pendingAfter > 0 ? 'pending-only'
+        : 'no-sweep',
+      signalSide: signal?.side ?? null,
+      context: {
+        shared: true,
+        lastM15: m15[m15.length - 1]?.openTime ?? null,
+        lastH1: h1[h1.length - 1]?.openTime ?? null,
+        lastD1: d1[d1.length - 1]?.openTime ?? null,
+        openDirections: openHere.map((t) => t.side),
+        totalOpenPositions: openAll.length,
+        pendingCount: pendingAfter,
+        cooldownBarsRemaining: post?.cooldownBarsRemaining ?? 0,
+        ...(signal
+          ? { entry: signal.entryPrice, sl: signal.slPrice, tp: signal.tpPrice, mode: signal.mode }
+          : {}),
+      },
+    });
+
+    if (!signal) return;
+    this.logger.log(`[${symbol}] shared signal → ${signal.reason}`);
+
+    const results = await Promise.all(
+      accounts.map((acct) =>
+        this.executeSharedSignalForAccount(signal, acct, evalTs).catch((err) => {
+          this.logger.error(
+            `[${acct.name}/${symbol}] shared-signal execute failed: ${(err as Error).message}`,
+          );
+          return false;
+        }),
+      ),
+    );
+
+    if (results.some(Boolean)) {
+      this.orchestrator.recordEntry(symbol, signal);
+      this.markPersistDirty();
+    } else {
+      this.logger.warn(
+        `[${symbol}] shared signal executed by 0 accounts — sweep stays pending for retry`,
+      );
+    }
+  }
+
+  /**
+   * Per-account EXECUTION of a canonical signal. An account may SKIP (its own
+   * gates) but can never fire a different signal. Sizing: scale the notional
+   * legs by (accountEquity × presetRisk%) / (notional × engineRisk%), floor
+   * each leg at the broker minimum 0.01 — unless that floor would inflate
+   * risk beyond MIN_LOT_RISK_TOLERANCE of the account's target.
+   */
+  private async executeSharedSignalForAccount(
+    signal: SmcLiveSignal,
+    account: BrokerAccountWithUser,
+    evalTs: string,
+  ): Promise<boolean> {
+    const symbol = signal.symbol;
+    const skip = (reason: string, extra: Record<string, unknown> = {}) => {
+      this.logger.log(`[${account.name}/${symbol}] shared signal skipped: ${reason}`);
+      this.decisionLog.record({
+        source: 'live', accountId: account.id, symbol,
+        barTime: new Date(evalTs), decision: reason, signalSide: signal.side,
+        context: { shared: true, ...extra },
+      });
+      return false;
+    };
+
+    if (!account.user || !account.user.botEnabled || !account.user.isActive || !account.isEnabled) {
+      return false; // silently — same as the old per-account gates
+    }
+    const preset = getPreset(account.user.presetKey);
+    if (!preset.pairs.includes(symbol)) return false;
+
+    const [positions, info, openCount] = await Promise.all([
+      this.brokerHttp.fetchOpenPositions(account.id, symbol),
+      this.brokerHttp.fetchAccount(account.id),
+      this.prisma.trade.count({ where: { accountId: account.id, status: 'OPEN' } }),
+    ]);
+
+    if (positions.some((p: any) => p.side === signal.side)) {
+      return skip('SKIPPED_SAME_DIRECTION');
+    }
+    if (openCount >= preset.maxOpenPositions) {
+      return skip('SKIPPED_MAX_OPEN', { openCount, max: preset.maxOpenPositions });
+    }
+
+    // Per-account daily-loss brake (the strategy-level RiskManager runs on
+    // notional equity; the USER's protection lives here).
+    const dayStart = new Date();
+    dayStart.setUTCHours(0, 0, 0, 0);
+    const dayAgg = await this.prisma.trade.aggregate({
+      _sum: { pnl: true },
+      where: { accountId: account.id, status: 'CLOSED', closedAt: { gte: dayStart } },
+    });
+    const dayPnl = dayAgg._sum.pnl ?? 0;
+    const dailyLossCap = (preset.maxDailyLossPercent / 100) * info.equity;
+    if (dayPnl <= -dailyLossCap) {
+      return skip('SKIPPED_DAILY_LOSS', { dayPnl, dailyLossCap });
+    }
+
+    // Re-size the notional legs to this account.
+    const engineRisk = this.liveControl.getRiskPercent();
+    const factor =
+      (info.equity * preset.riskPercent) /
+      (SHARED_SIGNAL_NOTIONAL_EQUITY * engineRisk);
+    const minTotal = signal.legs.length * 0.01;
+    const scaledTotal = signal.totalLot * factor;
+    // Risk scales linearly with lots: broker-minimum lots imply
+    // (minTotal / scaledTotal) × targetRisk. Skip when that exceeds 1.6×
+    // the preset target, i.e. scaledTotal < 0.625 × minTotal.
+    if (scaledTotal < minTotal * MIN_LOT_RISK_TOLERANCE) {
+      return skip('SKIPPED_MIN_LOT', { scaledTotal, minTotal });
+    }
+    const legs = signal.legs.map((l) => ({
+      ...l,
+      lotSize: Math.max(0.01, Math.round(l.lotSize * factor * 100) / 100),
+    }));
+    const sized: SmcLiveSignal = {
+      ...signal,
+      legs,
+      totalLot: Math.round(legs.reduce((sum, l) => sum + l.lotSize, 0) * 100) / 100,
+    };
+
+    const placeResult = await this.placeOrderForAccount(sized, account.id);
+    if (placeResult.successfulLegs === 0) {
+      return skip('SKIPPED_PLACE_FAILED');
+    }
+    this.decisionLog.record({
+      source: 'live', accountId: account.id, symbol,
+      barTime: new Date(evalTs), decision: 'EXECUTED', signalSide: signal.side,
+      context: { shared: true, totalLot: sized.totalLot, factor: Math.round(factor * 1000) / 1000 },
+    });
+    this.notifyTradeOpened(sized, evalTs, account.user.email).catch((err) =>
+      this.logger.warn(`Trade-opened notify failed: ${(err as Error).message}`),
+    );
+    return true;
   }
 
   /**

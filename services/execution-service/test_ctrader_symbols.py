@@ -70,3 +70,9 @@ def test_our_symbol_from_id():
     c = _client_with_symbols()
     assert c._our_symbol_from_id(1) == 'EURUSD'
     assert c._our_symbol_from_id(41) == 'XAUUSD'
+
+
+def test_lots_to_volume_clamps_to_max():
+    c = _client_with_symbols()
+    c._symbol_details[1]['maxVolume'] = 5_000_000  # 0.5 lot cap
+    assert c._lots_to_volume(1, 10.0) == 5_000_000

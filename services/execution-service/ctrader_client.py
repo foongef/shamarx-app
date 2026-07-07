@@ -164,6 +164,9 @@ class CTraderClient(Broker):
         min_vol = int(details.get('minVolume') or 0)
         if min_vol > 0:
             volume = max(volume, min_vol)
+        max_vol = int(details.get('maxVolume') or 0)
+        if max_vol > 0:
+            volume = min(volume, max_vol)
         return volume
 
     def _volume_to_lots(self, symbol_id: int, volume: int) -> float:
