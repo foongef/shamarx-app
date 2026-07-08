@@ -117,3 +117,21 @@ describe('ExitReconciliationService', () => {
     expect(ageHours).toBeLessThan(73);
   });
 });
+
+describe('staleSweepOnce', () => {
+  it('finalizes OPEN trades on brokers unreachable for 7+ days, pnl untouched', async () => {
+    const deps = makeDeps([]);
+    (deps.prisma.trade as any).updateMany = jest.fn().mockResolvedValue({ count: 4 });
+    const n = await make(deps).staleSweepOnce();
+    expect(n).toBe(4);
+    const arg = (deps.prisma.trade as any).updateMany.mock.calls[0][0];
+    expect(arg.where.status).toBe('OPEN');
+    expect(arg.where.account.equitySnapshots.none.takenAt.gte).toBeInstanceOf(Date);
+    expect(arg.data).toMatchObject({ status: 'CLOSED', exitReason: 'STALE_BROKER' });
+    expect(arg.data.pnl).toBeUndefined(); // never invent a number
+    // both cutoffs ~7 days
+    const age = (Date.now() - arg.where.createdAt.lt.getTime()) / 86_400_000;
+    expect(age).toBeGreaterThan(6.9);
+    expect(age).toBeLessThan(7.1);
+  });
+});

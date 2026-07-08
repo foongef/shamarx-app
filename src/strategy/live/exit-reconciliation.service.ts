@@ -26,6 +26,12 @@ import { SERVICE_URLS } from '@app/common';
 import { BrokerHttpClient } from './broker-http-client';
 
 const LOOKBACK_HOURS = 72;
+/** An OPEN trade whose broker hasn't been reachable for this long is
+ *  unmanageable — no SL trailing, no close detection. Finalize it as
+ *  STALE_BROKER (pnl NULL, never invented) so it stops poisoning the shared
+ *  brain's open-position gates. Zombie case: 4 MetaApi trades stuck OPEN
+ *  since the 2026-06-19 billing lapse blocked BUY entries on 3 pairs. */
+const STALE_BROKER_DAYS = 7;
 
 interface BrokerCloseInfo {
   closePrice: number;
@@ -54,6 +60,32 @@ export class ExitReconciliationService {
     } finally {
       this.sweeping = false;
     }
+  }
+
+  @Cron('0 15 4 * * *') // daily 04:15 UTC
+  async staleSweep(): Promise<void> {
+    try {
+      const n = await this.staleSweepOnce();
+      if (n > 0) this.logger.warn(`finalized ${n} unmanageable trade(s) as STALE_BROKER`);
+    } catch (err) {
+      this.logger.warn(`stale sweep failed: ${(err as Error).message}`);
+    }
+  }
+
+  /** Finalize OPEN trades on brokers unreachable for STALE_BROKER_DAYS. */
+  async staleSweepOnce(): Promise<number> {
+    const cutoff = new Date(Date.now() - STALE_BROKER_DAYS * 24 * 3600 * 1000);
+    const res = await this.prisma.trade.updateMany({
+      where: {
+        status: 'OPEN',
+        createdAt: { lt: cutoff },
+        account: {
+          equitySnapshots: { none: { takenAt: { gte: cutoff } } },
+        },
+      },
+      data: { status: 'CLOSED', exitReason: 'STALE_BROKER', closedAt: new Date() },
+    });
+    return res.count;
   }
 
   async sweepOnce(): Promise<number> {
