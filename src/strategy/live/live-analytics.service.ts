@@ -140,6 +140,9 @@ export class LiveAnalyticsService {
     const trades = await this.prisma.trade.findMany({
       where: {
         sessionId: session.id,
+        // Real fills only: PENDING retrace limits haven't executed and
+        // CANCELLED ones expired unfilled — neither is a trade outcome.
+        status: { in: ['OPEN', 'CLOSED'] },
         // ORPHAN rows are reconciliation artifacts (pnl=0, no broker fill,
         // no account stamp) — excluded here for consistency with compute()
         // so session counts and the per-account breakdown reflect real

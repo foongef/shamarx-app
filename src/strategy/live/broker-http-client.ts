@@ -87,6 +87,23 @@ export class BrokerHttpClient {
     return res.data;
   }
 
+  /** Lifecycle of a parked LIMIT order: {status: PENDING|FILLED|GONE, ...}. */
+  async fetchOrderStatus(
+    accountId: string,
+    orderId: string,
+    symbol?: string,
+  ): Promise<{ status: string; positionId?: number; executionPrice?: number; executionTimestamp?: string }> {
+    const opts = await this.credsOpts(accountId);
+    const q = symbol ? `?symbol=${symbol}` : '';
+    const res = await firstValueFrom(
+      this.http.get<{ status: string; positionId?: number; executionPrice?: number; executionTimestamp?: string }>(
+        `${SERVICE_URLS.EXECUTION}/accounts/${accountId}/orders/${orderId}/status${q}`,
+        opts,
+      ),
+    );
+    return res.data;
+  }
+
   async fetchAccount(accountId: string): Promise<AccountInfo> {
     const opts = await this.credsOpts(accountId);
     const res = await firstValueFrom(

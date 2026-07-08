@@ -182,3 +182,72 @@ describe('shared-signal mode', () => {
     expect(canonical[0][0]).toMatchObject({ decision: 'SIGNAL', signalSide: 'SELL' });
   });
 });
+
+describe('retrace-entry mode (default ON)', () => {
+  it('cTrader account: parks LIMIT legs at 50% retrace with doubled lots', async () => {
+    const { svc, brokerHttp } = makeService();
+    const retraceSpy = jest
+      .spyOn(svc as any, 'placeRetraceOrderForAccount')
+      .mockResolvedValue({ successfulLegs: 2 });
+    const marketSpy = svc['placeOrderForAccount'] as jest.Mock;
+    brokerHttp.fetchAccount.mockResolvedValue({ equity: 10000 });
+    await svc.evaluatePairSharedSignal('GBPUSD', [
+      makeAccount({ id: 'ct', broker: 'CTRADER', presetKey: 'AGGRESSIVE' }),
+    ]);
+    expect(retraceSpy).toHaveBeenCalledTimes(1);
+    expect(marketSpy).not.toHaveBeenCalled();
+    const sized = retraceSpy.mock.calls[0][0] as SmcLiveSignal;
+    // factor 1.0 × lot mult 2 → 0.05/0.10 become 0.10/0.20
+    expect(sized.legs.map((l: any) => l.lotSize)).toEqual([0.1, 0.2]);
+    expect(sized.entryPrice).toBe(1.33794); // signal shape untouched here
+  });
+
+  it('non-cTrader broker falls back to MARKET entries', async () => {
+    const { svc, placeSpy } = makeService();
+    const retraceSpy = jest
+      .spyOn(svc as any, 'placeRetraceOrderForAccount')
+      .mockResolvedValue({ successfulLegs: 2 });
+    await svc.evaluatePairSharedSignal('GBPUSD', [
+      makeAccount({ id: 'ma', broker: 'METAAPI' }),
+    ]);
+    expect(retraceSpy).not.toHaveBeenCalled();
+    expect(placeSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('kill-switch RETRACE_ENTRY=false restores market entries on cTrader', async () => {
+    const { svc, placeSpy } = makeService();
+    (svc as any).config = {
+      get: (k: string) => ({
+        LIVE_MODE: 'false',
+        STRATEGY_PAIRS: 'XAUUSD,EURUSD,GBPUSD,USDJPY',
+        ENABLE_SHARED_SIGNALS: 'true',
+        RETRACE_ENTRY: 'false',
+      } as Record<string, string>)[k],
+    };
+    const retraceSpy = jest
+      .spyOn(svc as any, 'placeRetraceOrderForAccount')
+      .mockResolvedValue({ successfulLegs: 2 });
+    await svc.evaluatePairSharedSignal('GBPUSD', [
+      makeAccount({ id: 'ct', broker: 'CTRADER' }),
+    ]);
+    expect(retraceSpy).not.toHaveBeenCalled();
+    expect(placeSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('retrace min-lot gate accounts for the doubled lots (smaller accounts qualify)', async () => {
+    const { svc, brokerHttp, decisionLog } = makeService();
+    const retraceSpy = jest
+      .spyOn(svc as any, 'placeRetraceOrderForAccount')
+      .mockResolvedValue({ successfulLegs: 2 });
+    // $700 BALANCED: market-mode scaledTotal = 0.15×(700/15000)=0.007 < 0.0125 → would skip.
+    // Retrace doubles lots for the same $ risk: 0.014 ≥ 0.0125 → executes.
+    brokerHttp.fetchAccount.mockResolvedValue({ equity: 700 });
+    await svc.evaluatePairSharedSignal('GBPUSD', [
+      makeAccount({ id: 'ct', broker: 'CTRADER', presetKey: 'BALANCED' }),
+    ]);
+    expect(retraceSpy).toHaveBeenCalledTimes(1);
+    expect(decisionLog.record).toHaveBeenCalledWith(
+      expect.objectContaining({ decision: 'EXECUTED' }),
+    );
+  });
+});

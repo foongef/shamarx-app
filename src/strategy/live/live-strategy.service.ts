@@ -66,6 +66,14 @@ const SHARED_SIGNAL_NOTIONAL_EQUITY = 10_000;
  *  target by up to 1.6x before we skip). */
 const MIN_LOT_RISK_TOLERANCE = 0.625;
 
+/** Retrace entries (A/B winner R50LH, replays 41ac35f1/3416b601: PF 1.42→2.63,
+ *  zero losing months under a pessimistic fill model): park a LIMIT half-way
+ *  from signal entry back toward the SL, GTD-expiring after 12 M15 bars.
+ *  Risk per lot halves, so lots scale ×1/(1-frac) for equal dollar risk. */
+const RETRACE_FRAC = 0.5;
+const RETRACE_EXPIRY_BARS = 12;
+const RETRACE_LOT_MULT = 1 / (1 - RETRACE_FRAC);
+
 /** Debounce window for orchestrator-state persistence. 4 pairs evaluating at
  *  the same M15 boundary mark dirty within ~50ms of each other; coalescing
  *  them into one Redis write keeps the write rate at ~16/hour instead of ~64. */
@@ -138,6 +146,13 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
    *  (2026-07-07: one account SELL @13:00 while the other went BUY). */
   private get sharedSignalsEnabled(): boolean {
     return (this.config.get<string>('ENABLE_SHARED_SIGNALS') || 'false').toLowerCase() === 'true';
+  }
+
+  /** Retrace-entry mode — DEFAULT ON. Kill-switch: RETRACE_ENTRY=false.
+   *  Only cTrader accounts support broker-side limits; others fall back
+   *  to the legacy market entry. */
+  private get retraceEntryEnabled(): boolean {
+    return (this.config.get<string>('RETRACE_ENTRY') || 'true').toLowerCase() === 'true';
   }
 
   private markPersistDirty(): void {
@@ -763,13 +778,18 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
       return skip('SKIPPED_DAILY_LOSS', { dayPnl, dailyLossCap });
     }
 
-    // Re-size the notional legs to this account.
+    // Re-size the notional legs to this account. Retrace mode halves the
+    // per-lot risk (entry sits frac closer to the SL), so lots scale up by
+    // RETRACE_LOT_MULT to keep dollar risk identical.
+    const useRetrace =
+      this.retraceEntryEnabled && (account as any).broker === 'CTRADER';
+    const lotMult = useRetrace ? RETRACE_LOT_MULT : 1;
     const engineRisk = this.liveControl.getRiskPercent();
     const factor =
       (info.equity * preset.riskPercent) /
       (SHARED_SIGNAL_NOTIONAL_EQUITY * engineRisk);
     const minTotal = signal.legs.length * 0.01;
-    const scaledTotal = signal.totalLot * factor;
+    const scaledTotal = signal.totalLot * factor * lotMult;
     // Risk scales linearly with lots: broker-minimum lots imply
     // (minTotal / scaledTotal) × targetRisk. Skip when that exceeds 1.6×
     // the preset target, i.e. scaledTotal < 0.625 × minTotal.
@@ -778,7 +798,7 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
     }
     const legs = signal.legs.map((l) => ({
       ...l,
-      lotSize: Math.max(0.01, Math.round(l.lotSize * factor * 100) / 100),
+      lotSize: Math.max(0.01, Math.round(l.lotSize * factor * lotMult * 100) / 100),
     }));
     const sized: SmcLiveSignal = {
       ...signal,
@@ -786,19 +806,163 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
       totalLot: Math.round(legs.reduce((sum, l) => sum + l.lotSize, 0) * 100) / 100,
     };
 
-    const placeResult = await this.placeOrderForAccount(sized, account.id);
+    const placeResult = useRetrace
+      ? await this.placeRetraceOrderForAccount(sized, account.id, evalTs)
+      : await this.placeOrderForAccount(sized, account.id);
     if (placeResult.successfulLegs === 0) {
       return skip('SKIPPED_PLACE_FAILED');
     }
     this.decisionLog.record({
       source: 'live', accountId: account.id, symbol,
       barTime: new Date(evalTs), decision: 'EXECUTED', signalSide: signal.side,
-      context: { shared: true, totalLot: sized.totalLot, factor: Math.round(factor * 1000) / 1000 },
+      context: {
+        shared: true, totalLot: sized.totalLot,
+        factor: Math.round(factor * 1000) / 1000,
+        ...(useRetrace ? { entryType: 'RETRACE_LIMIT' } : {}),
+      },
     });
     this.notifyTradeOpened(sized, evalTs, account.user.email).catch((err) =>
       this.logger.warn(`Trade-opened notify failed: ${(err as Error).message}`),
     );
     return true;
+  }
+
+  /**
+   * Retrace-entry placement: one broker-side LIMIT order per leg, parked
+   * RETRACE_FRAC of the entry→SL distance back toward the sweep with GTD
+   * expiry. Absolute SL/TP ride on the order (cTrader allows them for
+   * LIMIT), so a fill is protected from its first tick. Rows are born
+   * status=PENDING; PendingEntryMonitor promotes them to OPEN on fill or
+   * CANCELLED on expiry. An instant fill (price already through the limit)
+   * creates the row directly as OPEN.
+   */
+  private async placeRetraceOrderForAccount(
+    signal: SmcLiveSignal,
+    accountId: string,
+    evalTs: string,
+  ): Promise<{ successfulLegs: number }> {
+    const dist = Math.abs(signal.entryPrice - signal.slPrice);
+    const limitPrice = Math.round(
+      (signal.side === 'BUY'
+        ? signal.entryPrice - dist * RETRACE_FRAC
+        : signal.entryPrice + dist * RETRACE_FRAC) * 1e5,
+    ) / 1e5;
+    const expiresAt = new Date(
+      new Date(evalTs).getTime() + RETRACE_EXPIRY_BARS * 15 * 60_000,
+    );
+
+    let successfulLegs = 0;
+    for (const leg of signal.legs) {
+      const clientOrderId = `${signal.symbol}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      let res: { orderId?: string; mt5Ticket?: number | null; status?: string } | null = null;
+      try {
+        res = await this.placeOrderForAccountWithRetry(accountId, {
+          symbol: signal.symbol,
+          side: signal.side,
+          lotSize: leg.lotSize,
+          entryPrice: signal.entryPrice,
+          slPrice: signal.slPrice,
+          tpPrice: leg.tpPrice,
+          orderType: 'LIMIT',
+          limitPrice,
+          expirationMs: expiresAt.getTime(),
+          comment: `SMC-R:${clientOrderId.slice(0, 8)}`,
+        });
+      } catch (err) {
+        this.logger.error(
+          `[${signal.symbol}] retrace limit failed for leg: ${(err as Error).message}`,
+        );
+        continue;
+      }
+
+      const status = (res?.status || '').toUpperCase();
+      const instantFill = status === 'FILLED' && typeof res?.mt5Ticket === 'number' && res.mt5Ticket > 0;
+      if (status !== 'PENDING' && !instantFill) {
+        this.logger.warn(`[${signal.symbol}] retrace limit rejected (${status}) — leg skipped`);
+        continue;
+      }
+
+      try {
+        const candidate = await this.prisma.candidateTrade.create({
+          data: {
+            symbol: signal.symbol,
+            side: signal.side,
+            entryPrice: limitPrice,
+            slPrice: signal.slPrice,
+            tpPrice: leg.tpPrice,
+            slPoints: Math.abs(limitPrice - signal.slPrice),
+            tpPoints: Math.abs(leg.tpPrice - limitPrice),
+            setupTags: leg.setupTags,
+            h1Bias: signal.side === 'BUY' ? 'BULLISH' : 'BEARISH',
+            rsiValue: 0,
+            atrValue: 0,
+            spreadAtDetection: 0,
+            timeframe: 'M15',
+            status: 'APPROVED',
+          },
+        });
+        const trailKey: 'TP1' | 'RUNNER' = leg.setupTags.includes('TP1') ? 'TP1' : 'RUNNER';
+        await this.prisma.trade.create({
+          data: {
+            candidateId: candidate.id,
+            clientOrderId,
+            mt5Ticket: instantFill ? res!.mt5Ticket! : null,
+            sessionId: this.liveControl.getCurrentSessionId(),
+            accountId,
+            symbol: signal.symbol,
+            side: signal.side,
+            lotSize: leg.lotSize,
+            entryPrice: limitPrice,
+            slPrice: signal.slPrice,
+            tpPrice: leg.tpPrice,
+            status: instantFill ? 'OPEN' : 'PENDING',
+            entryType: 'RETRACE_LIMIT',
+            brokerOrderId: res!.orderId ? String(res!.orderId) : null,
+            limitPrice,
+            orderExpiresAt: expiresAt,
+            statusHistory: [
+              { status: 'PENDING', timestamp: new Date().toISOString(), orderId: res!.orderId },
+              ...(instantFill
+                ? [{ status: 'OPEN', timestamp: new Date().toISOString(), ticket: res!.mt5Ticket }]
+                : []),
+            ],
+            managementState: {
+              breakevenActivated: false,
+              peakFavorablePrice: limitPrice,
+              originalSlPrice: signal.slPrice,
+              trailKey,
+            } as any,
+            sweptLevel: signal.smcContext?.sweptLevel ?? null,
+            sweptHigh: signal.smcContext?.sweptHigh ?? null,
+            sweptLow: signal.smcContext?.sweptLow ?? null,
+            sweepCandleTime: signal.smcContext?.sweepCandleTime
+              ? new Date(signal.smcContext.sweepCandleTime)
+              : null,
+            d1Bias: signal.smcContext?.d1Bias ?? null,
+            originalSlPrice: signal.slPrice,
+            strategyName: 'GIDEON',
+          },
+        });
+        successfulLegs++;
+      } catch (err) {
+        this.logger.error(
+          `[${signal.symbol}] retrace Trade persist failed (order ${res!.orderId} stays GTD at broker): ${(err as Error).message}`,
+        );
+      }
+    }
+
+    if (successfulLegs > 0) {
+      this.pushEvent({
+        ts: evalTs, symbol: signal.symbol, type: 'limit-parked',
+        side: signal.side, limitPrice, expiresAt: expiresAt.toISOString(),
+      } as any);
+    }
+    return { successfulLegs };
+  }
+
+  /** External event injection (PendingEntryMonitor: limit-filled / expired). */
+  pushExternalEvent(ev: any): void {
+    this.pushEvent(ev);
   }
 
   /**

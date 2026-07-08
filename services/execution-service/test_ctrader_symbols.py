@@ -76,3 +76,82 @@ def test_lots_to_volume_clamps_to_max():
     c = _client_with_symbols()
     c._symbol_details[1]['maxVolume'] = 5_000_000  # 0.5 lot cap
     assert c._lots_to_volume(1, 10.0) == 5_000_000
+
+
+def _limit_request(**over):
+    from models import OrderRequest
+    base = dict(
+        symbol='GBPUSD', side='BUY', lotSize=0.1, entryPrice=1.3000,
+        slPrice=1.2990, tpPrice=1.3040, orderType='LIMIT',
+        limitPrice=1.2995, expirationMs=1783000000000,
+    )
+    base.update(over)
+    return OrderRequest(**base)
+
+
+def test_limit_order_request_parses_and_defaults():
+    from models import OrderRequest
+    req = _limit_request()
+    assert req.order_type == 'LIMIT'
+    assert req.limit_price == 1.2995
+    assert req.expiration_ms == 1783000000000
+    # market default untouched
+    m = OrderRequest(symbol='GBPUSD', side='BUY', lotSize=0.1,
+                     entryPrice=1.3, slPrice=1.299, tpPrice=1.301)
+    assert m.order_type == 'MARKET'
+    assert m.limit_price is None
+
+
+class _FakeTransport:
+    """Captures request_until payloads; replies with a scripted envelope."""
+    def __init__(self, reply):
+        self.reply = reply
+        self.sent = None
+
+    async def request_until(self, payload_type, payload, done, timeout=None):
+        self.sent = (payload_type, payload)
+        return [self.reply]
+
+    async def request(self, *a, **k):
+        raise AssertionError('unexpected request()')
+
+
+def test_limit_order_sends_absolute_sltp_and_gtd(monkeypatch):
+    import asyncio
+    c = _client_with_symbols()
+    c.ctid_trader_account_id = 777
+    c._transport = _FakeTransport({'payload': {
+        'executionType': 2,  # ACCEPTED
+        'order': {'orderId': 424242},
+    }})
+    res = asyncio.get_event_loop().run_until_complete(
+        c._place_order_impl(_limit_request())
+    )
+    ptype, sent = c._transport.sent
+    assert sent['orderType'] == 'LIMIT'
+    assert sent['limitPrice'] == 1.2995
+    assert sent['timeInForce'] == 'GOOD_TILL_DATE'
+    assert sent['expirationTimestamp'] == 1783000000000
+    assert sent['stopLoss'] == 1.2990      # ABSOLUTE — allowed on LIMIT
+    assert sent['takeProfit'] == 1.3040
+    assert 'relativeStopLoss' not in sent  # the MARKET-only mechanism
+    assert res.status == 'PENDING'
+    assert res.order_id == '424242'
+    assert res.mt5_ticket is None
+
+
+def test_limit_order_instant_fill_falls_through(monkeypatch):
+    import asyncio
+    c = _client_with_symbols()
+    c.ctid_trader_account_id = 777
+    c._transport = _FakeTransport({'payload': {
+        'executionType': 3,  # FILLED immediately (price already through)
+        'order': {'orderId': 5},
+        'deal': {'positionId': 999, 'executionPrice': 1.2995},
+        'position': {'positionId': 999, 'tradeData': {'volume': 1_000_000}},
+    }})
+    res = asyncio.get_event_loop().run_until_complete(
+        c._place_order_impl(_limit_request())
+    )
+    assert res.status == 'FILLED'
+    assert res.mt5_ticket == 999

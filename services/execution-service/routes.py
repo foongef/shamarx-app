@@ -301,6 +301,22 @@ async def place_account_order(
         )
 
 
+@account_scoped_router.get("/{account_id}/orders/{order_id}/status")
+async def get_account_order_status(
+    account_id: str,
+    order_id: str,
+    symbol: str | None = None,
+    client: Broker = Depends(resolve_client),
+):
+    """Lifecycle of a parked LIMIT order: PENDING | FILLED (+positionId,
+    executionPrice) | GONE (expired/cancelled unfilled)."""
+    try:
+        return await client.get_order_status(order_id, symbol)
+    except Exception as e:
+        _logger.error(f"order_status failed for account={account_id} order={order_id}: {e}")
+        raise HTTPException(status_code=503, detail=f"order status unavailable: {e}")
+
+
 @account_scoped_router.post("/{account_id}/positions/{ticket}/modify", response_model=ClosePositionResponse)
 async def modify_account_position(
     account_id: str,

@@ -124,6 +124,7 @@ class CTraderClient(Broker):
         self._symbol_name_by_id: Dict[int, str] = {}
         self._symbol_details: Dict[int, Dict[str, Any]] = {}  # symbolId → full ProtoOASymbol
         self._position_symbol_cache: Dict[int, str] = {}
+        self._order_symbol_cache: Dict[str, str] = {}
         self._position_volume_cache: Dict[int, int] = {}  # positionId → volume (cents of units)
 
     @classmethod
@@ -256,33 +257,85 @@ class CTraderClient(Broker):
         volume = self._lots_to_volume(symbol_id, request.lot_size)
         side = request.side.value if hasattr(request.side, 'value') else str(request.side)
 
-        # MARKET orders reject absolute SL/TP ("allowed only for LIMIT, STOP,
-        # STOP_LIMIT" — verified live). Send RELATIVE distances (1/100_000 of
-        # price, anchored to the fill price), then amend the open position to
-        # the strategy's exact absolute levels once filled.
-        entry_ref = float(request.entry_price or 0)
-        payload = {
-            'ctidTraderAccountId': self.ctid_trader_account_id,
-            'symbolId': symbol_id,
-            'orderType': 'MARKET',
-            'tradeSide': side,
-            'volume': volume,
-        }
-        if request.comment:
-            payload['comment'] = request.comment
-        if entry_ref > 0 and request.sl_price:
-            payload['relativeStopLoss'] = max(1, int(round(abs(entry_ref - request.sl_price) * PRICE_SCALE)))
-        if entry_ref > 0 and request.tp_price:
-            payload['relativeTakeProfit'] = max(1, int(round(abs(request.tp_price - entry_ref) * PRICE_SCALE)))
+        is_limit = (getattr(request, 'order_type', 'MARKET') or 'MARKET').upper() == 'LIMIT'
 
-        try:
-            envs = await self._transport.request_until(
-                PAYLOAD['NEW_ORDER_REQ'], payload,
-                done=lambda env: (env.get('payload') or {}).get('executionType') in _ORDER_TERMINAL,
-            )
-        except CTraderApiError as e:
-            _logger.error(f'CTrader place_order rejected: {e}')
-            return OrderResponse(orderId='', mt5Ticket=None, status='REJECTED', message=str(e))
+        if is_limit:
+            # LIMIT orders accept ABSOLUTE stopLoss/takeProfit directly
+            # (the same live-verified rule that FORBIDS them on MARKET),
+            # so no post-fill amend dance is needed — protection rides
+            # on the order and attaches to the position at fill.
+            payload = {
+                'ctidTraderAccountId': self.ctid_trader_account_id,
+                'symbolId': symbol_id,
+                'orderType': 'LIMIT',
+                'tradeSide': side,
+                'volume': volume,
+                'limitPrice': float(request.limit_price),
+            }
+            if request.expiration_ms:
+                payload['timeInForce'] = 'GOOD_TILL_DATE'
+                payload['expirationTimestamp'] = int(request.expiration_ms)
+            if request.sl_price:
+                payload['stopLoss'] = float(request.sl_price)
+            if request.tp_price:
+                payload['takeProfit'] = float(request.tp_price)
+            if request.comment:
+                payload['comment'] = request.comment
+
+            try:
+                envs = await self._transport.request_until(
+                    PAYLOAD['NEW_ORDER_REQ'], payload,
+                    done=lambda env: (env.get('payload') or {}).get('executionType')
+                        in (_ORDER_TERMINAL | {EXEC_ACCEPTED}),
+                )
+            except CTraderApiError as e:
+                _logger.error(f'CTrader place LIMIT rejected: {e}')
+                return OrderResponse(orderId='', mt5Ticket=None, status='REJECTED', message=str(e))
+
+            final = envs[-1].get('payload') or {}
+            exec_type = final.get('executionType')
+            order_id = str((final.get('order') or {}).get('orderId', ''))
+            if exec_type == EXEC_ACCEPTED:
+                self._order_symbol_cache[order_id] = request.symbol
+                return OrderResponse(
+                    orderId=order_id, mt5Ticket=None, status='PENDING',
+                    message=f'LIMIT accepted @ {request.limit_price}',
+                )
+            if exec_type != EXEC_FILLED:
+                return OrderResponse(
+                    orderId=order_id, mt5Ticket=None, status='REJECTED',
+                    message=f'executionType={exec_type}',
+                )
+            # Price was already through the limit — instant fill; fall
+            # through to the shared fill-handling below.
+        else:
+            # MARKET orders reject absolute SL/TP ("allowed only for LIMIT, STOP,
+            # STOP_LIMIT" — verified live). Send RELATIVE distances (1/100_000 of
+            # price, anchored to the fill price), then amend the open position to
+            # the strategy's exact absolute levels once filled.
+            entry_ref = float(request.entry_price or 0)
+            payload = {
+                'ctidTraderAccountId': self.ctid_trader_account_id,
+                'symbolId': symbol_id,
+                'orderType': 'MARKET',
+                'tradeSide': side,
+                'volume': volume,
+            }
+            if request.comment:
+                payload['comment'] = request.comment
+            if entry_ref > 0 and request.sl_price:
+                payload['relativeStopLoss'] = max(1, int(round(abs(entry_ref - request.sl_price) * PRICE_SCALE)))
+            if entry_ref > 0 and request.tp_price:
+                payload['relativeTakeProfit'] = max(1, int(round(abs(request.tp_price - entry_ref) * PRICE_SCALE)))
+
+            try:
+                envs = await self._transport.request_until(
+                    PAYLOAD['NEW_ORDER_REQ'], payload,
+                    done=lambda env: (env.get('payload') or {}).get('executionType') in _ORDER_TERMINAL,
+                )
+            except CTraderApiError as e:
+                _logger.error(f'CTrader place_order rejected: {e}')
+                return OrderResponse(orderId='', mt5Ticket=None, status='REJECTED', message=str(e))
 
         final = envs[-1].get('payload') or {}
         exec_type = final.get('executionType')
@@ -305,7 +358,8 @@ class CTraderClient(Broker):
 
         # Pin SL/TP to the exact strategy levels. If the amend fails we keep
         # the relative protection already attached at fill — never naked.
-        if request.sl_price or request.tp_price:
+        # LIMIT orders carried absolute levels on the order itself; skip.
+        if not is_limit and (request.sl_price or request.tp_price):
             try:
                 await self._amend_sltp(position_id, request.sl_price, request.tp_price)
             except Exception as e:
@@ -484,6 +538,11 @@ class CTraderClient(Broker):
         return await self._with_reconnect(
             'get_candles', lambda: self._get_candles_impl(symbol, timeframe, count), max_attempts=3)
 
+    async def get_order_status(self, order_id: str, symbol: Optional[str] = None) -> dict:
+        return await self._with_reconnect(
+            'get_order_status', lambda: self._get_order_status_impl(order_id, symbol),
+        )
+
     async def place_order(self, request) -> object:
         await self._ensure_connected()
         return await self._place_order_impl(request)
@@ -523,6 +582,52 @@ class CTraderClient(Broker):
             freeMargin=max(0.0, equity - used_margin),
             openPositions=open_positions,
         )
+
+    async def _get_order_status_impl(self, order_id: str, symbol: Optional[str] = None) -> dict:
+        """Lifecycle of a parked LIMIT order.
+        PENDING → still on the book (reconcile lists it)
+        FILLED  → an entry deal references the orderId (returns positionId
+                  + executionPrice so the caller can promote its Trade row)
+        GONE    → neither: expired (GTD) or cancelled, never filled.
+        """
+        assert self._transport is not None
+        res = await self._transport.request(
+            PAYLOAD['RECONCILE_REQ'],
+            {'ctidTraderAccountId': self.ctid_trader_account_id},
+            PAYLOAD['RECONCILE_RES'],
+        )
+        for order in res.get('order', []):
+            if str(order.get('orderId', '')) == str(order_id):
+                return {'status': 'PENDING'}
+
+        now_ms = int(time.time() * 1000)
+        deal_res = await self._transport.request(
+            PAYLOAD['DEAL_LIST_REQ'],
+            {
+                'ctidTraderAccountId': self.ctid_trader_account_id,
+                'fromTimestamp': now_ms - 3 * 24 * 3600 * 1000,
+                'toTimestamp': now_ms,
+            },
+            PAYLOAD['DEAL_LIST_RES'],
+        )
+        for deal in deal_res.get('deal', []):
+            if str(deal.get('orderId', '')) != str(order_id):
+                continue
+            if deal.get('closePositionDetail') is not None:
+                continue  # that's a closing deal, not our entry
+            position_id = int(deal.get('positionId', 0) or 0)
+            if position_id:
+                sym = symbol or self._order_symbol_cache.get(str(order_id))
+                if sym:
+                    self._position_symbol_cache[position_id] = sym
+                self._position_volume_cache[position_id] = int(deal.get('volume', 0) or 0)
+                return {
+                    'status': 'FILLED',
+                    'positionId': position_id,
+                    'executionPrice': float(deal.get('executionPrice', 0) or 0),
+                    'executionTimestamp': str(deal.get('executionTimestamp', 0)),
+                }
+        return {'status': 'GONE'}
 
     async def _get_position_close_info_impl(self, ticket: int) -> Optional[dict]:
         assert self._transport is not None

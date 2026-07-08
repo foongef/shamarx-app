@@ -23,6 +23,7 @@ import { LiveAnalyticsService } from './live/live-analytics.service';
 import { BrokerHttpClient } from './live/broker-http-client';
 import { DecisionLogService } from './live/decision-log.service';
 import { ExitReconciliationService } from './live/exit-reconciliation.service';
+import { PendingEntryMonitorService } from './live/pending-entry-monitor.service';
 import { LiveSmcOrchestratorRegistry } from './live/live-smc-orchestrator-registry';
 
 @Module({
@@ -43,6 +44,7 @@ import { LiveSmcOrchestratorRegistry } from './live/live-smc-orchestrator-regist
     BrokerHttpClient,
     DecisionLogService,
     ExitReconciliationService,
+    PendingEntryMonitorService,
     LiveSmcOrchestratorRegistry,
     {
       provide: 'ORCHESTRATOR_FACTORY',

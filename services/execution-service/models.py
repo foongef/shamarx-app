@@ -25,6 +25,11 @@ class OrderRequest(BaseModel):
     sl_price: float = Field(alias="slPrice")
     tp_price: float = Field(alias="tpPrice")
     comment: Optional[str] = None
+    # Retrace-entry (LIMIT) support. MARKET remains the default; a LIMIT
+    # order parks at limit_price with broker-side GTD expiry.
+    order_type: str = Field(alias="orderType", default="MARKET")
+    limit_price: Optional[float] = Field(alias="limitPrice", default=None)
+    expiration_ms: Optional[int] = Field(alias="expirationMs", default=None)
 
     model_config = {"populate_by_name": True}
 

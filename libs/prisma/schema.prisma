@@ -197,6 +197,13 @@ model Trade {
   tpPrice         Float
   status          String         @default("PENDING") // PENDING, OPEN, CLOSED, CANCELLED
   exitReason      String? // SL, TP, BREAKEVEN, FORCED_CLOSE
+  // Retrace-entry (LIMIT) lifecycle — rows are born PENDING with the broker
+  // order id, promoted to OPEN by PendingEntryMonitor when the limit fills,
+  // or CANCELLED (exitReason=EXPIRED) when GTD expiry lapses unfilled.
+  entryType       String         @default("MARKET") // MARKET | RETRACE_LIMIT
+  brokerOrderId   String?
+  limitPrice      Float?
+  orderExpiresAt  DateTime?
   pnl             Float?
   closedAt        DateTime?
   statusHistory   Json           @default("[]")
