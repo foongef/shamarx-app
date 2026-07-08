@@ -37,6 +37,13 @@ export class StartReplayDto {
   })
   @IsOptional()
   runnerTrail?: Record<string, number>;
+
+  @ApiPropertyOptional({
+    description:
+      'Entry-experiment (replay-only): {"frac":0.5,"expiryBars":6} — limit at frac of entry→SL distance, cancelled after expiryBars M15 bars.',
+  })
+  @IsOptional()
+  retraceEntry?: { frac: number; expiryBars: number };
 }
 
 export const REPLAY_DEFAULT_PAIRS = DEFAULT_PAIRS;

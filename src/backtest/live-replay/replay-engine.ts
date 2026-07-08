@@ -35,6 +35,9 @@ export interface ReplayConfig {
   /** Exit-experiment override for the RUNNER leg's trail (A/B testing).
    *  Merged over SMC_RUNNER_TRAIL by the simulated broker. */
   runnerTrail?: Partial<import('../engine/types').RegimeTradeParams>;
+  /** Entry-experiment: park a limit frac-of-risk back toward the sweep
+   *  instead of filling at market; cancel after expiryBars M15 bars. */
+  retraceEntry?: { frac: number; expiryBars: number };
 }
 
 export interface ReplayDecision {
@@ -107,7 +110,7 @@ export class ReplayEngine {
       maxOpenPositions: cfg.maxOpenPositions ?? 4,
     });
 
-    const broker = new SimulatedBroker(cfg.initialBalance, cfg.runnerTrail);
+    const broker = new SimulatedBroker(cfg.initialBalance, cfg.runnerTrail, cfg.retraceEntry);
     const startMs = new Date(cfg.startDate).getTime();
     const endMs = new Date(cfg.endDate).getTime();
     const maxOpenPositions = cfg.maxOpenPositions ?? 4;
@@ -248,15 +251,19 @@ export class ReplayEngine {
 
       if (!signal) continue;
 
-      // 4. Place order via simulated broker — opens 1 position per leg.
+      // 4. Place order via simulated broker — opens 1 position per leg,
+      //    or (retrace mode) parks a limit order awaiting a touch.
+      const pendedBefore = broker.pendingCount();
       const positions = broker.placeOrder(signal, candle.openTime);
       opened.push(...positions);
 
       // PR #31: state-commit moved out of evaluate() into recordEntry().
       // SimulatedBroker is infallible (no slippage / margin / network),
-      // so any returned positions = full success. Live equivalent is
-      // gated on placeOrder().successfulLegs > 0.
-      if (positions.length > 0) {
+      // so any returned positions = full success. A PARKED limit also
+      // consumes the setup — otherwise the same signal refires every bar
+      // stacking duplicate limits. Live equivalent is gated on
+      // placeOrder().successfulLegs > 0.
+      if (positions.length > 0 || broker.pendingCount() > pendedBefore) {
         this.orchestrator.recordEntry(symbol, signal);
       }
 

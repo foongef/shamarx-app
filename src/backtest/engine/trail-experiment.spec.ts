@@ -59,3 +59,70 @@ describe('SimulatedBroker runner-trail override', () => {
     expect(runner.trailConfig).toEqual(SMC_RUNNER_TRAIL);
   });
 });
+
+describe('retrace-entry experiment (replay-only)', () => {
+  const SIGNAL = {
+    symbol: 'GBPUSD', side: 'BUY', entryPrice: 1.3000, slPrice: 1.2990, tpPrice: 1.3010,
+    totalLot: 0.15,
+    legs: [
+      { lotSize: 0.05, tpPrice: 1.3010, setupTags: ['TP1'] },
+      { lotSize: 0.10, tpPrice: 1.3040, setupTags: ['RUNNER'] },
+    ],
+    mode: 'REVERSAL', h1SweepTime: 't', reason: 'test',
+  } as any;
+  const bar = (low: number, high: number) => ({
+    symbol: 'GBPUSD', timeframe: 'M15', openTime: 't1',
+    open: (low + high) / 2, high, low, close: (low + high) / 2, volume: 1,
+  } as any);
+
+  it('parks a limit at frac of entry→SL distance instead of filling', () => {
+    const broker = new SimulatedBroker(1000, undefined, { frac: 0.5, expiryBars: 6 });
+    const positions = broker.placeOrder(SIGNAL, 't0');
+    expect(positions).toHaveLength(0);
+    expect(broker.pendingCount()).toBe(1);
+    expect(broker.totalOpenCount()).toBe(0);
+  });
+
+  it('fills at the limit when touched, with lots rescaled to equal dollar risk', () => {
+    const broker = new SimulatedBroker(1000, undefined, { frac: 0.5, expiryBars: 6 });
+    broker.placeOrder(SIGNAL, 't0');
+    // limit = 1.3000 - 0.5×(0.0010) = 1.2995; gentle bar dips to it without
+    // ripping far enough to arm BE-trail on the same candle
+    broker.processCandle('GBPUSD', bar(1.2995, 1.2996));
+    expect(broker.pendingCount()).toBe(0);
+    const dirs = broker.getOpenDirections('GBPUSD');
+    expect(dirs.has('BUY')).toBe(true);
+    // risk halved (5 pips vs 10) → lots doubled: 0.05→0.10, 0.10→0.20
+    const open = (broker as any).positions.get('GBPUSD');
+    expect(open.map((p: any) => p.lotSize)).toEqual([0.1, 0.2]);
+    expect(open[0].entryPrice).toBeCloseTo(1.2995, 10);
+    expect(open[0].slPrice).toBeCloseTo(1.2990, 10); // stop unchanged
+  });
+
+  it('expires unfilled after expiryBars — the runaway reversal is missed', () => {
+    const broker = new SimulatedBroker(1000, undefined, { frac: 0.5, expiryBars: 2 });
+    broker.placeOrder(SIGNAL, 't0');
+    broker.processCandle('GBPUSD', bar(1.2997, 1.3008)); // never dips to 1.2995
+    expect(broker.pendingCount()).toBe(1);
+    broker.processCandle('GBPUSD', bar(1.2998, 1.3012));
+    expect(broker.pendingCount()).toBe(0); // expired
+    expect(broker.totalOpenCount()).toBe(0);
+  });
+
+  it('pessimistic same-bar stop: a bar sweeping limit AND stop fills then loses', () => {
+    const broker = new SimulatedBroker(1000, undefined, { frac: 0.5, expiryBars: 6 });
+    broker.placeOrder(SIGNAL, 't0');
+    const closed = broker.processCandle('GBPUSD', bar(1.2985, 1.3002)); // through limit AND SL
+    expect(broker.pendingCount()).toBe(0);
+    expect(closed.length).toBe(2); // both legs stopped same bar
+    expect(closed.every((c: any) => c.exitReason === 'SL')).toBe(true);
+  });
+
+  it('without the knob, behavior is exactly current (market fill at close)', () => {
+    const broker = new SimulatedBroker(1000);
+    const positions = broker.placeOrder(SIGNAL, 't0');
+    expect(positions).toHaveLength(2);
+    expect(positions[0].entryPrice).toBe(1.3);
+    expect(broker.pendingCount()).toBe(0);
+  });
+});
