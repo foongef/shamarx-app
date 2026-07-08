@@ -32,6 +32,9 @@ export interface ReplayConfig {
    *  diffing). The service enables this for windows <= ~3 months; a 2-year
    *  replay would emit ~280k rows for no analytical gain. */
   logDecisions?: boolean;
+  /** Exit-experiment override for the RUNNER leg's trail (A/B testing).
+   *  Merged over SMC_RUNNER_TRAIL by the simulated broker. */
+  runnerTrail?: Partial<import('../engine/types').RegimeTradeParams>;
 }
 
 export interface ReplayDecision {
@@ -104,7 +107,7 @@ export class ReplayEngine {
       maxOpenPositions: cfg.maxOpenPositions ?? 4,
     });
 
-    const broker = new SimulatedBroker(cfg.initialBalance);
+    const broker = new SimulatedBroker(cfg.initialBalance, cfg.runnerTrail);
     const startMs = new Date(cfg.startDate).getTime();
     const endMs = new Date(cfg.endDate).getTime();
     const maxOpenPositions = cfg.maxOpenPositions ?? 4;

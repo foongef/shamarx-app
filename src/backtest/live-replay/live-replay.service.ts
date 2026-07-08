@@ -76,6 +76,7 @@ export class LiveReplayService {
         riskPercent: dto.riskPercent,
         pairs,
         logDecisions: windowDays <= 92,
+        runnerTrail: dto.runnerTrail,
       };
 
       // Run on a worker thread so the live-trading thread (NestJS event loop)

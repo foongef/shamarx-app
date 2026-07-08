@@ -84,6 +84,9 @@ export interface RegimeTradeParams {
   beThresholdR: number;   // Breakeven activation threshold in R
   tpRemovalR: number;     // Favorable move to remove TP (0 = never remove)
   slClampMaxAtr: number;  // Max SL distance in ATR multiples
+  /** Replay-experiment knob: multiplies the computed trail distance
+   *  (1 = current behavior). Live configs never set it. */
+  trailWidthMult?: number;
 }
 
 export interface SimulatedPosition {

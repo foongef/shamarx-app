@@ -28,6 +28,7 @@ import { getInstrumentConfig } from '../engine/instrument-config';
 import { getSpread } from '../engine/spread-model';
 import { updatePositionManagement } from '../engine/position-simulator';
 import { SMC_TP1_TRAIL, SMC_RUNNER_TRAIL } from '../engine/smc/trail-config';
+import { RegimeTradeParams } from '../engine/types';
 import { randomUUID } from 'crypto';
 
 /**
@@ -64,8 +65,13 @@ export class SimulatedBroker {
   private closed: ClosedPosition[] = [];
   private maxConcurrent = 0;
 
-  constructor(initialBalance: number) {
+  /** Experiment-only override for the RUNNER leg's trail parameters —
+   *  merged over SMC_RUNNER_TRAIL. Live trading never passes this. */
+  private readonly runnerTrail: RegimeTradeParams;
+
+  constructor(initialBalance: number, runnerTrailOverride?: Partial<RegimeTradeParams>) {
     this.balance = initialBalance;
+    this.runnerTrail = { ...SMC_RUNNER_TRAIL, ...(runnerTrailOverride ?? {}) };
   }
 
   /**
@@ -150,7 +156,7 @@ export class SimulatedBroker {
 
     for (const leg of signal.legs) {
       const isTp1Leg = leg.setupTags.includes('TP1');
-      const trail = isTp1Leg ? SMC_TP1_TRAIL : SMC_RUNNER_TRAIL;
+      const trail = isTp1Leg ? SMC_TP1_TRAIL : this.runnerTrail;
 
       const pos: SimulatedPosition = {
         id: randomUUID(),

@@ -124,20 +124,21 @@ function computeTrailDistance(
   // Trail tightness scales with slClampMaxAtr — wider clamp = wider trail = more aggressive regime
   // STRONG_TREND (3.0): loosest trail, VOLATILE (1.5): tightest trail
   const tightnessFactor = Math.min(1.0, config.slClampMaxAtr / 3.0); // 0.5 to 1.0
+  const widthMult = config.trailWidthMult ?? 1;
 
   if (isFVG) {
     // FVG trail — structural, slightly tighter than trend
-    if (favorableMove >= risk * 3.0) return risk * (0.4 + 0.1 * tightnessFactor);
-    if (favorableMove >= risk * 2.0) return risk * (0.5 + 0.1 * tightnessFactor);
-    if (favorableMove >= risk * 1.5) return risk * (0.6 + 0.1 * tightnessFactor);
-    return risk;
+    if (favorableMove >= risk * 3.0) return widthMult * risk * (0.4 + 0.1 * tightnessFactor);
+    if (favorableMove >= risk * 2.0) return widthMult * risk * (0.5 + 0.1 * tightnessFactor);
+    if (favorableMove >= risk * 1.5) return widthMult * risk * (0.6 + 0.1 * tightnessFactor);
+    return widthMult * risk;
   } else {
     // Trend trail — 5-tier with regime-adaptive tightness
-    if (favorableMove >= risk * 5.0) return risk * (0.3 + 0.1 * tightnessFactor);
-    if (favorableMove >= risk * 4.0) return risk * (0.4 + 0.1 * tightnessFactor);
-    if (favorableMove >= risk * 3.0) return risk * (0.5 + 0.1 * tightnessFactor);
-    if (favorableMove >= risk * 2.0) return risk * (0.6 + 0.15 * tightnessFactor);
-    return risk;
+    if (favorableMove >= risk * 5.0) return widthMult * risk * (0.3 + 0.1 * tightnessFactor);
+    if (favorableMove >= risk * 4.0) return widthMult * risk * (0.4 + 0.1 * tightnessFactor);
+    if (favorableMove >= risk * 3.0) return widthMult * risk * (0.5 + 0.1 * tightnessFactor);
+    if (favorableMove >= risk * 2.0) return widthMult * risk * (0.6 + 0.15 * tightnessFactor);
+    return widthMult * risk;
   }
 }
 

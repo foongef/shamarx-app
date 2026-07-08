@@ -30,6 +30,13 @@ export class StartReplayDto {
   @IsArray()
   @IsString({ each: true })
   pairs?: string[];
+
+  @ApiPropertyOptional({
+    description:
+      'Exit-experiment override for the RUNNER trail (A/B testing) — e.g. {"beThresholdR":2,"trailWidthMult":1.3}. Replay-only.',
+  })
+  @IsOptional()
+  runnerTrail?: Record<string, number>;
 }
 
 export const REPLAY_DEFAULT_PAIRS = DEFAULT_PAIRS;
