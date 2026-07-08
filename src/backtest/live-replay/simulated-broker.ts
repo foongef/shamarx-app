@@ -122,7 +122,12 @@ export class SimulatedBroker {
 
     // Step 1: BE + trail. Each call returns either the same position
     // (no change) or a new one with updated SL/peak/breakevenActivated/tpPrice.
+    // Positions FILLED on this very bar (retrace limits) are excluded:
+    // the bar's high may have printed BEFORE the fill, so crediting it to
+    // the peak (or allowing a same-bar TP) would be look-ahead. Same-bar
+    // STOP-OUT remains allowed — pessimism cuts one way only.
     const managed = open.map((p) => {
+      if (p.entryTime === candle.openTime) return p;
       const updated = updatePositionManagement(p, candle, spread);
       // updatePositionManagement returns V6SimulatedPosition; we need to
       // re-attach our extension fields when it returns a NEW object.
@@ -153,7 +158,7 @@ export class SimulatedBroker {
         : candle.high >= pos.slPrice;
       // tpPrice is nullable — V6-alt removes it once price travels far
       // enough (tpRemovalR), letting the runner go on trail only.
-      const tpHit = pos.tpPrice !== null && (
+      const tpHit = pos.entryTime !== candle.openTime && pos.tpPrice !== null && (
         pos.side === 'BUY'
           ? candle.high >= pos.tpPrice
           : candle.low <= pos.tpPrice

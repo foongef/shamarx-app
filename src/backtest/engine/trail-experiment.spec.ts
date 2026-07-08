@@ -126,3 +126,32 @@ describe('retrace-entry experiment (replay-only)', () => {
     expect(broker.pendingCount()).toBe(0);
   });
 });
+
+describe('fill-bar pessimism', () => {
+  const SIG = {
+    symbol: 'GBPUSD', side: 'BUY', entryPrice: 1.3000, slPrice: 1.2990, tpPrice: 1.3010,
+    totalLot: 0.15,
+    legs: [{ lotSize: 0.05, tpPrice: 1.3010, setupTags: ['TP1'] }],
+    mode: 'REVERSAL', h1SweepTime: 't', reason: 'test',
+  } as any;
+
+  it('a bar that fills the limit AND spans TP does NOT count the TP (no look-ahead)', () => {
+    const broker = new SimulatedBroker(1000, undefined, { frac: 0.5, expiryBars: 6 });
+    broker.placeOrder(SIG, 't0');
+    // dips to limit 1.2995 and rips through TP 1.3010 in the same bar
+    const closed = broker.processCandle('GBPUSD', {
+      symbol: 'GBPUSD', timeframe: 'M15', openTime: 't1',
+      open: 1.3, high: 1.3015, low: 1.2995, close: 1.3012, volume: 1,
+    } as any);
+    expect(closed).toHaveLength(0);          // still open — TP only from next bar
+    expect(broker.totalOpenCount()).toBe(1);
+    // next bar touching TP gently closes it normally
+    const closed2 = broker.processCandle('GBPUSD', {
+      symbol: 'GBPUSD', timeframe: 'M15', openTime: 't2',
+      open: 1.3008, high: 1.30105, low: 1.30085, close: 1.301, volume: 1,
+    } as any);
+    expect(closed2).toHaveLength(1);
+    expect(closed2[0].exitReason).toBe('TP');
+    expect(closed2[0].pnl).toBeGreaterThan(0);
+  });
+});
