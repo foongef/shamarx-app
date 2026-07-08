@@ -7,6 +7,7 @@
  *
  * State is persisted to Redis so toggling survives container restart.
  */
+import { GIDEON_VERSION } from './strategy-version';
 import { Injectable, Logger, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { HttpService } from '@nestjs/axios';
@@ -293,6 +294,7 @@ export class LiveControlService implements OnModuleInit {
         .filter(Boolean),
       riskPercent: this.getRiskPercent(),
       strategyVersion: this.config?.strategyVersion ?? 'GIDEON',
+      strategyRelease: GIDEON_VERSION,
       mockBalance: this.config?.mockBalance ?? null,
       lastChangedAt: this.lastChangedAt,
     };

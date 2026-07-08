@@ -2,7 +2,8 @@
 
 Living doc. **Read this before claiming what the strategy can or can't do.** Updated as features ship.
 
-Last updated: 2026-05-09
+Current release: **GIDEON v1.1.0** (version history in `src/strategy/live/strategy-version.ts`)
+Last updated: 2026-07-09
 
 ---
 
@@ -28,6 +29,20 @@ break-of-structure (those were tested and made things worse; see
 - **H1 liquidity sweep** of recent swing high/low (`detectSweep` —
   `src/backtest/engine/smc/sweep-detector.ts`). Wick beyond swing extreme,
   close back inside.
+- **Retrace entry (v1.1, live default)** — the signal no longer fills at
+  the M15 close. A broker-side LIMIT parks **50% of the entry→SL distance
+  back toward the sweep** (GTD, expires after 12 M15 bars) and fills on the
+  habitual retest — half the per-lot risk, lots ×2 for equal dollar risk,
+  absolute SL/TP riding on the order. Setups whose price never pulls back
+  expire unfilled (no trade, no risk). Hardened-replay evidence: PF 1.42 →
+  2.63, zero losing months (`docs/gideon-v1.1-retrace-entries.md`).
+  cTrader only; other brokers fall back to market. Kill-switch
+  `RETRACE_ENTRY=false`.
+- **Shared-signal brain (v1.0.1)** — ONE canonical orchestrator computes
+  each signal per (symbol, bar); accounts execute or skip via their own
+  gates (same-direction, max-open, daily-loss, min-lot) with sizing
+  proportional to their own equity × preset risk. Tenants can never take
+  opposite trades.
 - **D1 bias filter** — sweeps must align with daily-timeframe direction
   (`getD1Bias` via ADX + EMA). Counter-trend sweeps are rejected.
 - **Two modes**: `REVERSAL` (quiet markets) and `CONTINUATION` (trending
