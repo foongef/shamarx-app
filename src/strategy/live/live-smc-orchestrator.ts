@@ -361,7 +361,11 @@ export class LiveSmcOrchestrator {
             // instead of h1Candles[idx].openTime, which becomes incorrect
             // as the live H1 buffer shifts across evaluate() calls.
             if (!state.actionedSweeps.has(setup.sweepTime)) {
+              if (setup.mode === 'CONTINUATION' && cfg.disableContinuation) {
+                // v1.2 pruning knob — this pair trades REVERSAL only.
+              } else {
               state.pending.push(setup);
+              }
             }
           }
         }
@@ -392,6 +396,12 @@ export class LiveSmcOrchestrator {
     const utcHour = new Date(lastM15.openTime).getUTCHours();
     const inZone = cfg.killzones.some(([s, e]) => utcHour >= s && utcHour < e);
     if (!inZone) return null;
+
+    // Weekday skip (v1.2 pruning knob) — same keep-pending semantics as
+    // the killzone gate: entries pause, setups stay queued.
+    if (cfg.skipEntryDows?.includes(new Date(lastM15.openTime).getUTCDay())) {
+      return null;
+    }
 
     // V6-alt RiskManager gate — daily loss, consecutive losses, rolling
     // 7-day losses, equity drawdown pauses. This is the FILTER that V6-alt

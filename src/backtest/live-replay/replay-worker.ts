@@ -13,6 +13,10 @@
 
 import { parentPort } from 'node:worker_threads';
 import { LiveSmcOrchestrator } from '../../strategy/live/live-smc-orchestrator';
+import {
+  setSmcPairConfigOverride,
+  clearSmcPairConfigOverrides,
+} from '../../backtest/engine/smc/pairs';
 import { ReplayEngine } from './replay-engine';
 import type { ParentMessage, WorkerMessage } from './worker-protocol';
 
@@ -35,6 +39,14 @@ port.on('message', async (msg: ParentMessage) => {
   try {
     const orchestrator = new LiveSmcOrchestrator();
     const engine = new ReplayEngine(orchestrator);
+    // Experiment-only per-pair config overrides. SAFE here and ONLY here:
+    // the worker thread has its own module registry, so the live trading
+    // thread's configs are untouched. (The in-thread fallback path in
+    // LiveReplayService deliberately does NOT apply overrides.)
+    clearSmcPairConfigOverrides();
+    for (const [sym, ov] of Object.entries(msg.cfg.pairConfigOverrides ?? {})) {
+      setSmcPairConfigOverride(sym, ov);
+    }
     const result = await engine.run(msg.cfg, msg.candles, (processed, total) => {
       send({ type: 'progress', processed, total });
     });

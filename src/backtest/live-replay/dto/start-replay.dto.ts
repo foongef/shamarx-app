@@ -44,6 +44,13 @@ export class StartReplayDto {
   })
   @IsOptional()
   retraceEntry?: { frac: number; expiryBars: number };
+
+  @ApiPropertyOptional({
+    description:
+      'Experiment-only per-pair config overrides, e.g. {"GBPUSD":{"disableContinuation":true,"killzones":[[7,8],[9,11]]}}. Applied in the replay worker only.',
+  })
+  @IsOptional()
+  pairConfigOverrides?: Record<string, Record<string, unknown>>;
 }
 
 export const REPLAY_DEFAULT_PAIRS = DEFAULT_PAIRS;

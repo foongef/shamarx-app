@@ -38,6 +38,10 @@ export interface ReplayConfig {
   /** Entry-experiment: park a limit frac-of-risk back toward the sweep
    *  instead of filling at market; cancel after expiryBars M15 bars. */
   retraceEntry?: { frac: number; expiryBars: number };
+  /** Experiment-only per-pair SmcPairConfig overrides (killzone edits,
+   *  disableContinuation, skipEntryDows…). Applied ONLY in the worker
+   *  thread — never leaks to the live orchestrator. */
+  pairConfigOverrides?: Record<string, Partial<import('../engine/smc/types').SmcPairConfig>>;
 }
 
 export interface ReplayDecision {

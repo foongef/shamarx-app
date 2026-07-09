@@ -78,6 +78,7 @@ export class LiveReplayService {
         logDecisions: windowDays <= 92,
         runnerTrail: dto.runnerTrail,
         retraceEntry: dto.retraceEntry,
+        pairConfigOverrides: dto.pairConfigOverrides as any,
       };
 
       // Run on a worker thread so the live-trading thread (NestJS event loop)

@@ -67,6 +67,15 @@ export interface SmcPairConfig {
   /** Killzone UTC hour ranges [start, end). Pair can have 1-N zones. */
   killzones: Array<[number, number]>;
 
+  /** Drop CONTINUATION-mode setups entirely for this pair (v1.2 pruning:
+   *  2-year honest replay showed e.g. GBPUSD CONTINUATION -$40 vs
+   *  REVERSAL +$412). Optional — absent = both modes allowed. */
+  disableContinuation?: boolean;
+
+  /** UTC weekdays (0=Sun..6=Sat) on which ENTRIES are skipped (setups stay
+   *  pending, same semantics as an out-of-killzone hour). Optional. */
+  skipEntryDows?: number[];
+
   /** TP ladder: partial fraction of total lot taken at TP1 (e.g. 0.30).
    *  Set to 0 to disable the TP1 leg — single position with TP at tp2R. */
   tp1PartialFraction: number;
