@@ -458,6 +458,22 @@ export class LiveSmcOrchestrator {
         continue;
       }
 
+      // Stale-pending guard: the SL must sit on the PROTECTIVE side of the
+      // entry. Pendings live for several H1 bars with a structure-anchored
+      // SL; if price has since closed beyond that structure (e.g. rallied
+      // above a SELL's sweep-wick stop), the failed-extension thesis is
+      // invalidated — drop the setup. The legacy MARKET path masked this
+      // (relative SL distances are always projected protectively by the
+      // broker, and the replay simulator scored such entries as instant
+      // phantom wins); absolute-SL LIMIT orders exposed it as
+      // TRADING_BAD_STOPS rejections (2026-07-09, GIDEON v1.1.1).
+      const slProtective =
+        setup.direction === 'BUY' ? slPrice < entryPrice : slPrice > entryPrice;
+      if (!slProtective) {
+        state.pending.splice(s, 1);
+        continue;
+      }
+
       // Wide-SL filter — same logic as smc-engine.ts:199.
       if ((cfg.maxSlAtrM15 ?? 0) > 0 && !isNaN(m15Atr) && m15Atr > 0) {
         if (slPoints / m15Atr > cfg.maxSlAtrM15!) {
