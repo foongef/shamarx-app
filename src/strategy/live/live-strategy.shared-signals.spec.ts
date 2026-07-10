@@ -90,6 +90,7 @@ function makeService(over: any = {}) {
     brokerHttp as any,
     {} as any, // orchestrator registry (unused in shared mode)
     decisionLog as any,
+    { isTripped: jest.fn().mockResolvedValue(false) } as any, // circuit breaker
   );
   const placeSpy = jest
     .spyOn(svc as any, 'placeOrderForAccount')
@@ -248,6 +249,19 @@ describe('retrace-entry mode (default ON)', () => {
     expect(retraceSpy).toHaveBeenCalledTimes(1);
     expect(decisionLog.record).toHaveBeenCalledWith(
       expect.objectContaining({ decision: 'EXECUTED' }),
+    );
+  });
+});
+
+describe('circuit breaker gate', () => {
+  it('suppresses execution when tripped; pending stays for post-resume', async () => {
+    const { svc, orchestrator, placeSpy, decisionLog } = makeService();
+    (svc as any).circuitBreaker = { isTripped: jest.fn().mockResolvedValue(true) };
+    await svc.evaluatePairSharedSignal('GBPUSD', [makeAccount({ id: 'ct', broker: 'CTRADER' })]);
+    expect(placeSpy).not.toHaveBeenCalled();
+    expect(orchestrator.recordEntry).not.toHaveBeenCalled(); // setup NOT consumed
+    expect(decisionLog.record).toHaveBeenCalledWith(
+      expect.objectContaining({ decision: 'SKIPPED_CIRCUIT_BREAKER', accountId: null }),
     );
   });
 });

@@ -68,6 +68,16 @@ export class MailService {
     }
   }
 
+  /** Plain-text operational alert (circuit breaker, watchdogs). Never throws. */
+  async sendAlert(email: string, subject: string, body: string): Promise<void> {
+    try {
+      await this.mailer.sendMail({ to: email, subject, text: body });
+      this.logger.log(`Alert email sent to ${email}: ${subject}`);
+    } catch (err) {
+      this.logger.error(`Failed to send alert to ${email}`, err);
+    }
+  }
+
   async sendInvite(email: string, url: string): Promise<void> {
     try {
       await this.mailer.sendMail({

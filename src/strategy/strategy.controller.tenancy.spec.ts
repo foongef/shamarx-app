@@ -34,8 +34,9 @@ function makeController() {
     httpService as any,
     prisma as any,
     redis as any,
-    {} as any, // BrokerHttpClient
-  );
+    {} as any, // BrokerHttpClient,
+      { getState: async () => ({ tripped: false }), reset: async () => {} } as any,
+    );
   return { controller, httpService, prisma };
 }
 

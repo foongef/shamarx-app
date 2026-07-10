@@ -33,6 +33,7 @@ import { BrokerAccountsService } from '../../broker-accounts/broker-accounts.ser
 import { BrokerHttpClient } from './broker-http-client';
 import { LiveSmcOrchestratorRegistry } from './live-smc-orchestrator-registry';
 import { DecisionLogService } from './decision-log.service';
+import { CircuitBreakerService } from './circuit-breaker.service';
 import { getPreset, StrategyPreset } from '../presets';
 import type { BrokerAccount, User } from '@prisma/client';
 
@@ -303,6 +304,7 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
     private readonly brokerHttp: BrokerHttpClient,
     private readonly orchestratorRegistry: LiveSmcOrchestratorRegistry,
     private readonly decisionLog: DecisionLogService,
+    private readonly circuitBreaker: CircuitBreakerService,
   ) {
     this.liveMode = (this.config.get<string>('LIVE_MODE') || 'false').toLowerCase() === 'true';
     const pairsCsv = this.config.get<string>('STRATEGY_PAIRS') || 'XAUUSD,EURUSD,GBPUSD,USDJPY';
@@ -700,6 +702,19 @@ export class LiveStrategyService implements OnModuleInit, OnModuleDestroy {
 
     if (!signal) return;
     this.logger.log(`[${symbol}] shared signal → ${signal.reason}`);
+
+    // Circuit breaker: after sustained realized losses, new entries pause
+    // engine-wide (open positions keep managing). The pending setup is NOT
+    // consumed — if the admin resumes while it's still valid, it can fire.
+    if (await this.circuitBreaker.isTripped()) {
+      this.logger.warn(`[${symbol}] signal suppressed — circuit breaker OPEN`);
+      this.decisionLog.record({
+        source: 'live', accountId: null, symbol,
+        barTime: new Date(evalTs), decision: 'SKIPPED_CIRCUIT_BREAKER',
+        signalSide: signal.side, context: { shared: true },
+      });
+      return;
+    }
 
     const results = await Promise.all(
       accounts.map((acct) =>

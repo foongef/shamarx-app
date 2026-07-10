@@ -1,4 +1,4 @@
-import { Body, Controller, Get, NotFoundException, Param, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, NotFoundException, Param, Post, Query, ForbiddenException } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
@@ -11,6 +11,7 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { AuthenticatedUser } from '../auth/auth.service';
 import { LiveStrategyService } from './live/live-strategy.service';
 import { BrokerHttpClient } from './live/broker-http-client';
+import { CircuitBreakerService } from './live/circuit-breaker.service';
 import { PositionMonitorService } from './live/position-monitor.service';
 import { LiveControlService } from './live/live-control.service';
 import { LiveAnalyticsService } from './live/live-analytics.service';
@@ -29,6 +30,7 @@ export class StrategyController {
     private readonly prisma: PrismaService,
     private readonly redis: RedisService,
     private readonly brokerHttp: BrokerHttpClient,
+    private readonly circuitBreaker: CircuitBreakerService,
   ) {}
 
   @Public()
@@ -57,7 +59,10 @@ export class StrategyController {
   @Get('live/status')
   @ApiOperation({ summary: 'Live engine on/off + active config' })
   async status(@CurrentUser() me: AuthenticatedUser) {
-    const status = this.control.status();
+    const base = this.control.status();
+    // Breaker state is engine-shared, visible to all tenants (like on/off).
+    const circuitBreaker = await this.circuitBreaker.getState().catch(() => null);
+    const status = { ...base, circuitBreaker };
 
     // TENANCY: the `account` fields describe the PLATFORM-DEFAULT MetaApi
     // connection (the house account) — legacy single-account view. Exposing
@@ -463,6 +468,16 @@ export class StrategyController {
       }
     }
     return { account: acct, live, positions, accountStale };
+  }
+
+  @Post('live/circuit-breaker/reset')
+  @ApiOperation({ summary: 'Resume trading after a circuit-breaker trip (SUPERADMIN)' })
+  async resetCircuitBreaker(@CurrentUser() me: AuthenticatedUser) {
+    if (me.role !== 'SUPERADMIN') {
+      throw new ForbiddenException('Only SUPERADMIN can reset the circuit breaker');
+    }
+    await this.circuitBreaker.reset();
+    return this.circuitBreaker.getState();
   }
 
   @Post('live/evaluate/:symbol')
