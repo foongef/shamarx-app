@@ -2,8 +2,8 @@
 
 Living doc. **Read this before claiming what the strategy can or can't do.** Updated as features ship.
 
-Current release: **GIDEON v1.1.0** (version history in `src/strategy/live/strategy-version.ts`)
-Last updated: 2026-07-09
+Current release: **GIDEON v1.2.0** (version history in `src/strategy/live/strategy-version.ts`)
+Last updated: 2026-07-12
 
 ---
 
@@ -29,7 +29,16 @@ break-of-structure (those were tested and made things worse; see
 - **H1 liquidity sweep** of recent swing high/low (`detectSweep` —
   `src/backtest/engine/smc/sweep-detector.ts`). Wick beyond swing extreme,
   close back inside.
-- **Retrace entry (v1.1, live default)** — the signal no longer fills at
+- **Setup-quality gate (v1.2, live default)** — entries fire only when the
+  structural stop is TIGHT relative to the sweep candle
+  (`maxSlSweepRatio: 0.5`): a conviction sweep entered near the defended
+  level. Loose far-from-structure chases — the historically losing ~75% of
+  all trades on every pair — are skipped; the setup stays pending so a
+  later bar nearer the level can take it (emergent retest entry). True
+  replays: hostile 2022-24 +$855 vs baseline +$6; last-12mo +$667/PF 1.51
+  vs +$76. EURUSD earns its seat under this gate (+$320 in the hostile
+  window). See `docs/gideon-v1.2-quality-gate.md`.
+- **Retrace entry (v1.1, REVERTED — kill-switched off) — the signal no longer fills at
   the M15 close. A broker-side LIMIT parks **50% of the entry→SL distance
   back toward the sweep** (GTD, expires after 12 M15 bars) and fills on the
   habitual retest — half the per-lot risk, lots ×2 for equal dollar risk,

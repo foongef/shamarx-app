@@ -38,6 +38,11 @@ export const EURUSD_SMC_CONFIG: SmcPairConfig = {
 
   // Restored TP1 partial — banks small offsetting wins on EURUSD's
   // tight-range trades. Runner target back to 3.5R.
+  // v1.2 setup-quality gate: only enter when SL distance < 0.5× the sweep
+  // candle range (tight = conviction sweep + entry near the level). True
+  // replays: 22-24 +$855 vs +$6 baseline; last-12mo +$667/PF1.51 vs +$76.
+  maxSlSweepRatio: 0.5,
+
   tp1PartialFraction: 0.30,
   tp1R: 0.8,
   tp2R: 3.5,

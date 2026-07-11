@@ -155,3 +155,12 @@ describe('fill-bar pessimism', () => {
     expect(closed2[0].pnl).toBeGreaterThan(0);
   });
 });
+
+describe('GIDEON v1.2 config guard', () => {
+  it('every live pair carries the setup-quality gate at 0.5', () => {
+    const { SMC_PAIR_REGISTRY } = require('./smc/pairs');
+    for (const sym of ['XAUUSD', 'EURUSD', 'GBPUSD', 'USDJPY']) {
+      expect(SMC_PAIR_REGISTRY[sym].maxSlSweepRatio).toBe(0.5);
+    }
+  });
+});

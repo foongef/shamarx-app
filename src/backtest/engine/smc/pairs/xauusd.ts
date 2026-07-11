@@ -39,6 +39,11 @@ export const XAUUSD_SMC_CONFIG: SmcPairConfig = {
     [12, 18],
   ],
 
+  // v1.2 setup-quality gate: only enter when SL distance < 0.5× the sweep
+  // candle range (tight = conviction sweep + entry near the level). True
+  // replays: 22-24 +$855 vs +$6 baseline; last-12mo +$667/PF1.51 vs +$76.
+  maxSlSweepRatio: 0.5,
+
   tp1PartialFraction: 0.30,
   tp1R: 0.8,
   tp2R: 4.0,

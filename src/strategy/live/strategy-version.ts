@@ -11,6 +11,14 @@
  *  1.0.1  2026-07-07 — shared-signal mode: ONE canonical brain per bar,
  *         per-account execution gates + proportional sizing (fixes
  *         opposite-trades drift between tenants). Signals unchanged.
+ *  1.2.0  2026-07-12 — SETUP-QUALITY GATE live on all 4 pairs
+ *         (maxSlSweepRatio 0.5): enter only when the structural stop is
+ *         tight relative to the sweep candle. 10y evidence + all three
+ *         true-replay windows passed (22-24: +$855 vs +$6 baseline;
+ *         last-12mo: +$667/PF1.51 vs +$76; 24-26: equal net, PF 1.27,
+ *         40% fewer trades). Skipped bars keep the setup pending →
+ *         emergent retest entries. EURUSD stays enabled (profitable in
+ *         every window under the gate).
  *  1.1.1  2026-07-09 — stale-pending guard: drop queued setups whose
  *         structure SL is no longer on the protective side of the current
  *         entry price (price overran the setup while pending). Fixes
@@ -22,4 +30,4 @@
  *         +$944 vs +$290 on $1k @1.5%, zero losing months, lower DD.
  *         Kill-switch: RETRACE_ENTRY=false.
  */
-export const GIDEON_VERSION = '1.1.1';
+export const GIDEON_VERSION = '1.2.0';
