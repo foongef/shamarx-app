@@ -76,6 +76,14 @@ export interface SmcPairConfig {
    *  pending, same semantics as an out-of-killzone hour). Optional. */
   skipEntryDows?: number[];
 
+  /** Setup-quality gate: skip the ENTRY BAR (setup stays pending) when
+   *  slDistance / sweepCandleRange exceeds this ratio. Tight structural
+   *  stops relative to a big conviction sweep = the profitable subset
+   *  (10y evidence: tight <0.51 = +$2,190 across every regime while
+   *  loose bled −$3,500). A loose setup can qualify on a later bar when
+   *  price returns toward the level — an emergent retest entry. */
+  maxSlSweepRatio?: number;
+
   /** TP ladder: partial fraction of total lot taken at TP1 (e.g. 0.30).
    *  Set to 0 to disable the TP1 leg — single position with TP at tp2R. */
   tp1PartialFraction: number;

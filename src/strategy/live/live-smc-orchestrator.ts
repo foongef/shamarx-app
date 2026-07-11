@@ -468,6 +468,19 @@ export class LiveSmcOrchestrator {
         continue;
       }
 
+      // Setup-quality gate (v1.2): only enter when the structural stop is
+      // TIGHT relative to the sweep candle's range — strong sweep, entry
+      // near the defended level. Loose = chasing a weak sweep from far
+      // away, the historically bleeding subset. Skip the BAR, keep the
+      // setup: the ratio shrinks as price approaches the level, so a
+      // currently-loose setup can qualify later (natural retest entry).
+      if ((cfg.maxSlSweepRatio ?? 0) > 0) {
+        const sweepRange = setup.sweepCandleHigh - setup.sweepCandleLow;
+        if (sweepRange > 0 && slPoints / sweepRange > cfg.maxSlSweepRatio!) {
+          continue; // no splice — pending survives for a better-located bar
+        }
+      }
+
       // Stale-pending guard: the SL must sit on the PROTECTIVE side of the
       // entry. Pendings live for several H1 bars with a structure-anchored
       // SL; if price has since closed beyond that structure (e.g. rallied
