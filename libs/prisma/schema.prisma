@@ -299,6 +299,10 @@ model LiveReplaySession {
   progress          Int? // 0-100, written periodically by the replay worker
   errorMessage      String?
   metrics           Json? // free-form aggregate (Sharpe, profit factor, etc.)
+  // Human-readable experiment label ("baseline 4-pair", "quality-gate 0.5")
+  // + the exact experiment inputs, so History rows are self-documenting.
+  label             String?
+  experimentConfig  Json?
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 

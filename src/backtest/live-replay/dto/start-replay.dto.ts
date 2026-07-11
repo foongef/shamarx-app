@@ -51,6 +51,11 @@ export class StartReplayDto {
   })
   @IsOptional()
   pairConfigOverrides?: Record<string, Record<string, unknown>>;
+
+  @ApiPropertyOptional({ description: 'Human-readable experiment label shown in History.' })
+  @IsOptional()
+  @IsString()
+  label?: string;
 }
 
 export const REPLAY_DEFAULT_PAIRS = DEFAULT_PAIRS;

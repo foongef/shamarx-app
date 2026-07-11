@@ -39,6 +39,12 @@ export class LiveReplayService {
         pairs,
         startEquity: dto.initialBalance,
         status: 'RUNNING',
+        label: dto.label ?? null,
+        experimentConfig: {
+          ...(dto.runnerTrail ? { runnerTrail: dto.runnerTrail } : {}),
+          ...(dto.retraceEntry ? { retraceEntry: dto.retraceEntry } : {}),
+          ...(dto.pairConfigOverrides ? { pairConfigOverrides: dto.pairConfigOverrides } : {}),
+        } as any,
       },
     });
 
