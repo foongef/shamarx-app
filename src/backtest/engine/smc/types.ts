@@ -84,6 +84,12 @@ export interface SmcPairConfig {
    *  price returns toward the level — an emergent retest entry. */
   maxSlSweepRatio?: number;
 
+  /** Conviction sizing (R2, validated design+one-shot): within the quality
+   *  gate, scale lots by setup grade — sl_ratio < tightRatio ⇒ tightMult,
+   *  else looseMult. 10y design: A=$9.19/setup vs B=−$3.47; sized book
+   *  150% of unsized (4/4 chunks better); validation 134%. */
+  convictionSizing?: { tightRatio: number; tightMult: number; looseMult: number };
+
   /** TP ladder: partial fraction of total lot taken at TP1 (e.g. 0.30).
    *  Set to 0 to disable the TP1 leg — single position with TP at tp2R. */
   tp1PartialFraction: number;

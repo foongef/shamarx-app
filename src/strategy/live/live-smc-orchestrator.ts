@@ -653,13 +653,27 @@ export class LiveSmcOrchestrator {
         strategyVersion: 'SMC-V2',
       };
       const riskManager = new RiskManager(riskCfg);
-      const totalLot = riskManager.calculateLotSize(
+      let totalLot = riskManager.calculateLotSize(
         slPoints,
         60,
         'WEAK_TREND',
         50,
         entryPrice,
       );
+      // Conviction sizing (v1.3 R2): within the quality gate, A-grade
+      // setups (very tight stop vs sweep range) size up, B-grade down.
+      // Validated: A=$9.19 vs B=−$3.47 per setup over 10y; sized book
+      // 150% of unsized in design, 134% in one-shot validation.
+      if (cfg.convictionSizing) {
+        const csRange = setup.sweepCandleHigh - setup.sweepCandleLow;
+        if (csRange > 0) {
+          const csRatio = slPoints / csRange;
+          const mult = csRatio < cfg.convictionSizing.tightRatio
+            ? cfg.convictionSizing.tightMult
+            : cfg.convictionSizing.looseMult;
+          totalLot = Math.round(totalLot * mult * 100) / 100;
+        }
+      }
       const usesLadder = cfg.tp1PartialFraction > 0;
       if (usesLadder ? totalLot < 0.02 : totalLot < 0.01) continue;
 
