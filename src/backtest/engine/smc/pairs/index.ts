@@ -15,12 +15,20 @@ import { XAUUSD_SMC_CONFIG } from './xauusd';
 import { EURUSD_SMC_CONFIG } from './eurusd';
 import { GBPUSD_SMC_CONFIG } from './gbpusd';
 import { USDJPY_SMC_CONFIG } from './usdjpy';
+import { AUDUSD_SMC_CONFIG } from './audusd';
+import { USDCAD_SMC_CONFIG } from './usdcad';
+import { EURJPY_SMC_CONFIG } from './eurjpy';
 
 export const SMC_PAIR_REGISTRY: Record<string, SmcPairConfig> = {
   XAUUSD: XAUUSD_SMC_CONFIG,
   EURUSD: EURUSD_SMC_CONFIG,
   GBPUSD: GBPUSD_SMC_CONFIG,
   USDJPY: USDJPY_SMC_CONFIG,
+  // v1.3 R3 candidates — replay-only until they pass the gauntlet AND the
+  // book test; live pairs come from STRATEGY_PAIRS env, which excludes them.
+  AUDUSD: AUDUSD_SMC_CONFIG,
+  USDCAD: USDCAD_SMC_CONFIG,
+  EURJPY: EURJPY_SMC_CONFIG,
 };
 
 /** Per-pair config overrides applied at runtime. Used by the comparison
