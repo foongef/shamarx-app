@@ -65,6 +65,48 @@ export const INSTRUMENT_CONFIGS: Record<string, InstrumentConfig> = {
       offHours: 0.030,
     },
   },
+  // v1.3 R3 candidates — market facts only (exchange specs + typical raw
+  // spreads), NOT strategy tuning. AUDUSD/USDCAD mirror the majors template;
+  // EURJPY mirrors USDJPY's JPY-quote semantics with cross-pair spreads.
+  AUDUSD: {
+    lotSizeUnits: 100_000,
+    commissionPerLot: 7.0,
+    minAtr: 0.0015,
+    pricePrecision: 5,
+    spreads: {
+      londonNyOverlap: 0.00018,
+      london: 0.00025,
+      nyExtended: 0.00030,
+      asian: 0.00035,   // aussie is liquid in Asia — tighter than EUR/GBP there
+      offHours: 0.00040,
+    },
+  },
+  USDCAD: {
+    lotSizeUnits: 100_000,
+    commissionPerLot: 7.0,
+    minAtr: 0.0015,
+    pricePrecision: 5,
+    spreads: {
+      londonNyOverlap: 0.00020,
+      london: 0.00030,
+      nyExtended: 0.00025,  // CAD liquidity is NY-centred
+      asian: 0.00060,
+      offHours: 0.00045,
+    },
+  },
+  EURJPY: {
+    lotSizeUnits: 100_000,
+    commissionPerLot: 7.0,
+    minAtr: 0.20,
+    pricePrecision: 3,
+    spreads: {
+      londonNyOverlap: 0.020,
+      london: 0.025,
+      nyExtended: 0.030,
+      asian: 0.045,
+      offHours: 0.040,
+    },
+  },
   US30: {
     lotSizeUnits: 1,             // $1 per point per lot (Pepperstone index CFD)
     commissionPerLot: 0,         // No commission — spread only
